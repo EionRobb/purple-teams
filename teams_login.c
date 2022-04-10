@@ -616,7 +616,6 @@ teams_begin_soapy_login(TeamsAccount *sa)
 	g_free(postdata);
 }
 
-#define TEAMS_OAUTH_TOKEN_URL "https://login.microsoftonline.com/Common/oauth2/token"
 #define TEAMS_OAUTH_CLIENT_ID "1fec8e78-bce4-4aaf-ab1b-5451cc387264"
 #define TEAMS_OAUTH_RESOURCE "https://api.spaces.skype.com"
 #define TEAMS_OAUTH_REDIRECT_URI "https://login.microsoftonline.com/common/oauth2/nativeclient"
@@ -679,6 +678,8 @@ teams_oauth_refresh_token(TeamsAccount *sa)
 	PurpleHttpRequest *request;
 	PurpleConnection *pc;
 	GString *postdata;
+	gchar *tenant_host;
+	gchar *auth_url;
 
 	pc = sa->pc;
 	if (!PURPLE_IS_CONNECTION(pc)) {
@@ -691,7 +692,21 @@ teams_oauth_refresh_token(TeamsAccount *sa)
 	g_string_append(postdata, "grant_type=refresh_token&");
 	g_string_append_printf(postdata, "refresh_token=%s&", purple_url_encode(sa->refresh_token));
 	
-	request = purple_http_request_new(TEAMS_OAUTH_TOKEN_URL);
+	if (sa->tenant) {
+		if (strchr(sa->tenant, '.')) {
+			// Likely a FQDN
+			tenant_host = g_strdup(sa->tenant);
+		} else {
+			tenant_host = g_strconcat(sa->tenant, ".onmicrosoft.com", NULL);
+		}
+		
+	} else {
+		tenant_host = g_strdup("Common");
+	}
+	
+	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/token", NULL);
+	
+	request = purple_http_request_new(auth_url);
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
@@ -701,6 +716,7 @@ teams_oauth_refresh_token(TeamsAccount *sa)
 	purple_http_request_unref(request);
 	
 	g_string_free(postdata, TRUE);
+	g_free(auth_url);
 	
 	return FALSE;
 }
@@ -711,6 +727,8 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 	PurpleHttpRequest *request;
 	PurpleConnection *pc = sa->pc;
 	GString *postdata;
+	gchar *tenant_host;
+	gchar *auth_url;
 	
 	if (strstr(auth_code, "nativeclient")) {
 		gchar *tmp = strchr(auth_code, '?');
@@ -742,7 +760,21 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 	g_string_append_printf(postdata, "code=%s&", purple_url_encode(auth_code));
 	g_string_append_printf(postdata, "redirect_uri=%s&", purple_url_encode(TEAMS_OAUTH_REDIRECT_URI));
 
-	request = purple_http_request_new(TEAMS_OAUTH_TOKEN_URL);
+	if (sa->tenant) {
+		if (strchr(sa->tenant, '.')) {
+			// Likely a FQDN
+			tenant_host = g_strdup(sa->tenant);
+		} else {
+			tenant_host = g_strconcat(sa->tenant, ".onmicrosoft.com", NULL);
+		}
+		
+	} else {
+		tenant_host = g_strdup("Common");
+	}
+	
+	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/token", NULL);
+
+	request = purple_http_request_new(auth_url);
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
@@ -752,6 +784,7 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 	purple_http_request_unref(request);
 	
 	g_string_free(postdata, TRUE);
+	g_free(auth_url);
 }
 
 static void
