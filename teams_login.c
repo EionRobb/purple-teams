@@ -780,7 +780,6 @@ teams_do_web_auth(TeamsAccount *sa)
 	
 	//https://login.microsoftonline.com/Common/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=login&display=popup
 	
-	/*
 	if (sa->tenant) {
 		if (strchr(sa->tenant, '.')) {
 			// Likely a FQDN
@@ -789,9 +788,7 @@ teams_do_web_auth(TeamsAccount *sa)
 			tenant_host = g_strconcat(sa->tenant, ".onmicrosoft.com", NULL);
 		}
 		
-		g_free(auth_url);
-		
-	} else */ {
+	} else {
 		tenant_host = g_strdup("Common");
 	}
 	

@@ -321,3 +321,28 @@ teams_strip_user_prefix(const gchar *who)
 	
 	return who;
 }
+
+PurpleGroup *
+teams_get_blist_group(TeamsAccount *sa)
+{
+	PurpleGroup *group;
+	gchar *group_name;
+		
+	if (!sa->tenant || !*sa->tenant) {
+		group_name = g_strdup("Teams");
+	} else {
+		//TODO nicer name
+		group_name = g_strdup_printf("Teams - %s", sa->tenant);
+	}
+	
+	group = purple_blist_find_group(group_name);
+	if (!group)
+	{
+		group = purple_group_new(group_name);
+		purple_blist_add_group(group, NULL);
+	}
+	
+	g_free(group_name);
+	
+	return group;
+}

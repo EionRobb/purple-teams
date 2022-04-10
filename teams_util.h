@@ -34,3 +34,5 @@ PurpleAccount *find_acct(const char *prpl, const char *acct_id);
 
 const gchar *teams_user_url_prefix(const gchar *who);
 const gchar *teams_strip_user_prefix(const gchar *who);
+
+PurpleGroup *teams_get_blist_group(TeamsAccount *sa);

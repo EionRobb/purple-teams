@@ -126,6 +126,7 @@ teams_get_icon_now(PurpleBuddy *buddy)
 	//    Origin: https://teams.microsoft.com
 	//	Authorization: Bearer ey...
 	
+	// purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->image_token);
 	purple_http_get(sa->pc, teams_get_icon_cb, buddy, url);
 	g_free(url);
 
@@ -1140,7 +1141,7 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		JsonObject *contact = json_array_get_object_element(contacts, index);
 		
 		const gchar *username = json_object_get_string_member(contact, "username");
-		const gchar *new_avatar;
+		// const gchar *new_avatar;
 		
 		buddy = purple_blist_find_buddy(sa->account, username);
 		if (!buddy)
@@ -1165,14 +1166,15 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			purple_buddy_set_server_alias(buddy, json_object_get_string_member(contact, "firstname"));
 		}
 		
-		new_avatar = json_object_get_string_member(contact, "avatarUrl");
-		if (new_avatar && *new_avatar && (!sbuddy->avatar_url || !g_str_equal(sbuddy->avatar_url, new_avatar))) {
-			g_free(sbuddy->avatar_url);
-			sbuddy->avatar_url = g_strdup(new_avatar);			
-			teams_get_icon(buddy);
-		}
+		// new_avatar = json_object_get_string_member(contact, "avatarUrl");
+		// if (new_avatar && *new_avatar && (!sbuddy->avatar_url || !g_str_equal(sbuddy->avatar_url, new_avatar))) {
+			// g_free(sbuddy->avatar_url);
+			// sbuddy->avatar_url = g_strdup(new_avatar);			
+			// teams_get_icon(buddy);
+		// }
+		teams_get_icon(buddy);
 		
-		g_free(sbuddy->mood); sbuddy->mood = g_strdup(json_object_get_string_member(contact, "mood"));
+		// g_free(sbuddy->mood); sbuddy->mood = g_strdup(json_object_get_string_member(contact, "mood"));
 	}
 }
 
@@ -1330,31 +1332,31 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	guint index, length;
 	
 	obj = json_node_get_object(node);
-	contacts = json_object_get_array_member(obj, "contacts");
+	contacts = json_object_get_array_member(obj, "value");
 	length = json_array_get_length(contacts);
 	
 	for(index = 0; index < length; index++)
 	{
 		JsonObject *contact = json_array_get_object_element(contacts, index);
-		JsonObject *profile = json_object_get_object_member(contact, "profile");
-		const gchar *mri = json_object_get_string_member(contact, "mri");
-		const gchar *display_name = json_object_get_string_member(contact, "display_name");
-		const gchar *avatar_url = NULL;
-		gboolean authorized = json_object_get_boolean_member(contact, "authorized");
-		gboolean blocked = json_object_get_boolean_member(contact, "blocked");
+		const gchar *type = json_object_get_string_member(contact, "type");
 		
-		const gchar *mood = json_object_get_string_member(profile, "mood");
-		JsonObject *name = json_object_get_object_member(profile, "name");
-		const gchar *firstname = json_object_get_string_member(name, "first");
-		const gchar *surname = NULL;
+		if (purple_strequal(type, "Group")) {
+			continue;
+		}
+		
+		const gchar *mri = json_object_get_string_member(contact, "mri");
+		const gchar *display_name = json_object_get_string_member(contact, "displayName");
+		// const gchar *avatar_url = NULL;
+		// gboolean authorized = json_object_get_boolean_member(contact, "authorized");
+		// gboolean blocked = json_object_get_boolean_member(contact, "blocked");
+		
+		// const gchar *mood = json_object_get_string_member(profile, "mood");
+		// JsonObject *name = json_object_get_object_member(profile, "name");
+		const gchar *firstname = json_object_get_string_member(contact, "givenName");
+		const gchar *surname = json_object_get_string_member(contact, "surname");
 		
 		PurpleBuddy *buddy;
 		const gchar *id;
-		
-		if (json_object_has_member(contact, "suggested") && json_object_get_boolean_member(contact, "suggested") && !authorized) {
-			// suggested buddies wtf? some kind of advertising?
-			continue;
-		}
 		
 		id = teams_strip_user_prefix(mri);
 		
@@ -1363,19 +1365,11 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		{
 			if (!group)
 			{
-				group = purple_blist_find_group("Skype");
-				if (!group)
-				{
-					group = purple_group_new("Skype");
-					purple_blist_add_group(group, NULL);
-				}
+				group = teams_get_blist_group(sa);
 			}
 			buddy = purple_buddy_new(sa->account, id, display_name);
 			purple_blist_add_buddy(buddy, NULL, group, NULL);
 		}
-		
-		if (name && json_object_has_member(name, "surname"))
-			surname = json_object_get_string_member(name, "surname");
 
 		// try to free the sbuddy here. no-op if it's not set before, otherwise prevents a leak.
 		teams_buddy_free(buddy);
@@ -1385,10 +1379,10 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		sbuddy->sa = sa;
 		sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
 		sbuddy->display_name = g_strdup(display_name);
-		sbuddy->authorized = authorized;
-		sbuddy->blocked = blocked;
-		sbuddy->avatar_url = g_strdup(purple_buddy_icons_get_checksum_for_user(buddy));
-		sbuddy->mood = g_strdup(mood);
+		// sbuddy->authorized = authorized;
+		// sbuddy->blocked = blocked;
+		// sbuddy->avatar_url = g_strdup(purple_buddy_icons_get_checksum_for_user(buddy));
+		// sbuddy->mood = g_strdup(mood);
 		
 		sbuddy->buddy = buddy;
 		purple_buddy_set_protocol_data(buddy, sbuddy);
@@ -1400,20 +1394,21 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			purple_buddy_set_server_alias(buddy, sbuddy->fullname);
 		}
 		
-		if (json_object_has_member(profile, "avatar_url")) {
-			avatar_url = json_object_get_string_member(profile, "avatar_url");
-			if (avatar_url && *avatar_url && (!sbuddy->avatar_url || !g_str_equal(sbuddy->avatar_url, avatar_url))) {
-				g_free(sbuddy->avatar_url);
-				sbuddy->avatar_url = g_strdup(avatar_url);			
-				teams_get_icon(buddy);
-			}
-		}
+		// if (json_object_has_member(profile, "avatar_url")) {
+			// avatar_url = json_object_get_string_member(profile, "avatar_url");
+			// if (avatar_url && *avatar_url && (!sbuddy->avatar_url || !g_str_equal(sbuddy->avatar_url, avatar_url))) {
+				// g_free(sbuddy->avatar_url);
+				// sbuddy->avatar_url = g_strdup(avatar_url);			
+				// teams_get_icon(buddy);
+			// }
+		// }
+		teams_get_icon(buddy);
 		
-		if (blocked == TRUE) {
-			purple_account_privacy_deny_add(sa->account, id, TRUE);
-		} else {
+		// if (blocked == TRUE) {
+			// purple_account_privacy_deny_add(sa->account, id, TRUE);
+		// } else {
 			users_to_fetch = g_slist_prepend(users_to_fetch, sbuddy->skypename);
-		}
+		// }
 		
 		if (purple_strequal(teams_strip_user_prefix(id), sa->primary_member_name)) {
 			g_free(sa->self_display_name);
@@ -1432,13 +1427,12 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 void
 teams_get_friend_list(TeamsAccount *sa)
 {
+	const gchar *url = "/api/mt/apac/beta/users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
+	
 	//TODO
+	// get tenants: https://teams.microsoft.com/api/mt/apac/beta/users/tenants
 	
-	return;
-	
-	const gchar *url = "/contacts/v2/users/SELF?delta=&reason=default";
-	
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST, url, NULL, teams_get_friend_list_cb, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, ".", teams_get_friend_list_cb, NULL, TRUE);
 }
 
 

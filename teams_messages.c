@@ -76,12 +76,7 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 	
 	if (!purple_blist_find_buddy(sa->account, from))
 	{
-		PurpleGroup *group = purple_blist_find_group("Skype");
-		if (!group)
-		{
-			group = purple_group_new("Skype");
-			purple_blist_add_group(group, NULL);
-		}
+		PurpleGroup *group = teams_get_blist_group(sa);
 		
 		if (teams_is_user_self(sa, from)) {
 			return;
@@ -587,7 +582,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
 			post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", id ? id : "", teams_get_js_time(), id ? id : "");
 			
-			teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, sa->messages_host, url, post, NULL, NULL, TRUE);
+			teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
 			
 			g_free(post);
 			g_free(url);
@@ -1188,7 +1183,29 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 
 static void
 teams_subscribe_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
-{	
+{
+	JsonObject *obj = json_node_get_object(node);
+	JsonArray *subscriptions = json_object_get_array_member(obj, "subscriptions");
+	
+	if (subscriptions != NULL) {
+		JsonObject *sub = json_array_get_object_element(subscriptions, 0);
+		if (sub != NULL) {
+			const gchar *longpollurl = json_object_get_string_member(sub, "longPollUrl");
+			gchar *next_server = teams_string_get_chunk(longpollurl, -1, "https://", "/users");
+			
+			if (next_server != NULL) {
+				g_free(sa->messages_host);
+				sa->messages_host = next_server;
+			}
+			
+			gchar *cursor = teams_string_get_chunk(longpollurl, -1, "?cursor=", NULL);
+			if (cursor != NULL) {
+				g_free(sa->messages_cursor);
+				sa->messages_cursor = cursor;
+			}
+		}
+	}
+	
 	teams_do_all_the_things(sa);
 }
 
@@ -1225,84 +1242,13 @@ teams_subscribe(TeamsAccount *sa)
 	}
 
 	gchar *url = g_strdup_printf("/v2/users/ME/endpoints/%s", purple_url_encode(sa->endpoint));
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, teams_subscribe_cb, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, teams_subscribe_cb, NULL, TRUE);
 	g_free(url);
 	
 	g_free(post);
 	json_object_unref(obj);
 }
 
-static void
-teams_got_registration_token(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
-{
-	const gchar *registration_token = NULL;
-	gchar *endpointId = NULL;
-	gchar *expires = NULL;
-	TeamsAccount *sa = user_data;
-	gchar *new_messages_host = NULL;
-	const gchar *data;
-	gsize len;
-	
-	data = purple_http_response_get_data(response, &len);
-	
-	if (data == NULL) {
-		if (purple_major_version == 2 && (
-			purple_minor_version < 10 ||
-			(purple_minor_version == 10 && purple_micro_version < 11))
-			) {
-			purple_connection_error (sa->pc,
-									PURPLE_CONNECTION_ERROR_ENCRYPTION_ERROR,
-									_("Your version of libpurple is too old.\nUpgrade to 2.10.11 or newer and try again."));
-			return;
-		}
-	}
-	
-	new_messages_host = teams_string_get_chunk(purple_http_response_get_header(response, "Location"), -1, "https://", "/");
-	if (new_messages_host != NULL && !g_str_equal(sa->messages_host, new_messages_host)) {
-		g_free(sa->messages_host);
-		sa->messages_host = new_messages_host;
-		
-		// Your princess is in another castle
-		purple_debug_info("teams", "Messages host has changed to %s\n", sa->messages_host);
-		
-		teams_get_registration_token(sa);
-		return;
-	}
-	g_free(new_messages_host);
-	
-	registration_token = purple_http_response_get_header(response, "Set-RegistrationToken");
-	
-	if (registration_token == NULL) {
-		if (purple_account_get_string(sa->account, "refresh-token", NULL)) {
-			teams_refresh_token_login(sa);
-		} else {
-			purple_connection_error (sa->pc,
-									PURPLE_CONNECTION_ERROR_NETWORK_ERROR,
-									_("Failed getting Registration Token"));
-		}
-		return;
-	}
-	//purple_debug_info("teams", "New RegistrationToken is %s\n", registration_token);
-	endpointId = teams_string_get_chunk(registration_token, -1, "endpointId=", NULL);
-	expires = teams_string_get_chunk(registration_token, -1, "expires=", ";");
-	
-	g_free(sa->registration_token); sa->registration_token = g_strndup(registration_token, strchr(registration_token, ';') - registration_token);
-	g_free(sa->endpoint); sa->endpoint = endpointId;
-	if (expires && *expires) {
-		sa->registration_expiry = atoi(expires);
-		g_free(expires);
-	}
-	
-	if (sa->endpoint) {
-		gchar *url = g_strdup_printf("/v1/users/ME/endpoints/%s/presenceDocs/messagingService", purple_url_encode(sa->endpoint));
-		const gchar *post = "{\"id\":\"messagingService\", \"type\":\"EndpointPresenceDoc\", \"selfLink\":\"uri\", \"privateInfo\":{\"epname\":\"skype\"}, \"publicInfo\":{\"capabilities\":\"\", \"type\":1, \"typ\":1, \"skypeNameVersion\":\"" TEAMS_CLIENTINFO_VERSION "/" TEAMS_CLIENTINFO_NAME "\", \"nodeInfo\":\"\", \"version\":\"" TEAMS_CLIENTINFO_VERSION "\"}}";
-		teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, sa->messages_host, url, post, NULL, NULL, TRUE);
-		g_free(url);
-	}
-	
-	teams_get_self_details(sa);	
-	teams_subscribe(sa);
-}
 
 static void
 teams_got_vdms_token(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
@@ -1329,51 +1275,6 @@ teams_got_vdms_token(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 	
 }
 
-void
-teams_get_registration_token(TeamsAccount *sa)
-{
-	gchar *messages_url;
-	PurpleHttpRequest *request;
-	gchar *curtime;
-	gchar *response;
-	
-	g_free(sa->registration_token); sa->registration_token = NULL;
-	g_free(sa->endpoint); sa->endpoint = NULL;
-	
-	curtime = g_strdup_printf("%d", (int) time(NULL));
-	response = teams_hmac_sha256(curtime);
-	
-	messages_url = g_strdup_printf("https://%s/v1/users/ME/endpoints", sa->messages_host);
-	
-	request = purple_http_request_new(messages_url);
-	purple_http_request_set_method(request, "POST");
-	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
-	purple_http_request_set_max_redirects(request, 0);
-	purple_http_request_header_set(request, "Accept", "*/*");
-	purple_http_request_header_set(request, "BehaviorOverride", "redirectAs404");
-	purple_http_request_header_set_printf(request, "LockAndKey", "appId=" TEAMS_LOCKANDKEY_APPID "; time=%s; lockAndKeyResponse=%s", curtime, response);
-	purple_http_request_header_set(request, "ClientInfo", "os=windows; osVer=10; proc=x86; lcid=en-us; deviceType=1; country=n/a; clientName=" TEAMS_CLIENTINFO_NAME "; clientVer=" TEAMS_CLIENTINFO_VERSION);
-	purple_http_request_header_set(request, "Content-Type", "application/json");
-	purple_http_request_header_set_printf(request, "Authentication", "skypetoken=%s", sa->skype_token);
-	purple_http_request_set_contents(request, "{\"endpointFeatures\":\"Agent\"}", -1);
-	//"endpointFeatures": "Agent,Presence2015,MessageProperties,CustomUserProperties,NotificationStream,SupportsSkipRosterFromThreads",
-	
-	/*{
-	"startingTimeSpan": 0,
-	"endpointFeatures": "Agent,Presence2015,MessageProperties,CustomUserProperties,NotificationStream,SupportsSkipRosterFromThreads",
-	"subscriptions": [{
-		"channelType": "HttpLongPoll",
-		"interestedResources": ["/v1/users/ME/conversations/ALL/properties", "/v1/users/ME/conversations/ALL/messages", "/v1/threads/ALL"]
-	}]
-}*/
-	
-	purple_http_request(sa->pc, request, teams_got_registration_token, sa);
-	purple_http_request_unref(request);
-	
-	g_free(curtime);
-	g_free(response);
-	g_free(messages_url);
-}
 
 void
 teams_get_vdms_token(TeamsAccount *sa)
@@ -1417,7 +1318,7 @@ teams_conv_send_typing(PurpleConversation *conv, PurpleIMTypingState state)
 	
 	post = teams_jsonobj_to_string(obj);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, sa->messages_host, url, post, NULL, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
 	
 	g_free(post);
 	json_object_unref(obj);
@@ -1443,13 +1344,13 @@ teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState s
 	
 	post = teams_jsonobj_to_string(obj);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, sa->messages_host, url, post, NULL, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
 	
 	g_free(post);
 	json_object_unref(obj);
 	g_free(url);
 	
-	return 5;
+	return 20;
 }
 
 
@@ -1568,7 +1469,7 @@ teams_send_message(TeamsAccount *sa, const gchar *convname, const gchar *message
 	
 	post = teams_jsonobj_to_string(obj);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, sa->messages_host, url, post, teams_sent_message_cb, g_strdup(convname), TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, teams_sent_message_cb, g_strdup(convname), TRUE);
 	
 	g_free(post);
 	json_object_unref(obj);
@@ -1653,7 +1554,7 @@ teams_chat_invite(PurpleConnection *pc, int id, const char *message, const char 
 	
 	post = "{\"role\":\"User\"}";
 	
-	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, sa->messages_host, url->str, post, NULL, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url->str, post, NULL, NULL, TRUE);
 	
 	g_string_free(url, TRUE);
 }
@@ -1677,7 +1578,7 @@ teams_chat_kick(PurpleConnection *pc, int id, const char *who)
 	
 	post = "";
 	
-	teams_post_or_get(sa, TEAMS_METHOD_DELETE | TEAMS_METHOD_SSL, sa->messages_host, url->str, post, NULL, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_DELETE | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url->str, post, NULL, NULL, TRUE);
 	
 	g_string_free(url, TRUE);
 }
@@ -1709,7 +1610,7 @@ teams_initiate_chat(TeamsAccount *sa, const gchar *who)
 	json_object_set_array_member(obj, "members", members);
 	post = teams_jsonobj_to_string(obj);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, sa->messages_host, "/v1/threads", post, NULL, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, "/v1/threads", post, NULL, NULL, TRUE);
 
 	g_free(post);
 	json_object_unref(obj);
@@ -1755,7 +1656,7 @@ teams_chat_set_topic(PurpleConnection *pc, int id, const char *topic)
 	json_object_set_string_member(obj, "topic", topic);
 	post = teams_jsonobj_to_string(obj);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, sa->messages_host, url->str, post, NULL, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url->str, post, NULL, NULL, TRUE);
 	
 	g_string_free(url, TRUE);
 	g_free(post);

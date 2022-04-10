@@ -135,10 +135,11 @@
 #define TEAMS_CLIENTINFO_NAME "skypeteams"
 #define TEAMS_CLIENTINFO_VERSION "1415/1.0.0.2021062127"
 
+//TODO "Available", "Busy", "DoNotDisturb", "BeRightBack", "Away"
 #define TEAMS_STATUS_ONLINE "Available"
-#define TEAMS_STATUS_IDLE "Idle"
-#define TEAMS_STATUS_AWAY "Away"
-#define TEAMS_STATUS_BUSY "Busy"
+#define TEAMS_STATUS_IDLE "Away"
+#define TEAMS_STATUS_AWAY "Busy"
+#define TEAMS_STATUS_BUSY "DoNotDisturb"
 #define TEAMS_STATUS_HIDDEN "Hidden"
 #define TEAMS_STATUS_OFFLINE "Offline"
 
@@ -188,6 +189,7 @@ struct _TeamsAccount {
 	gchar *id_token;
 	gchar *refresh_token;
 	gchar *messages_cursor;
+	gchar *tenant;
 };
 
 struct _TeamsBuddy {

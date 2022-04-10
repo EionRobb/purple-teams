@@ -353,6 +353,11 @@ teams_login(PurpleAccount *account)
 	sa->keepalive_pool = purple_http_keepalive_pool_new();
 	purple_http_keepalive_pool_set_limit_per_host(sa->keepalive_pool, TEAMS_MAX_CONNECTIONS);
 	sa->conns = purple_http_connection_set_new();
+	
+	const gchar *tenant = purple_account_get_string(account, "tenant", NULL);
+	if (tenant != NULL) {
+		sa->tenant = g_strdup(tenant);
+	}
 
 	//teams_begin_soapy_login(sa);
 	
@@ -414,6 +419,7 @@ teams_close(PurpleConnection *pc)
 	g_free(sa->refresh_token);
 	g_free(sa->region);
 	g_free(sa->messages_cursor);
+	g_free(sa->tenant);
 	
 	g_free(sa->vdms_token);
 	g_free(sa->messages_host);
@@ -710,7 +716,10 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	info->id = TEAMS_PLUGIN_ID;
 	info->name = "Teams";
 	prpl_info->options = OPT_PROTO_NO_PASSWORD | OPT_PROTO_CHAT_TOPIC | OPT_PROTO_INVITE_MESSAGE /*| OPT_PROTO_IM_IMAGE*/;
-	alt_login = purple_account_option_bool_new(N_("Use alternative login method"), "alt-login", TRUE);
+	
+	//TODO tidy up
+	// alt_login = purple_account_option_bool_new(N_("Use alternative login method"), "alt-login", TRUE);
+	alt_login = purple_account_option_string_new("Tenant", "tenant", "");
 
 #if !PURPLE_VERSION_CHECK(3, 0, 0)
 	prpl_info->protocol_options = g_list_append(prpl_info->protocol_options, alt_login);
