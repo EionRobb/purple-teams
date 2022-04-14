@@ -190,6 +190,9 @@ struct _TeamsAccount {
 	gchar *refresh_token;
 	gchar *messages_cursor;
 	gchar *tenant;
+	GHashTable *buddy_to_chat_lookup;
+	GHashTable *chat_to_buddy_lookup;
+	gint refresh_token_timeout;
 };
 
 struct _TeamsBuddy {

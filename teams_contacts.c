@@ -1322,12 +1322,135 @@ teams_get_friend_profile(TeamsAccount *sa, const gchar *who)
 	g_free(whodup);
 }
 
+PurpleChat *
+teams_find_chat_from_node(const PurpleAccount *account, const char *id, PurpleBlistNode *root)
+{
+	PurpleBlistNode *node;
+
+	for (
+		node = root;
+		node != NULL;
+		node = purple_blist_node_next(node, TRUE)
+	) {
+		if (PURPLE_IS_CHAT(node)) {
+			PurpleChat *chat = PURPLE_CHAT(node);
+
+			if (purple_chat_get_account(chat) != account) {
+				continue;
+			}
+
+			GHashTable *components = purple_chat_get_components(chat);
+			const gchar *chat_id = g_hash_table_lookup(components, "chatname");
+
+			if (purple_strequal(chat_id, id)) {
+				return chat;
+			}
+		}
+	}
+
+	return NULL;
+}
+
+PurpleChat *
+teams_find_chat(PurpleAccount *account, const char *id)
+{
+	return teams_find_chat_from_node(account, id, purple_blist_get_root());
+}
+
+
+PurpleChat *
+teams_find_chat_in_group(PurpleAccount *account, const char *id, PurpleGroup *group)
+{
+	g_return_val_if_fail(group != NULL, NULL);
+
+	return teams_find_chat_from_node(account, id, PURPLE_BLIST_NODE(group));
+}
+
+static void
+teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonObject *obj;
+	JsonArray *teams, *chats, *users;
+	guint index, length;
+	PurpleGroup *group = teams_get_blist_group(sa);
+	GSList *users_to_fetch = NULL;
+	PurpleBuddy *buddy;
+	
+	obj = json_node_get_object(node);
+	
+	// Group chats
+	chats = json_object_get_array_member(obj, "chats");
+	length = json_array_get_length(chats);
+	for(index = 0; index < length; index++)
+	{
+		JsonObject *chat = json_array_get_object_element(chats, index);
+		const gchar *id = json_object_get_string_member(chat, "id");
+		gboolean is_one_on_one = json_object_get_boolean_member(chat, "isOneOnOne");
+		
+		if (is_one_on_one) {
+			JsonArray *members = json_object_get_array_member(chat, "members");
+			JsonObject *member = json_array_get_object_element(members, 0);
+			const gchar *mri = json_object_get_string_member(member, "mri");
+			const gchar *buddyid = teams_strip_user_prefix(mri);
+			gchar *buddyid_dup;
+			
+			if (teams_is_user_self(sa, buddyid)) {
+				// There were two in the bed and the little one said....
+				member = json_array_get_object_element(members, 1);
+				mri = json_object_get_string_member(member, "mri");
+				buddyid = teams_strip_user_prefix(mri);
+			}
+			
+			buddyid_dup = g_strdup(buddyid);
+			users_to_fetch = g_slist_prepend(users_to_fetch, buddyid_dup);
+			
+			//Create an array of one to one mappings for IMs
+			g_hash_table_insert(sa->buddy_to_chat_lookup, buddyid_dup, g_strdup(id));
+			g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+			
+			buddy = purple_blist_find_buddy(sa->account, buddyid);
+			if (!buddy)
+			{
+				buddy = purple_buddy_new(sa->account, buddyid, NULL);
+				purple_blist_add_buddy(buddy, NULL, group, NULL);
+			}
+			
+		} else {
+			
+			if (!teams_find_chat_in_group(sa->account, id, group)) {
+				const gchar *title = json_object_get_string_member(chat, "title");
+				GHashTable *components = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+				g_hash_table_replace(components, g_strdup("chatname"), g_strdup(id));
+				
+				PurpleChat *chat = purple_chat_new(sa->account, title, components);
+				purple_blist_add_chat(chat, group, NULL);
+			}
+		}
+	}
+	
+	// Teams
+	teams = json_object_get_array_member(obj, "teams");
+	// TODO treat as a group with channels within?
+	(void) teams;
+	
+	// Users
+	users = json_object_get_array_member(obj, "users");
+	(void) users;
+	
+	if (users_to_fetch)
+	{
+		//teams_get_friend_profiles(sa, users_to_fetch);
+		teams_subscribe_to_contact_status(sa, users_to_fetch);
+		g_slist_free(users_to_fetch);
+	}
+}
+
 static void
 teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
 	JsonObject *obj;
 	JsonArray *contacts;
-	PurpleGroup *group = NULL;
+	PurpleGroup *group = teams_get_blist_group(sa);
 	GSList *users_to_fetch = NULL;
 	guint index, length;
 	
@@ -1363,10 +1486,6 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		buddy = purple_blist_find_buddy(sa->account, id);
 		if (!buddy)
 		{
-			if (!group)
-			{
-				group = teams_get_blist_group(sa);
-			}
 			buddy = purple_buddy_new(sa->account, id, display_name);
 			purple_blist_add_buddy(buddy, NULL, group, NULL);
 		}
@@ -1410,7 +1529,7 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			users_to_fetch = g_slist_prepend(users_to_fetch, sbuddy->skypename);
 		// }
 		
-		if (purple_strequal(teams_strip_user_prefix(id), sa->primary_member_name)) {
+		if (purple_strequal(id, sa->primary_member_name)) {
 			g_free(sa->self_display_name);
 			sa->self_display_name = g_strdup(display_name);
 		}
@@ -1432,7 +1551,12 @@ teams_get_friend_list(TeamsAccount *sa)
 	//TODO
 	// get tenants: https://teams.microsoft.com/api/mt/apac/beta/users/tenants
 	
+	// Do a search for all users with . in their email addresses - doesn't work for Guests
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, ".", teams_get_friend_list_cb, NULL, TRUE);
+	
+	// Fetch a list of teams and chats we're part of
+	url = "/api/csa/api/v1/teams/users/me?isPrefetch=false&enableMembershipSummary=true";
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_get_friend_list_teams_cb, NULL, TRUE);
 }
 
 

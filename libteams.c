@@ -252,7 +252,9 @@ teams_join_chat(PurpleConnection *pc, GHashTable *data)
 	 * post = "{\"role\":\"User\"}"; */
 	post = "{}";
 	
-	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, sa->messages_host, url->str, post, NULL, NULL, TRUE);
+	//TODO find new endpoint
+	//teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, sa->messages_host, url->str, post, NULL, NULL, TRUE);
+	(void) post;
 	
 	g_string_free(url, TRUE);
 	
@@ -349,6 +351,8 @@ teams_login(PurpleAccount *account)
 	sa->pc = pc;
 	sa->cookie_jar = purple_http_cookie_jar_new();
 	sa->sent_messages_hash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	sa->buddy_to_chat_lookup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	sa->chat_to_buddy_lookup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	sa->messages_host = g_strdup(TEAMS_DEFAULT_MESSAGES_HOST);
 	sa->keepalive_pool = purple_http_keepalive_pool_new();
 	purple_http_keepalive_pool_set_limit_per_host(sa->keepalive_pool, TEAMS_MAX_CONNECTIONS);
@@ -394,6 +398,7 @@ teams_close(PurpleConnection *pc)
 	g_source_remove(sa->authcheck_timeout);
 	g_source_remove(sa->poll_timeout);
 	g_source_remove(sa->watchdog_timeout);
+	g_source_remove(sa->refresh_token_timeout);
 
 	teams_logout(sa);
 	
@@ -414,6 +419,8 @@ teams_close(PurpleConnection *pc)
 	}
 	
 	g_hash_table_destroy(sa->sent_messages_hash);
+	g_hash_table_destroy(sa->buddy_to_chat_lookup);
+	g_hash_table_destroy(sa->chat_to_buddy_lookup);
 	
 	g_free(sa->id_token);
 	g_free(sa->refresh_token);

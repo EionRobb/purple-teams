@@ -21,6 +21,7 @@
 gchar *teams_string_get_chunk(const gchar *haystack, gsize len, const gchar *start, const gchar *end);
 
 gchar *teams_jsonobj_to_string(JsonObject *jsonobj);
+gchar *teams_jsonarr_to_string(JsonArray *jsonarr);
 JsonObject *json_decode_object(const gchar *data, gssize len);
 
 const gchar *teams_contact_url_to_name(const gchar *url);
@@ -36,3 +37,4 @@ const gchar *teams_user_url_prefix(const gchar *who);
 const gchar *teams_strip_user_prefix(const gchar *who);
 
 PurpleGroup *teams_get_blist_group(TeamsAccount *sa);
+gboolean teams_is_user_self(TeamsAccount *sa, const gchar *username);

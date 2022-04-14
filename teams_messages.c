@@ -28,27 +28,6 @@ static GString* make_last_timestamp_setting(const gchar *convname) {
 	return rv;
 }
 
-static gboolean
-teams_is_user_self(TeamsAccount *sa, const gchar *username) {
-	if (!username || *username == 0) {
-		return FALSE;
-	}
-	
-	if (sa->username) {
-		if (g_str_equal(username, sa->username)) {
-			return TRUE;
-		}
-	}
-	
-	if (sa->primary_member_name) {
-		if (g_str_equal(username, sa->primary_member_name)) {
-			return TRUE;
-		}
-	}
-	
-	return !g_ascii_strcasecmp(username, purple_account_get_username(sa->account));
-}
-
 static gchar *
 teams_meify(const gchar *message, gint skypeemoteoffset)
 {
@@ -125,6 +104,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 	gchar **messagetype_parts;
 	PurpleConversation *conv = NULL;
 	gchar *convname = NULL;
+	const gchar *chatname = NULL;
 	
 	g_return_if_fail(messagetype != NULL);
 	
@@ -144,13 +124,17 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 	if (json_object_has_member(resource, "content"))
 		content = json_object_get_string_member(resource, "content");
 	
-	if (conversationLink && strstr(conversationLink, "/19:")) {
-		// This is a Thread/Group chat message
-		const gchar *chatname, *topic;
-		PurpleChatConversation *chatconv;
-		
+	if (conversationLink) {
 		chatname = teams_thread_url_to_name(conversationLink);
 		convname = g_strdup(chatname);
+	}
+	
+	if (chatname && !g_hash_table_lookup(sa->chat_to_buddy_lookup, chatname)) {
+	//if (chatname && !strstr(chatname, "unq.gbl.spaces")) {
+		// This is a Thread/Group chat message
+		const gchar *topic;
+		PurpleChatConversation *chatconv;
+		
 		chatconv = purple_conversations_find_chat_with_account(chatname, sa->account);
 		if (!chatconv) {
 			chatconv = purple_serv_got_joined_chat(sa->pc, g_str_hash(chatname), chatname);
@@ -322,8 +306,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		gchar *convbuddyname;
 		// This is a One-to-one/IM message
 		
-		convbuddyname = g_strdup(teams_contact_url_to_name(conversationLink));
-		convname = g_strconcat(teams_user_url_prefix(convbuddyname), convbuddyname, NULL);
+		convbuddyname = g_strdup(g_hash_table_lookup(sa->chat_to_buddy_lookup, convname));
 		
 		from = teams_contact_url_to_name(from);
 		if (from == NULL) {
@@ -617,7 +600,37 @@ process_conversation_resource(TeamsAccount *sa, JsonObject *resource)
 static void
 process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 {
+	const gchar *id = json_object_get_string_member(resource, "id");
+	JsonObject *properties = json_object_get_object_member(resource, "properties");
+	JsonArray *members = json_object_get_array_member(resource, "members");
 	
+	if (properties != NULL) {
+		const gchar *uniquerosterthread = json_object_get_string_member(properties, "uniquerosterthread");
+		if (purple_strequal(uniquerosterthread, "true")) {
+			// This is a one-to-one chat
+			
+			if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
+				// ... and we dont know about it yet
+				
+				JsonObject *member = json_array_get_object_element(members, 1);
+				const gchar *mri = json_object_get_string_member(member, "id");
+				const gchar *buddyid = teams_strip_user_prefix(mri);
+				
+				if (teams_is_user_self(sa, buddyid)) {
+					// There were two in the bed and the little one said....
+					member = json_array_get_object_element(members, 1);
+					mri = json_object_get_string_member(member, "id");
+					buddyid = teams_strip_user_prefix(mri);
+				}
+				
+				//XXX should we fetch buddy presence here?
+				
+				//Create an array of one to one mappings for IMs
+				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+				g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+			}
+		}
+	}
 }
 
 static void
@@ -1053,35 +1066,114 @@ teams_unsubscribe_from_contact_status(TeamsAccount *sa, const gchar *who)
 }
 
 static void
-teams_got_contact_status(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
-	JsonObject *obj = json_node_get_object(node);
-	JsonArray *responses = json_object_get_array_member(obj, "Responses");
+	PurpleGroup *group = teams_get_blist_group(sa);
+	JsonArray *responses = json_node_get_array(node);
 	
 	if (responses != NULL) {
+		const gchar *from;
 		guint length = json_array_get_length(responses);
 		gint index;
+		
 		for(index = length - 1; index >= 0; index--)
 		{
 			JsonObject *response = json_array_get_object_element(responses, index);
-			JsonObject *payload = json_object_get_object_member(response, "Payload");
-			process_userpresence_resource(sa, payload);
+			JsonObject *presence = json_object_get_object_member(response, "presence");
+			const gchar *mri = json_object_get_string_member(response, "mri");
+			const gchar *availability = json_object_get_string_member(presence, "availability");
+			
+			from = teams_strip_user_prefix(mri);
+			g_return_if_fail(from);
+			
+			if (!purple_blist_find_buddy(sa->account, from))
+			{
+				if (!teams_is_user_self(sa, from)) {
+					purple_blist_add_buddy(purple_buddy_new(sa->account, from, NULL), NULL, group, NULL);
+				}
+			}
+			
+			//TODO note/OOOnote -> status message
+			/* 
+				"presence": {
+					"sourceNetwork": "SameEnterprise",
+					"note": {
+						"message": "",
+						"publishTime": "2021-06-01T00:48:30.6948824Z",
+						"expiry": "9999-12-30T14:00:00Z"
+					},
+					"calendarData": {
+						"outOfOfficeNote": {
+							"message": "I am on leave - returning 19th April",
+							"publishTime": "2022-04-14T08:02:23.5053937Z",
+							"expiry": "2022-04-19T07:00:00Z"
+						},
+						"isOutOfOffice": true
+					},
+					"capabilities": [],
+					"availability": "Away",
+					"activity": "Away",
+					"lastActiveTime": "2022-04-14T04:41:35.67Z",
+					"deviceType": "Desktop"
+				},
+				"etagMatch": false,
+				"etag": "A0072086544",
+				"status": 20000
+			*/
+			
+			purple_protocol_got_user_status(sa->account, from, availability, NULL);
 		}
 	}
 }
 
 static void
-teams_lookup_contact_status(TeamsAccount *sa, const gchar *contact)
+teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 {
-	if (contact == NULL) {
+	const gchar *presence_path =  "/v1/presence/getpresence/";
+	gchar *post;
+	GSList *cur = contacts;
+	JsonArray *contacts_array;
+	guint count = 0;
+	
+	if (contacts == NULL) {
 		return;
 	}
 	
-	// Allowed to be up to 10 at once
-	gchar *url = g_strdup_printf("/v1/users/ME/contacts/ALL/presenceDocs/messagingService?cMri=%s%s", teams_user_url_prefix(contact), purple_url_encode(contact));
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, url, NULL, teams_got_contact_status, NULL, TRUE);
+	cur = contacts;
+	contacts_array = json_array_new();
+	count = 0;
 	
-	g_free(url);
+	do {
+		JsonObject *contact;
+		gchar *id;
+
+		contact = json_object_new();
+		
+		id = g_strconcat(teams_user_url_prefix(cur->data), cur->data, NULL);
+		json_object_set_string_member(contact, "mri", id);
+		json_array_add_object_element(contacts_array, contact);
+		g_free(id);
+		
+		if (count++ >= 10) {
+			// Send off the current batch and continue
+			post = teams_jsonarr_to_string(contacts_array);
+
+			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", presence_path, post, NULL, NULL, TRUE);
+			
+			g_free(post);
+			
+			json_array_unref(contacts_array);
+			contacts_array = json_array_new();
+			count = 0;
+		}
+	} while((cur = g_slist_next(cur)));
+	
+	post = teams_jsonarr_to_string(contacts_array);
+
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", presence_path, post, teams_got_contact_statuses, NULL, TRUE);
+	
+	g_free(post);
+	json_array_unref(contacts_array);
 }
 
 void
@@ -1159,7 +1251,6 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 	obj = json_object_new();
 	json_object_set_array_member(obj, "interestedResources", interested);
 	
-	teams_lookup_contact_status(sa, NULL);
 	post = teams_jsonobj_to_string(obj);
 
 	//TODO url 
@@ -1178,6 +1269,8 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 	g_free(url);
 	g_free(post);
 	json_object_unref(obj);
+	
+	teams_lookup_contact_statuses(sa, contacts);
 }
 
 
@@ -1361,8 +1454,9 @@ teams_set_statusid(TeamsAccount *sa, const gchar *status)
 	
 	g_return_if_fail(status);
 	
-	post = g_strdup_printf("{\"status\":\"%s\"}", status);
-	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/users/ME/presenceDocs/messagingService", post, NULL, NULL, TRUE);
+	//https://presence.teams.microsoft.com/v1/me/endpoints/
+	post = g_strdup_printf("{\"activity\":\"%s\",\"deviceType\":\"Desktop\"}", status);
+	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/endpoints/", post, NULL, NULL, TRUE);
 	g_free(post);
 }
 
@@ -1373,7 +1467,7 @@ teams_set_status(PurpleAccount *account, PurpleStatus *status)
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	
 	teams_set_statusid(sa, purple_status_get_id(status));
-	teams_set_mood_message(sa, purple_status_get_attr_string(status, "message"));
+	//teams_set_mood_message(sa, purple_status_get_attr_string(status, "message"));
 }
 
 void
@@ -1386,6 +1480,10 @@ teams_set_idle(PurpleConnection *pc, int time)
 	
 	status = purple_account_get_active_status(purple_connection_get_account(pc));
 	status_id = purple_status_get_id(status);
+
+	//todo:
+	//POST https://presence.teams.microsoft.com/v1/me/reportmyactivity/
+	//{"endpointId": "...", "isActive": true}
 
 	/* Only go idle if active status is online  */
 	if (!strcmp(status_id, TEAMS_STATUS_ONLINE)) {
@@ -1527,7 +1625,16 @@ const gchar *who, const gchar *message, PurpleMessageFlags flags)
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *convname;
 	
-	convname = g_strconcat(teams_user_url_prefix(who), who, NULL);
+	convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, who);
+	
+	//convname should be like
+	//19:{guid of user1}_{guid of user2}@unq.gpl.spaces
+	
+	if (!convname) {
+		teams_initiate_chat(sa, who, TRUE, message);
+		return 0;
+	}
+	
 	teams_send_message(sa, convname, message);
 	g_free(convname);
 	
@@ -1583,12 +1690,18 @@ teams_chat_kick(PurpleConnection *pc, int id, const char *who)
 	g_string_free(url, TRUE);
 }
 
-void
-teams_initiate_chat(TeamsAccount *sa, const gchar *who)
+static void
+teams_created_chat(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
-	JsonObject *obj, *contact;
+	
+}
+
+void
+teams_initiate_chat(TeamsAccount *sa, const gchar *who, gboolean one_to_one, const gchar *initial_message)
+{
+	JsonObject *obj, *contact, *properties;
 	JsonArray *members;
-	gchar *id, *post;
+	gchar *id, *post, *initial_message_copy;
 	
 	obj = json_object_new();
 	members = json_array_new();
@@ -1608,9 +1721,36 @@ teams_initiate_chat(TeamsAccount *sa, const gchar *who)
 	g_free(id);
 	
 	json_object_set_array_member(obj, "members", members);
+	
+	properties = json_object_new();
+	json_object_set_string_member(properties, "threadType", "chat");
+	json_object_set_string_member(properties, "chatFilesIndexId", "2");
+	if (one_to_one) {
+		json_object_set_string_member(properties, "fixedRoster", "true");
+		json_object_set_string_member(properties, "uniquerosterthread", "true");
+	}
+	json_object_set_object_member(obj, "properties", properties);
+	
 	post = teams_jsonobj_to_string(obj);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, "/v1/threads", post, NULL, NULL, TRUE);
+	//TODO change to raw request
+	// if (initial_message && *initial_message) {
+		// initial_message_copy = g_strdup(initial_message);
+	// } else {
+		initial_message_copy = NULL;
+	// }
+	
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, "/v1/threads", post, teams_created_chat, initial_message_copy, TRUE);
+	
+	// Cant use teams_post_or_get because we need the Location: response
+	// purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
+	// purple_http_request_header_set(request, "X-Stratus-Caller", TEAMS_CLIENTINFO_NAME);
+	// purple_http_request_header_set(request, "X-Stratus-Request", "abcd1234");
+	// purple_http_request_header_set(request, "Origin", "https://teams.microsoft.com");
+	// purple_http_request_header_set(request, "Referer", "https://teams.microsoft.com/");
+	// purple_http_request_header_set(request, "Accept", "application/json; ver=1.0;");
+	//  teams_created_chat
+	// initial_message_copy
 
 	g_free(post);
 	json_object_unref(obj);
@@ -1631,7 +1771,7 @@ teams_initiate_chat_from_node(PurpleBlistNode *node, gpointer userdata)
 			sa = purple_connection_get_protocol_data(pc);
 		}
 		
-		teams_initiate_chat(sa, purple_buddy_get_name(buddy));
+		teams_initiate_chat(sa, purple_buddy_get_name(buddy), FALSE, NULL);
 	}
 }
 

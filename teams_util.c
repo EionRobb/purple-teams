@@ -67,6 +67,27 @@ teams_jsonobj_to_string(JsonObject *jsonobj)
 	return string;
 }
 
+gchar *
+teams_jsonarr_to_string(JsonArray *jsonarr)
+{
+	JsonGenerator *generator;
+	JsonNode *root;
+	gchar *string;
+	
+	root = json_node_new(JSON_NODE_OBJECT);
+	json_node_set_array(root, jsonarr);
+	
+	generator = json_generator_new();
+	json_generator_set_root(generator, root);
+	
+	string = json_generator_to_data(generator, NULL);
+	
+	g_object_unref(generator);
+	json_node_free(root);
+	
+	return string;
+}
+
 JsonNode *
 json_decode(const gchar *data, gssize len)
 {
@@ -345,4 +366,25 @@ teams_get_blist_group(TeamsAccount *sa)
 	g_free(group_name);
 	
 	return group;
+}
+
+gboolean
+teams_is_user_self(TeamsAccount *sa, const gchar *username) {
+	if (!username || *username == 0) {
+		return FALSE;
+	}
+	
+	if (sa->username) {
+		if (g_str_equal(username, sa->username)) {
+			return TRUE;
+		}
+	}
+	
+	if (sa->primary_member_name) {
+		if (g_str_equal(username, sa->primary_member_name)) {
+			return TRUE;
+		}
+	}
+	
+	return !g_ascii_strcasecmp(username, purple_account_get_username(sa->account));
 }

@@ -47,7 +47,7 @@ void teams_subscribe(TeamsAccount *sa);
 void teams_get_vdms_token(TeamsAccount *sa);
 void teams_chat_kick(PurpleConnection *pc, int id, const char *who);
 void teams_chat_invite(PurpleConnection *pc, int id, const char *message, const char *who);
-void teams_initiate_chat(TeamsAccount *sa, const gchar *who);
+void teams_initiate_chat(TeamsAccount *sa, const gchar *who, gboolean one_to_one, const gchar *initial_message);
 void teams_initiate_chat_from_node(PurpleBlistNode *node, gpointer userdata);
 PurpleRoomlist *teams_roomlist_get_list(PurpleConnection *pc);
 void teams_chat_set_topic(PurpleConnection *pc, int id, const char *topic);
