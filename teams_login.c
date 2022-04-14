@@ -416,7 +416,7 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 
 	data = purple_http_response_get_data(response, &len);
 	
-	purple_debug_misc("teams", "Full skypetoken response: %s\n", data);
+	//purple_debug_misc("teams", "Full skypetoken response: %s\n", data);
 	
 	obj = json_decode_object(data, len);
 
@@ -437,6 +437,12 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 
 	if (sa->skype_token) g_free(sa->skype_token);
 	sa->skype_token = g_strdup(json_object_get_string_member(tokens, "skypeToken"));
+	
+	gint64 expiresIn = json_object_get_int_member(tokens, "expiresIn");
+	if (sa->refresh_token_timeout) 
+		g_source_remove(sa->refresh_token_timeout);
+	sa->refresh_token_timeout = g_timeout_add_seconds(expiresIn - 5, (GSourceFunc)teams_oauth_refresh_token, sa);
+	//set_timeout
 	
 	if (sa->region) g_free(sa->region);
 	sa->region = g_strdup(json_object_get_string_member(obj, "region"));
@@ -717,6 +723,14 @@ teams_oauth_refresh_token(TeamsAccount *sa)
 	
 	g_string_free(postdata, TRUE);
 	g_free(auth_url);
+	
+	//TODO do the same for presence:
+	// resource = https://presence.teams.microsoft.com
+	//store the access token separately to access presence.teams.microsoft.com
+	
+	//TODO do the same for buddy list
+	// resource = https://chatsvcagg.teams.microsoft.com
+	//store the access token separately to access teams.microsoft.com/api/csa/
 	
 	return FALSE;
 }
