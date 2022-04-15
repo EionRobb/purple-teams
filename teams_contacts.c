@@ -1397,6 +1397,10 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 			if (teams_is_user_self(sa, buddyid)) {
 				// There were two in the bed and the little one said....
 				member = json_array_get_object_element(members, 1);
+				if (member == NULL) {
+					// ... goodnight!
+					continue;
+				}
 				mri = json_object_get_string_member(member, "mri");
 				buddyid = teams_strip_user_prefix(mri);
 			}
