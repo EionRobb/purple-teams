@@ -1154,11 +1154,11 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 		json_array_add_object_element(contacts_array, contact);
 		g_free(id);
 		
-		if (count++ >= 10) {
+		if (++count >= 650) {
 			// Send off the current batch and continue
 			post = teams_jsonarr_to_string(contacts_array);
 
-			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", presence_path, post, NULL, NULL, TRUE);
+			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", presence_path, post, teams_got_contact_statuses, NULL, TRUE);
 			
 			g_free(post);
 			
@@ -1168,11 +1168,13 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 		}
 	} while((cur = g_slist_next(cur)));
 	
-	post = teams_jsonarr_to_string(contacts_array);
+	if (json_array_get_length(contacts_array) > 0) {
+		post = teams_jsonarr_to_string(contacts_array);
 
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", presence_path, post, teams_got_contact_statuses, NULL, TRUE);
-	
-	g_free(post);
+		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", presence_path, post, teams_got_contact_statuses, NULL, TRUE);
+		
+		g_free(post);
+	}
 	json_array_unref(contacts_array);
 }
 
@@ -1221,7 +1223,7 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		
 		g_free(id);
 		
-		if (count++ >= 100) {
+		if (++count >= 100) {
 			// Send off the current batch and continue
 			json_object_set_array_member(obj, "contacts", contacts_array);
 			post = teams_jsonobj_to_string(obj);
@@ -1455,7 +1457,7 @@ teams_set_statusid(TeamsAccount *sa, const gchar *status)
 	g_return_if_fail(status);
 	
 	//https://presence.teams.microsoft.com/v1/me/endpoints/
-	post = g_strdup_printf("{\"activity\":\"%s\",\"deviceType\":\"Desktop\"}", status);
+	post = g_strdup_printf("{\"id\":\"%s\",\"activity\":\"%s\",\"deviceType\":\"Desktop\"}", purple_url_encode(sa->endpoint), status);
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/endpoints/", post, NULL, NULL, TRUE);
 	g_free(post);
 }

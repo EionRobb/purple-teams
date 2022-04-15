@@ -422,6 +422,8 @@ teams_close(PurpleConnection *pc)
 	g_hash_table_destroy(sa->buddy_to_chat_lookup);
 	g_hash_table_destroy(sa->chat_to_buddy_lookup);
 	
+	g_free(sa->csa_access_token);
+	g_free(sa->presence_access_token);
 	g_free(sa->id_token);
 	g_free(sa->refresh_token);
 	g_free(sa->region);

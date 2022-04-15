@@ -136,8 +136,16 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 		purple_http_request_header_set(request, "Accept", "application/json");
 		purple_http_request_header_set(request, "X-Skype-Client", TEAMS_CLIENTINFO_VERSION);
 		
+	} else if (g_str_equal(host, TEAMS_PRESENCE_HOST)) {
+		purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->presence_access_token);
+		purple_http_request_header_set(request, "Accept", "application/json");
+		
 	} else if (g_str_equal(host, "teams.microsoft.com")) {
-		purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->id_token);
+		if (strstr(url, "/api/csa/") == url) {
+			purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->csa_access_token);
+		} else {
+			purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->id_token);
+		}
 		purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
 		purple_http_request_header_set(request, "Accept", "application/json");
 		

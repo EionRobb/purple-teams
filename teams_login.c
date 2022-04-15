@@ -677,10 +677,51 @@ teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 	json_object_unref(obj);
 }
 
-
-gboolean
-teams_oauth_refresh_token(TeamsAccount *sa)
+static void
+teams_presence_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
 {
+	TeamsAccount *sa = user_data;
+	JsonObject *obj;
+	const gchar *raw_response;
+	gsize response_len;
+
+	raw_response = purple_http_response_get_data(response, &response_len);
+	obj = json_decode_object(raw_response, response_len);
+
+	if (purple_http_response_is_successful(response) && obj)
+	{
+		gchar *presence_access_token = g_strdup(json_object_get_string_member(obj, "access_token"));
+		if (sa->presence_access_token) {
+			g_free(sa->presence_access_token);
+		}
+		sa->presence_access_token = presence_access_token;
+	}
+}
+
+static void
+teams_csa_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
+{
+	TeamsAccount *sa = user_data;
+	JsonObject *obj;
+	const gchar *raw_response;
+	gsize response_len;
+
+	raw_response = purple_http_response_get_data(response, &response_len);
+	obj = json_decode_object(raw_response, response_len);
+
+	if (purple_http_response_is_successful(response) && obj)
+	{
+		gchar *csa_access_token = g_strdup(json_object_get_string_member(obj, "access_token"));
+		if (sa->csa_access_token) {
+			g_free(sa->csa_access_token);
+		}
+		sa->csa_access_token = csa_access_token;
+	}
+}
+
+void
+teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, PurpleHttpCallback callback) {
+
 	PurpleHttpRequest *request;
 	PurpleConnection *pc;
 	GString *postdata;
@@ -689,11 +730,11 @@ teams_oauth_refresh_token(TeamsAccount *sa)
 
 	pc = sa->pc;
 	if (!PURPLE_IS_CONNECTION(pc)) {
-		return FALSE;
+		return;
 	}
 
 	postdata = g_string_new(NULL);
-	g_string_append(postdata, "resource=https%3A%2F%2Fapi.spaces.skype.com&");
+	g_string_append_printf(postdata, "resource=%s&", purple_url_encode(resource));
 	g_string_append_printf(postdata, "client_id=%s&", purple_url_encode(TEAMS_OAUTH_CLIENT_ID));
 	g_string_append(postdata, "grant_type=refresh_token&");
 	g_string_append_printf(postdata, "refresh_token=%s&", purple_url_encode(sa->refresh_token));
@@ -718,20 +759,23 @@ teams_oauth_refresh_token(TeamsAccount *sa)
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
 	purple_http_request_set_contents(request, postdata->str, postdata->len);
 
-	purple_http_request(pc, request, teams_oauth_with_code_cb, sa);
+	purple_http_request(pc, request, callback, sa);
 	purple_http_request_unref(request);
 	
 	g_string_free(postdata, TRUE);
+	
 	g_free(auth_url);
+	return;
+}
+
+gboolean
+teams_oauth_refresh_token(TeamsAccount *sa)
+{
+	teams_oauth_refresh_token_for_resource(sa, "https://api.spaces.skype.com", teams_oauth_with_code_cb);
+	teams_oauth_refresh_token_for_resource(sa, "https://presence.teams.microsoft.com", teams_presence_oauth_cb);
+	teams_oauth_refresh_token_for_resource(sa, "https://chatsvcagg.teams.microsoft.com", teams_csa_oauth_cb);
 	
-	//TODO do the same for presence:
-	// resource = https://presence.teams.microsoft.com
-	//store the access token separately to access presence.teams.microsoft.com
-	
-	//TODO do the same for buddy list
-	// resource = https://chatsvcagg.teams.microsoft.com
-	//store the access token separately to access teams.microsoft.com/api/csa/
-	
+	// For working with purple_timeout_add()
 	return FALSE;
 }
 

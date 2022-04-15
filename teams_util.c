@@ -74,7 +74,7 @@ teams_jsonarr_to_string(JsonArray *jsonarr)
 	JsonNode *root;
 	gchar *string;
 	
-	root = json_node_new(JSON_NODE_OBJECT);
+	root = json_node_new(JSON_NODE_ARRAY);
 	json_node_set_array(root, jsonarr);
 	
 	generator = json_generator_new();

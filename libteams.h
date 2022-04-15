@@ -193,6 +193,8 @@ struct _TeamsAccount {
 	GHashTable *buddy_to_chat_lookup;
 	GHashTable *chat_to_buddy_lookup;
 	gint refresh_token_timeout;
+	gchar *csa_access_token;
+	gchar *presence_access_token;
 };
 
 struct _TeamsBuddy {
