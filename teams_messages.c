@@ -306,14 +306,17 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		gchar *convbuddyname;
 		// This is a One-to-one/IM message
 		
-		convbuddyname = g_strdup(g_hash_table_lookup(sa->chat_to_buddy_lookup, convname));
-		
 		from = teams_contact_url_to_name(from);
 		if (from == NULL) {
-			g_free(convbuddyname);
 			g_free(convname);
 			g_return_if_reached();
 			return;
+		}
+		
+		if (convname && *convname) {
+			convbuddyname = g_strdup(g_hash_table_lookup(sa->chat_to_buddy_lookup, convname));
+		} else {
+			convbuddyname = g_strdup(teams_contact_url_to_name(conversationLink));
 		}
 		
 		if (g_str_equal(messagetype_parts[0], "Control")) {

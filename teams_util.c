@@ -139,12 +139,16 @@ teams_contact_url_to_name(const gchar *url)
 	static gchar *tempname = NULL;
 	const gchar *start, *end;
 	
+	// Strip the numeric prefix off these ones
 	start = g_strrstr(url, "/8:");
 	if (!start) start = g_strrstr(url, "/1:");
 	if (!start) start = g_strrstr(url, "/4:");
 	if (start) start = start + 2;
+	
+	// Keep the prefix on these ones
 	if (!start) start = g_strrstr(url, "/2:");
 	if (!start) start = g_strrstr(url, "/28:");
+	if (!start) start = g_strrstr(url, "/48:");
 	if (start) start = start + 1;
 	if (!start) return NULL;
 	
@@ -320,7 +324,7 @@ find_acct(const char *prpl, const char *acct_id)
 const gchar *
 teams_user_url_prefix(const gchar *who)
 {
-	if(TEAMS_BUDDY_IS_S4B(who) || TEAMS_BUDDY_IS_BOT(who)) {
+	if(TEAMS_BUDDY_IS_S4B(who) || TEAMS_BUDDY_IS_BOT(who) || TEAMS_BUDDY_IS_NOTIFICATIONS(who)) {
 		return ""; // already has a prefix
 	} else if (TEAMS_BUDDY_IS_MSN(who)) {
 		return "1:";
