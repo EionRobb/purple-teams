@@ -84,7 +84,7 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 	// PurpleChatUserFlags cbflags;
 	
 	// cbflags = purple_chat_user_get_flags(cb);
-	// cbflags &= ~PURPLE_CHAT_USER_TYPING & ~PURPLE_CHAT_USER_VOICE;
+	// cbflags &= ~PURPLE_CHAT_USER_TYPING;
 	// purple_chat_user_set_flags(cb, cbflags);
 	
 	// return FALSE;
@@ -179,7 +179,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				purple_chat_user_set_flags(cb, cbflags);
 			}
 			
-		} else if ((g_str_equal(messagetype, "RichText") || g_str_equal(messagetype, "Text")) || g_str_equal(messagetype, "RichText/Html")) {
+		} else if (g_str_equal(messagetype_parts[0], "RichText") || g_str_equal(messagetype_parts[0], "Text")) {
 			gchar *html;
 			gint64 skypeemoteoffset = 0;
 			PurpleChatUserFlags cbflags;
@@ -203,7 +203,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			if (cb != NULL) {
 				cbflags = purple_chat_user_get_flags(cb);
 				
-				cbflags &= ~PURPLE_CHAT_USER_TYPING & ~PURPLE_CHAT_USER_VOICE;
+				cbflags &= ~PURPLE_CHAT_USER_TYPING;
 				
 				purple_chat_user_set_flags(cb, cbflags);
 			}
@@ -281,7 +281,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					if (g_str_equal(role, "Admin") || g_str_equal(role, "admin")) {
 						cbflags = PURPLE_CHAT_USER_OP;
 					} else if (g_str_equal(role, "User") || g_str_equal(role, "user")) {
-						//cbflags = PURPLE_CHAT_USER_VOICE;
+						cbflags = PURPLE_CHAT_USER_VOICE;
 					}
 				}
 				#if !PURPLE_VERSION_CHECK(3, 0, 0)
@@ -883,7 +883,7 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			if (g_str_equal(role, "Admin") || g_str_equal(role, "admin")) {
 				cbflags = PURPLE_CHAT_USER_OP;
 			} else if (g_str_equal(role, "User") || g_str_equal(role, "user")) {
-				//cbflags = PURPLE_CHAT_USER_VOICE;
+				cbflags = PURPLE_CHAT_USER_VOICE;
 			}
 		}
 
@@ -1409,10 +1409,9 @@ teams_conv_send_typing_to_channel(TeamsAccount *sa, const gchar *channel, Purple
 	url = g_strdup_printf("/v1/users/ME/conversations/%s/messages", purple_url_encode(channel));
 	
 	obj = json_object_new();
-	json_object_set_int_member(obj, "clientmessageid", time(NULL));
-	json_object_set_string_member(obj, "content", "");
 	json_object_set_string_member(obj, "messagetype", state == PURPLE_IM_TYPING ? "Control/Typing" : "Control/ClearTyping");
-	json_object_set_string_member(obj, "contenttype", "text");
+	json_object_set_string_member(obj, "contenttype", "Application/Message");
+	json_object_set_string_member(obj, "content", "");
 	
 	post = teams_jsonobj_to_string(obj);
 	
