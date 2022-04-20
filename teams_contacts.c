@@ -1181,6 +1181,12 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 void
 teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 {
+	// a POST to
+	// https://teams.microsoft.com/api/mt/apac/beta/users/fetch?isMailAddress=false&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true
+	// with postdata
+	// ["8:orgid:...", "8:orgid:..."]
+	// returns multiple results
+	
 	const gchar *profiles_url = "/users/self/contacts/profiles";
 	GString *postdata;
 	GSList *cur = contacts;
@@ -1217,64 +1223,46 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		return;
 	userobj = json_node_get_object(node);
 	
+	if (!username || !*username) {
+		username = g_strdup(json_object_get_string_member(userobj, "mri"));
+	}
+	if (!username || !*username) {
+		g_free(username);
+		return;
+	}
+	
 	user_info = purple_notify_user_info_new();
 	
 #define _SKYPE_USER_INFO(prop, key) if (prop && json_object_has_member(userobj, (prop)) && !json_object_get_null_member(userobj, (prop))) \
 	purple_notify_user_info_add_pair_html(user_info, _(key), json_object_get_string_member(userobj, (prop)));
 	
-	_SKYPE_USER_INFO("firstname", "First Name");
-	_SKYPE_USER_INFO("lastname", "Last Name");
-	_SKYPE_USER_INFO("birthday", "Birthday");
-	//_SKYPE_USER_INFO("gender", "Gender");
-	if (json_object_has_member(userobj, "gender") && !json_object_get_null_member(userobj, "gender")) {
-		const gchar *gender_output = _("Unknown");
-		
-		// Can be presented as either a string of a number or as a number argh
-		if (json_node_get_value_type(json_object_get_member(userobj, "gender")) == G_TYPE_STRING) {
-			const gchar *gender = json_object_get_string_member(userobj, "gender");
-			if (gender && *gender == '1') {
-				gender_output = _("Male");
-			} else if (gender && *gender == '2') {
-				gender_output = _("Female");
-			}
-		} else {
-			gint64 gender = json_object_get_int_member(userobj, "gender");
-			if (gender == 1) {
-				gender_output = _("Male");
-			} else if (gender == 2) {
-				gender_output = _("Female");
-			}
-		}
-		
-		purple_notify_user_info_add_pair_html(user_info, _("Gender"), gender_output);
-	}
-	_SKYPE_USER_INFO("language", "Language");
-	_SKYPE_USER_INFO("country", "Country");
-	_SKYPE_USER_INFO("province", "Province");
-	_SKYPE_USER_INFO("city", "City");
-	_SKYPE_USER_INFO("homepage", "Homepage");
-	_SKYPE_USER_INFO("about", "About");
-	_SKYPE_USER_INFO("jobtitle", "Job Title");
-	_SKYPE_USER_INFO("phoneMobile", "Phone - Mobile");
-	_SKYPE_USER_INFO("phoneHome", "Phone - Home");
-	_SKYPE_USER_INFO("phoneOffice", "Phone - Office");
-	//_SKYPE_USER_INFO("mood", "Mood");
-	//_SKYPE_USER_INFO("richMood", "Mood");
-	//_SKYPE_USER_INFO("avatarUrl", "Avatar");
+	_SKYPE_USER_INFO("givenName", "First Name");
+	_SKYPE_USER_INFO("surname", "Last Name");
+	_SKYPE_USER_INFO("email", "Email");
 	
 	buddy = purple_blist_find_buddy(sa->account, username);
 	if (buddy) {
 		sbuddy = purple_buddy_get_protocol_data(buddy);
 		if (sbuddy == NULL) {
+			const gchar *firstname = json_object_get_string_member(userobj, "givenName");
+			const gchar *surname = json_object_get_string_member(userobj, "surname");
+			const gchar *display_name = json_object_get_string_member(userobj, "displayName");
+			
 			sbuddy = g_new0(TeamsBuddy, 1);
-			purple_buddy_set_protocol_data(buddy, sbuddy);
 			sbuddy->skypename = g_strdup(username);
 			sbuddy->sa = sa;
-		}
+			sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
+			sbuddy->display_name = g_strdup(display_name);
+			
+			sbuddy->buddy = buddy;
+			purple_buddy_set_protocol_data(buddy, sbuddy);
 		
-		//At the moment, "mood" field is present but always null via this call. Do not clear it.
-		if (json_object_has_member(userobj, ("mood")) && !json_object_get_null_member(userobj, ("mood"))) {
-			g_free(sbuddy->mood); sbuddy->mood = g_strdup(json_object_get_string_member(userobj, "mood"));
+			if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+				purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
+			}
+			if (!purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
+				purple_buddy_set_server_alias(buddy, sbuddy->fullname);
+			}
 		}
 	}
 	
@@ -1287,22 +1275,13 @@ void
 teams_get_info(PurpleConnection *pc, const gchar *username)
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
-	gchar *post;
-	const gchar *url = "/users/batch/profiles";
-	JsonObject *obj;
-	JsonArray *usernames_array;
+	gchar *url = NULL;
 	
-	obj = json_object_new();
-	usernames_array = json_array_new();
+	url = g_strconcat("/api/mt/apac/beta/users/", teams_user_url_prefix(username), purple_url_encode(username), "/?throwIfNotFound=false&isMailAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true", NULL);
 	
-	json_array_add_string_element(usernames_array, username);
-	json_object_set_array_member(obj, "usernames", usernames_array);
-	post = teams_jsonobj_to_string(obj);
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_got_info, g_strdup(username), TRUE);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, teams_got_info, g_strdup(username), TRUE);
-	
-	g_free(post);
-	json_object_unref(obj);
+	g_free(url);
 }
 
 void
