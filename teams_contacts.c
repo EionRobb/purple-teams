@@ -1392,7 +1392,6 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 			JsonObject *member = json_array_get_object_element(members, 0);
 			const gchar *mri = json_object_get_string_member(member, "mri");
 			const gchar *buddyid = teams_strip_user_prefix(mri);
-			gchar *buddyid_dup;
 			
 			if (teams_is_user_self(sa, buddyid)) {
 				// There were two in the bed and the little one said....
@@ -1405,11 +1404,10 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 				buddyid = teams_strip_user_prefix(mri);
 			}
 			
-			buddyid_dup = g_strdup(buddyid);
-			users_to_fetch = g_slist_prepend(users_to_fetch, buddyid_dup);
+			users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(buddyid));
 			
 			//Create an array of one to one mappings for IMs
-			g_hash_table_insert(sa->buddy_to_chat_lookup, buddyid_dup, g_strdup(id));
+			g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
 			g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
 			
 			buddy = purple_blist_find_buddy(sa->account, buddyid);

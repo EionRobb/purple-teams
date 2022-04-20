@@ -58,6 +58,7 @@
 #endif
 
 #include "purplecompat.h"
+#include "glibcompat.h"
 
 #ifdef _WIN32
 #	define dlopen(a,b) LoadLibrary(a)

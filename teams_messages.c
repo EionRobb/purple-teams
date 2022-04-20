@@ -1392,47 +1392,14 @@ teams_get_vdms_token(TeamsAccount *sa)
 }
 
 
-guint
-teams_conv_send_typing(PurpleConversation *conv, PurpleIMTypingState state)
+	
+static guint
+teams_conv_send_typing_to_channel(TeamsAccount *sa, const gchar *channel, PurpleIMTypingState state)
 {
-	PurpleConnection *pc = purple_conversation_get_connection(conv);
-	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *post, *url;
 	JsonObject *obj;
 	
-	if (!PURPLE_CONNECTION_IS_CONNECTED(pc))
-		return 0;
-	
-	if (!purple_strequal(purple_protocol_get_id(purple_connection_get_protocol(pc)), TEAMS_PLUGIN_ID))
-		return 0;
-	
-	url = g_strdup_printf("/v1/users/ME/conversations/%s/messages", purple_url_encode(purple_conversation_get_name(conv)));
-	
-	obj = json_object_new();
-	json_object_set_int_member(obj, "clientmessageid", time(NULL));
-	json_object_set_string_member(obj, "content", "");
-	json_object_set_string_member(obj, "messagetype", state == PURPLE_IM_TYPING ? "Control/Typing" : "Control/ClearTyping");
-	json_object_set_string_member(obj, "contenttype", "text");
-	
-	post = teams_jsonobj_to_string(obj);
-	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
-	
-	g_free(post);
-	json_object_unref(obj);
-	g_free(url);
-	
-	return 5;
-}
-
-guint
-teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState state)
-{
-	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
-	gchar *post, *url;
-	JsonObject *obj;
-	
-	url = g_strdup_printf("/v1/users/ME/conversations/%s%s/messages", teams_user_url_prefix(name), purple_url_encode(name));
+	url = g_strdup_printf("/v1/users/ME/conversations/%s/messages", purple_url_encode(channel));
 	
 	obj = json_object_new();
 	json_object_set_int_member(obj, "clientmessageid", time(NULL));
@@ -1449,6 +1416,35 @@ teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState s
 	g_free(url);
 	
 	return 20;
+}
+
+guint
+teams_conv_send_typing(PurpleConversation *conv, PurpleIMTypingState state)
+{
+	PurpleConnection *pc = purple_conversation_get_connection(conv);
+	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
+	
+	if (!PURPLE_CONNECTION_IS_CONNECTED(pc))
+		return 0;
+	
+	if (!purple_strequal(purple_protocol_get_id(purple_connection_get_protocol(pc)), TEAMS_PLUGIN_ID))
+		return 0;
+	
+	return teams_conv_send_typing_to_channel(sa, purple_conversation_get_name(conv), state);
+}
+
+guint
+teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState state)
+{
+	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
+	
+	const gchar *channel = g_hash_table_lookup(sa->buddy_to_chat_lookup, name);
+	
+	if (channel) {
+		return teams_conv_send_typing_to_channel(sa, channel, state);
+	}
+	
+	return 0;
 }
 
 

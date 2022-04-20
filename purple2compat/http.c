@@ -2501,6 +2501,11 @@ static void purple_http_request_free(PurpleHttpRequest *request)
 	purple_http_headers_free(request->headers);
 	purple_http_cookie_jar_unref(request->cookie_jar);
 	purple_http_keepalive_pool_unref(request->keepalive_pool);
+	
+	request->headers = NULL;
+	request->cookie_jar = NULL;
+	request->keepalive_pool = NULL;
+	
 	g_free(request->method);
 	g_free(request->contents);
 	g_free(request->url);
@@ -2632,7 +2637,7 @@ void purple_http_request_set_contents(PurpleHttpRequest *request,
 		return;
 	}
 
-	if (length == 0)
+	if (length == -1)
 		length = strlen(contents);
 	request->contents = g_memdup2(contents, length);
 	request->contents_length = length;

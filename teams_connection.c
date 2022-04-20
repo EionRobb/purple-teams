@@ -101,7 +101,7 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 		} else {
 			purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
 		}
-		purple_http_request_set_contents(request, postdata, -1);
+		purple_http_request_set_contents(request, postdata, strlen(postdata));
 		
 		//Zero-length PUT's dont get the content-length header set
 		if ((method & TEAMS_METHOD_PUT) && (!postdata || !*postdata)) {
