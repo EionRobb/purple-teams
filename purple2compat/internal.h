@@ -6,7 +6,8 @@
 #include "win32/win32dep.h"
 #endif
 
-#include "../purplecompat.h"
+#define purple_proxy_info_get_proxy_type        purple_proxy_info_get_type
+#define purple_connection_is_disconnecting(c)   FALSE
 
 #ifndef N_
 #	define N_(a) (a)
