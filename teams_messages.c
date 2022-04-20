@@ -91,6 +91,50 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 // }
 
 static void
+teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_time, const gchar *msg_who, gchar **msg_content)
+{
+	const char *tmp;
+	const char *start;
+	const char *end;
+	GData *attributes;
+	GString *newmsg = NULL;
+
+	tmp = *msg_content;
+	
+	while (purple_markup_find_tag("img", tmp, &start, &end, &attributes)) {
+		char *srcstr = NULL;
+		char *itemtype = NULL;
+
+		if (newmsg == NULL)
+			newmsg = g_string_new("");
+
+		//copy any text before the img tag
+		if (tmp < start)
+			g_string_append_len(newmsg, tmp, start - tmp);
+		
+		itemtype = g_datalist_get_data(&attributes, "itemtype");
+		if (itemtype != NULL && purple_strequal(itemtype, "http://schema.skype.com/AMSImage")) {
+			srcstr = g_datalist_get_data(&attributes, "src");
+			if (srcstr != NULL) {
+				teams_download_uri_to_conv(sa, srcstr, conv, msg_time, msg_who);
+			}
+		}
+		
+		// Continue from the end of the tag 
+		tmp = end + 1;
+	}
+
+	if (newmsg != NULL)
+	{
+		// Append any remaining message data
+		g_string_append(newmsg, tmp);
+		
+		g_free(*msg_content);
+		*msg_content = g_string_free(newmsg, FALSE);
+	}
+}
+
+static void
 process_message_resource(TeamsAccount *sa, JsonObject *resource)
 {
 	const gchar *clientmessageid = NULL;
@@ -222,6 +266,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					g_free(html);
 					html = temp;
 				}
+				
+				teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
 				
 				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
 				
@@ -359,26 +405,27 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				//TODO use this for an alias
 			}
 			
+			imconv = purple_conversations_find_im_with_account(convbuddyname, sa->account);
+			if (imconv == NULL)
+			{
+				imconv = purple_im_conversation_new(sa->account, convbuddyname);
+			}
+			conv = PURPLE_CONVERSATION(imconv);
+			
+			teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
+			
 			if (teams_is_user_self(sa, from)) {
 				if (!g_str_has_prefix(html, "?OTR")) {
 					PurpleMessage *msg;
-					imconv = purple_conversations_find_im_with_account(convbuddyname, sa->account);
-					if (imconv == NULL)
-					{
-						imconv = purple_im_conversation_new(sa->account, convbuddyname);
-					}
-					conv = PURPLE_CONVERSATION(imconv);
 					
 					msg = purple_message_new_outgoing(convbuddyname, html, PURPLE_MESSAGE_SEND);
 					purple_message_set_time(msg, composetimestamp);
 					purple_conversation_write_message(conv, msg);
 					purple_message_destroy(msg);
 				}
+				
 			} else {
 				purple_serv_got_im(sa->pc, from, html, PURPLE_MESSAGE_RECV, composetimestamp);
-				
-				imconv = purple_conversations_find_im_with_account(from, sa->account);
-				conv = PURPLE_CONVERSATION(imconv);
 			}
 			g_free(html);
 		} else if (g_str_equal(messagetype, "RichText/UriObject")) {
@@ -1563,7 +1610,7 @@ teams_send_message(TeamsAccount *sa, const gchar *convname, const gchar *message
 	if (G_UNLIKELY(g_str_has_prefix(message, "<URIObject "))) {
 		json_object_set_string_member(obj, "messagetype", "RichText/Media_GenericFile"); //hax!
 	} else {
-		json_object_set_string_member(obj, "messagetype", "RichText");
+		json_object_set_string_member(obj, "messagetype", "RichText/Html");
 	}
 	json_object_set_string_member(obj, "contenttype", "text");
 	json_object_set_string_member(obj, "imdisplayname", sa->self_display_name ? sa->self_display_name : sa->username);
