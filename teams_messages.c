@@ -154,7 +154,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		
 		conv = PURPLE_CONVERSATION(chatconv);
 		
-		if (g_str_equal(messagetype, "Control/Typing")) {
+		if (g_str_equal(messagetype_parts[0], "Control") && (g_str_equal(messagetype_parts[1], "ClearTyping") || g_str_equal(messagetype_parts[1], "Typing"))) {
 			PurpleChatUserFlags cbflags;
 			PurpleChatUser *cb;
 
@@ -169,7 +169,12 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			if (cb != NULL) {
 				cbflags = purple_chat_user_get_flags(cb);
 				
-				cbflags |= PURPLE_CHAT_USER_TYPING;
+				if (g_str_equal(messagetype_parts[1], "Typing")) {
+					cbflags |= PURPLE_CHAT_USER_TYPING;
+				} else {
+					// ClearTyping
+					cbflags &= ~PURPLE_CHAT_USER_TYPING;
+				}
 				
 				purple_chat_user_set_flags(cb, cbflags);
 			}
@@ -219,6 +224,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 				
 				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+				
+				
 						
 				g_free(html);
 			}
@@ -321,9 +328,9 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		
 		if (g_str_equal(messagetype_parts[0], "Control")) {
 			if (g_str_equal(messagetype_parts[1], "ClearTyping")) {
-				purple_serv_got_typing(sa->pc, from, 7, PURPLE_IM_NOT_TYPING);
+				purple_serv_got_typing(sa->pc, from, 22, PURPLE_IM_NOT_TYPING);
 			} else if (g_str_equal(messagetype_parts[1], "Typing")) {
-				purple_serv_got_typing(sa->pc, from, 7, PURPLE_IM_TYPING);
+				purple_serv_got_typing(sa->pc, from, 22, PURPLE_IM_TYPING);
 			}
 		} else if ((g_str_equal(messagetype_parts[0], "RichText") || g_str_equal(messagetype, "Text")) && content && *content) {
 			gchar *html;
