@@ -102,6 +102,7 @@ teams_get_icon_now(PurpleBuddy *buddy)
 	TeamsBuddy *sbuddy;
 	TeamsAccount *sa;
 	gchar *url;
+	PurpleHttpRequest *request;
 	
 	purple_debug_info("teams", "getting new buddy icon for %s\n", purple_buddy_get_name(buddy));
 	
@@ -118,16 +119,26 @@ teams_get_icon_now(PurpleBuddy *buddy)
 		url = g_strdup_printf("https://teams.microsoft.com/api/mt/apac/beta/users/%s%s/profilepicturev2?size=HR128x128", teams_user_url_prefix(buddy_name), purple_url_encode(buddy_name));
 	}
 
+	if (purple_strequal(url, purple_buddy_icons_get_checksum_for_user(buddy))) {
+		return;
+	}
+
 	sa = sbuddy->sa;
 	
-	//TODO needs Cookie: authtoken=Bearer....
-	// from POST to https://teams.microsoft.com/api/mt/apac/beta/imageauth/cookie
-	// With headers:
-	//    Origin: https://teams.microsoft.com
-	//	Authorization: Bearer ey...
+	request = purple_http_request_new(url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
+	purple_http_request_set_max_redirects(request, 0);
+	purple_http_request_set_timeout(request, 120);
 	
-	// purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->image_token);
-	purple_http_get(sa->pc, teams_get_icon_cb, buddy, url);
+	// Weirdly uses a cookie instead of the Authorization header
+	if (strstr(url, "https://teams.microsoft.com/api/mt/") == url && strstr(url, "/profilepicturev2")) {
+		purple_http_request_header_set(request, "Referer", "https://teams.microsoft.com/");
+		purple_http_request_header_set_printf(request, "Cookie", "authtoken=Bearer%%3D%s%%26Origin%%3Dhttps%%3A%%2F%%2Fteams.microsoft.com", purple_url_encode(sa->id_token));
+	}
+	
+	purple_http_request(sa->pc, request, teams_get_icon_cb, buddy);
+	
+	purple_http_request_unref(request);
 	g_free(url);
 
 	active_icon_downloads++;
