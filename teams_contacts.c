@@ -1137,26 +1137,34 @@ teams_contact_suggestions(PurpleProtocolAction *action)
 static void
 teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
+	JsonObject *obj;
 	JsonArray *contacts;
 	PurpleBuddy *buddy;
 	TeamsBuddy *sbuddy;
 	gint index, length;
+	PurpleGroup *group = teams_get_blist_group(sa);
 	
-	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_ARRAY)
+	if (node == NULL)
 		return;
-	contacts = json_node_get_array(node);
+	obj = json_node_get_object(node);
+	contacts = json_object_get_array_member(obj, "value");
 	length = json_array_get_length(contacts);
 	
 	for(index = 0; index < length; index++)
 	{
 		JsonObject *contact = json_array_get_object_element(contacts, index);
 		
-		const gchar *username = json_object_get_string_member(contact, "username");
-		// const gchar *new_avatar;
+		const gchar *mri = json_object_get_string_member(contact, "mri");
+		const gchar *username = teams_strip_user_prefix(mri);
+		const gchar *new_avatar;
 		
 		buddy = purple_blist_find_buddy(sa->account, username);
 		if (!buddy)
-			continue;
+		{
+			buddy = purple_buddy_new(sa->account, username, NULL);
+			purple_blist_add_buddy(buddy, NULL, group, NULL);
+		}
+		
 		sbuddy = purple_buddy_get_protocol_data(buddy);
 		if (sbuddy == NULL) {
 			sbuddy = g_new0(TeamsBuddy, 1);
@@ -1165,53 +1173,49 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			sbuddy->sa = sa;
 		}
 		
-		g_free(sbuddy->display_name); sbuddy->display_name = g_strdup(json_object_get_string_member(contact, "displayname"));
+		g_free(sbuddy->display_name); 
+		sbuddy->display_name = g_strdup(json_object_get_string_member(contact, "displayName"));
 		purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
-		if (json_object_has_member(contact, "lastname")) {
-			gchar *fullname = g_strconcat(json_object_get_string_member(contact, "firstname"), " ", json_object_get_string_member(contact, "lastname"), NULL);
+		
+		if (json_object_has_member(contact, "surname")) {
+			gchar *fullname = g_strconcat(json_object_get_string_member(contact, "givenName"), " ", json_object_get_string_member(contact, "surname"), NULL);
 			
 			purple_buddy_set_server_alias(buddy, fullname);
 			
 			g_free(fullname);
 		} else {
-			purple_buddy_set_server_alias(buddy, json_object_get_string_member(contact, "firstname"));
+			purple_buddy_set_server_alias(buddy, json_object_get_string_member(contact, "givenName"));
 		}
 		
-		// new_avatar = json_object_get_string_member(contact, "avatarUrl");
-		// if (new_avatar && *new_avatar && (!sbuddy->avatar_url || !g_str_equal(sbuddy->avatar_url, new_avatar))) {
-			// g_free(sbuddy->avatar_url);
-			// sbuddy->avatar_url = g_strdup(new_avatar);			
-			// teams_get_icon(buddy);
-		// }
+		// Only bots have images
+		new_avatar = json_object_get_string_member(contact, "imageUri");
+		if (new_avatar && *new_avatar && (!sbuddy->avatar_url || !g_str_equal(sbuddy->avatar_url, new_avatar))) {
+			g_free(sbuddy->avatar_url);
+			sbuddy->avatar_url = g_strdup(new_avatar);
+		}
 		teams_get_icon(buddy);
-		
-		// g_free(sbuddy->mood); sbuddy->mood = g_strdup(json_object_get_string_member(contact, "mood"));
 	}
 }
 
 void
 teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 {
-	// a POST to
-	// https://teams.microsoft.com/api/mt/apac/beta/users/fetch?isMailAddress=false&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true
-	// with postdata
-	// ["8:orgid:...", "8:orgid:..."]
-	// returns multiple results
-	
-	const gchar *profiles_url = "/users/self/contacts/profiles";
+	const gchar *profiles_url = "/api/mt/apac/beta/users/fetchShortProfile?isMailAddress=false&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true";
 	GString *postdata;
 	GSList *cur = contacts;
 	
 	if (contacts == NULL)
 		return;
 	
-	postdata = g_string_new("");
+	postdata = g_string_new("[\"\"");
 	
 	do {
-		g_string_append_printf(postdata, "&contacts[]=%s", purple_url_encode(cur->data));
+		g_string_append_printf(postdata, ",\"%s%s\"", teams_user_url_prefix(cur->data), (gchar *) cur->data);
 	} while((cur = g_slist_next(cur)));
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+	g_string_append(postdata, "]");
+	
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 	
 	g_string_free(postdata, TRUE);
 }
@@ -1233,9 +1237,13 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	if (json_node_get_node_type(node) != JSON_NODE_OBJECT)
 		return;
 	userobj = json_node_get_object(node);
+	if (json_object_has_member(userobj, "value")) {
+		userobj = json_object_get_object_member(userobj, "value");
+	}
 	
 	if (!username || !*username) {
-		username = g_strdup(json_object_get_string_member(userobj, "mri"));
+		const gchar *mri = json_object_get_string_member(userobj, "mri");
+		username = g_strdup(teams_strip_user_prefix(mri));
 	}
 	if (!username || !*username) {
 		g_free(username);
@@ -1267,13 +1275,13 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			
 			sbuddy->buddy = buddy;
 			purple_buddy_set_protocol_data(buddy, sbuddy);
+		}
 		
-			if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
-				purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
-			}
-			if (!purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
-				purple_buddy_set_server_alias(buddy, sbuddy->fullname);
-			}
+		if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+			purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
+		}
+		if (!purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
+			purple_buddy_set_server_alias(buddy, sbuddy->fullname);
 		}
 	}
 	
@@ -1288,7 +1296,7 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *url = NULL;
 	
-	url = g_strconcat("/api/mt/apac/beta/users/", teams_user_url_prefix(username), purple_url_encode(username), "/?throwIfNotFound=false&isMailAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true", NULL);
+	url = g_strconcat("/api/mt/apac/beta/users/", teams_user_url_prefix(username), purple_url_encode(username), "/?throwIfNotFound=false&isMailAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true", NULL);
 	
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_got_info, g_strdup(username), TRUE);
 	
@@ -1431,7 +1439,7 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 	
 	if (users_to_fetch)
 	{
-		//teams_get_friend_profiles(sa, users_to_fetch);
+		teams_get_friend_profiles(sa, users_to_fetch);
 		teams_subscribe_to_contact_status(sa, users_to_fetch);
 		g_slist_free(users_to_fetch);
 	}
@@ -1529,7 +1537,7 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	
 	if (users_to_fetch)
 	{
-		//teams_get_friend_profiles(sa, users_to_fetch);
+		teams_get_friend_profiles(sa, users_to_fetch);
 		teams_subscribe_to_contact_status(sa, users_to_fetch);
 		g_slist_free(users_to_fetch);
 	}
@@ -1546,7 +1554,7 @@ teams_get_friend_list(TeamsAccount *sa)
 	// Do a search for all users with . in their email addresses - doesn't work for Guests
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, ".", teams_get_friend_list_cb, NULL, TRUE);
 	
-	// Fetch a list of teams and chats we're part of
+	// Fetch a list of teams and chats we're part of - doesn't include users for Guests
 	url = "/api/csa/api/v1/teams/users/me?isPrefetch=false&enableMembershipSummary=true";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_get_friend_list_teams_cb, NULL, TRUE);
 }
