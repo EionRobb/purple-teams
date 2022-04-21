@@ -1425,6 +1425,18 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 				PurpleChat *chat = purple_chat_new(sa->account, title, components);
 				purple_blist_add_chat(chat, group, NULL);
 			}
+			
+			JsonArray *members = json_object_get_array_member(chat, "members");
+			guint members_index, members_length = json_array_get_length(members);
+			
+			for(members_index = 0; members_index < members_length; members_index++)
+			{
+				JsonObject *member = json_array_get_object_element(members, members_index);
+				const gchar *mri = json_object_get_string_member(member, "mri");
+				const gchar *buddyid = teams_strip_user_prefix(mri);
+				
+				users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(buddyid));
+			}
 		}
 	}
 	
