@@ -370,6 +370,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			convbuddyname = g_strdup(g_hash_table_lookup(sa->chat_to_buddy_lookup, convname));
 		} else {
 			convbuddyname = g_strdup(teams_contact_url_to_name(conversationLink));
+			from = teams_contact_url_to_name(json_object_get_string_member(resource, "from"));
 		}
 		
 		if (g_str_equal(messagetype_parts[0], "Control")) {
