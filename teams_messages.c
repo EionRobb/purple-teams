@@ -287,6 +287,65 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				g_free(user);
 			}
 			purple_xmlnode_free(blob);
+		} else if (g_str_equal(messagetype, "ThreadActivity/MemberJoined")) {
+			JsonObject *info = json_decode_object(content, -1);
+			JsonArray *members = json_object_get_array_member(info, "members");
+			guint i, len = json_array_get_length(members);
+			PurpleGroup *group = teams_get_blist_group(sa);
+			
+			for(i = 0; i < len; i++)
+			{
+				JsonObject *member = json_array_get_object_element(members, i);
+				const gchar *mri = json_object_get_string_member(member, "id");
+				
+				const gchar *username = teams_contact_url_to_name(mri);
+				if (!purple_chat_conversation_find_user(chatconv, username)) {
+					const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
+					const gchar *meetingMemberType = json_object_get_string_member(member, "meetingMemberType");
+					
+					if (friendlyname && *friendlyname) {
+						PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, username);
+						const gchar *local_alias;
+						
+						if (buddy == NULL) {
+							purple_buddy_new(sa->account, from, NULL);
+							if (purple_strequal(meetingMemberType, "temp")) {
+								purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
+							}
+							purple_blist_add_buddy(buddy, NULL, group, NULL);
+						}
+						
+						local_alias = purple_buddy_get_local_alias(buddy);
+						if (!local_alias || !*local_alias) {
+							purple_serv_got_alias(sa->pc, username, friendlyname);
+						}
+					}
+					
+					purple_chat_conversation_add_user(chatconv, username, NULL, PURPLE_CHAT_USER_NONE, TRUE);
+				}
+			}
+			
+			json_object_unref(info);
+			
+		} else if (g_str_equal(messagetype, "ThreadActivity/MemberLeft")) {
+			JsonObject *info = json_decode_object(content, -1);
+			JsonArray *members = json_object_get_array_member(info, "members");
+			guint i, len = json_array_get_length(members);
+			
+			for(i = 0; i < len; i++)
+			{
+				JsonObject *member = json_array_get_object_element(members, i);
+				const gchar *mri = json_object_get_string_member(member, "id");
+				
+				const gchar *username = teams_contact_url_to_name(mri);
+				
+				if (teams_is_user_self(sa, username))
+					purple_chat_conversation_leave(chatconv);
+				purple_chat_conversation_remove_user(chatconv, username, NULL);
+			}
+			
+			json_object_unref(info);
+			
 		} else if (g_str_equal(messagetype, "ThreadActivity/DeleteMember")) {
 			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
 			PurpleXmlNode *target;
@@ -351,6 +410,27 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			
 			teams_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
 			purple_xmlnode_free(blob);
+			
+		} else if (g_str_equal(messagetype, "Event/Call")) {
+			//"content": "<ended/><partlist
+			//"content": "<partlist alt =\"\"></partlist>",
+			PurpleXmlNode *partlist = purple_xmlnode_from_str(content, -1);
+			const gchar *message = NULL;
+			
+			if (strstr(content, "<ended/>")) {
+				message = _("Call ended");
+			} else {
+				const gchar *count = purple_xmlnode_get_attrib(partlist, "count");
+				if (!count) {
+					message = _("Call started");
+				} else {
+					// someone left
+				}
+			}
+			
+			purple_xmlnode_free(partlist);
+			
+			purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_SYSTEM, message, composetimestamp);
 		} else {
 			purple_debug_warning("teams", "Unhandled thread message resource messagetype '%s'\n", messagetype);
 		}
@@ -907,6 +987,7 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	JsonObject *response;
 	JsonArray *members;
 	gint length, index;
+	PurpleGroup *group = teams_get_blist_group(sa);
 	
 	chatconv = purple_conversations_find_chat_with_account(chatname, sa->account);
 	if (chatconv == NULL)
@@ -927,18 +1008,36 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *username = teams_contact_url_to_name(userLink);
 		PurpleChatUserFlags cbflags = PURPLE_CHAT_USER_NONE;
 		
-		if (role && *role) {
-			if (g_str_equal(role, "Admin") || g_str_equal(role, "admin")) {
-				cbflags = PURPLE_CHAT_USER_OP;
-			} else if (g_str_equal(role, "User") || g_str_equal(role, "user")) {
-				cbflags = PURPLE_CHAT_USER_VOICE;
-			}
+		if (purple_strequal(role, "Admin") || purple_strequal(role, "admin")) {
+			cbflags = PURPLE_CHAT_USER_OP;
+		} else if (purple_strequal(role, "User") || purple_strequal(role, "user")) {
+			cbflags = PURPLE_CHAT_USER_VOICE;
 		}
 
 		if (username == NULL && json_object_has_member(member, "linkedMri")) {
 			username = teams_contact_url_to_name(json_object_get_string_member(member, "linkedMri"));
 		}
 		if (username != NULL) {
+			const gchar *friendlyName = json_object_get_string_member(member, "friendlyName");
+			PurpleBuddy *buddy;
+			const gchar *local_alias;
+			
+			if (friendlyName && *friendlyName) {
+				buddy = purple_blist_find_buddy(sa->account, username);
+				if (buddy == NULL) {
+					purple_buddy_new(sa->account, username, NULL);
+					if (purple_strequal(role, "Anonymous") || purple_strequal(role, "anonymous")) {
+						purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
+					}
+					purple_blist_add_buddy(buddy, NULL, group, NULL);
+				}
+				
+				local_alias = purple_buddy_get_local_alias(buddy);
+				if (!local_alias || !*local_alias) {
+					purple_serv_got_alias(sa->pc, username, friendlyName);
+				}
+			}
+			
 			purple_chat_conversation_add_user(chatconv, username, NULL, cbflags, FALSE);
 		}
 	}
@@ -1239,11 +1338,11 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 void
 teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 {
-	const gchar *contacts_url = "/v1/users/ME/contacts";
+	const gchar *contacts_url = "/v2/users/ME/contacts";
 	gchar *post;
 	GSList *cur = contacts;
-	JsonObject *obj;
-	JsonArray *contacts_array;
+	JsonObject *obj, *sub;
+	JsonArray *contacts_array, *subscriptions;
 	guint count = 0;
 	
 	if (contacts == NULL)
@@ -1306,10 +1405,18 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 	json_object_unref(obj);
 	
 	
-	gchar *url = g_strdup_printf("/v1/users/ME/endpoints/%s/subscriptions/0?name=interestedResources", purple_url_encode(sa->endpoint));
+	gchar *url = g_strdup_printf("/v2/users/ME/endpoints/%s", purple_url_encode(sa->endpoint));
 	
 	obj = json_object_new();
-	json_object_set_array_member(obj, "interestedResources", interested);
+	json_object_set_string_member(obj, "endpointFeatures", "Agent,Presence2015,MessageProperties,CustomUserProperties,NotificationStream,SupportsSkipRosterFromThreads");
+	
+	sub = json_object_new();
+	json_object_set_array_member(sub, "interestedResources", interested);
+	json_object_set_string_member(sub, "channelType", "HttpLongPoll");
+	
+	subscriptions = json_array_new();
+	json_array_add_object_element(subscriptions, sub);
+	json_object_set_array_member(obj, "subscriptions", subscriptions);
 	
 	post = teams_jsonobj_to_string(obj);
 
