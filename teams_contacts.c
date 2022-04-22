@@ -1765,17 +1765,17 @@ teams_buddy_unblock(PurpleConnection *pc, const char *name)
 void
 teams_set_mood_message(TeamsAccount *sa, const gchar *mood)
 {
-	JsonObject *obj, *payload;
+	JsonObject *obj;
 	gchar *post;
 	
 	obj = json_object_new();
-	payload = json_object_new();
 	
-	json_object_set_string_member(payload, "mood", mood ? mood : "");
-	json_object_set_object_member(obj, "payload", payload);
+	json_object_set_string_member(obj, "message", mood ? mood : "");
+	json_object_set_string_member(obj, "expiry", "9999-12-31T08:00:00.000Z");
+	
 	post = teams_jsonobj_to_string(obj);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, "/users/self/profile/partial", post, NULL, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/publishnote", post, NULL, NULL, TRUE);
 	
 	g_free(post);
 	json_object_unref(obj);
