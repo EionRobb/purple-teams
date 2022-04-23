@@ -340,6 +340,28 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				
 				const gchar *username = teams_contact_url_to_name(mri);
 				
+				// Add them to the buddy list so they have a nice 'left the room' message
+				const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
+				const gchar *meetingMemberType = json_object_get_string_member(member, "meetingMemberType");
+				
+				if (friendlyname && *friendlyname) {
+					PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, username);
+					const gchar *local_alias;
+					
+					if (buddy == NULL) {
+						purple_buddy_new(sa->account, from, NULL);
+						if (purple_strequal(meetingMemberType, "temp")) {
+							purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
+						}
+						purple_blist_add_buddy(buddy, NULL, group, NULL);
+					}
+					
+					local_alias = purple_buddy_get_local_alias(buddy);
+					if (!local_alias || !*local_alias) {
+						purple_serv_got_alias(sa->pc, username, friendlyname);
+					}
+				}
+				
 				if (teams_is_user_self(sa, username))
 					purple_chat_conversation_leave(chatconv);
 				purple_chat_conversation_remove_user(chatconv, username, NULL);
