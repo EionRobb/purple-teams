@@ -1771,7 +1771,7 @@ teams_set_mood_message(TeamsAccount *sa, const gchar *mood)
 	obj = json_object_new();
 	
 	json_object_set_string_member(obj, "message", mood ? mood : "");
-	json_object_set_string_member(obj, "expiry", "9999-12-31T08:00:00.000Z");
+	json_object_set_string_member(obj, "expiry", "9999-12-31T00:00:00.000Z");
 	
 	post = teams_jsonobj_to_string(obj);
 	

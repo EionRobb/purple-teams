@@ -136,14 +136,6 @@
 #define TEAMS_CLIENTINFO_NAME "skypeteams"
 #define TEAMS_CLIENTINFO_VERSION "1415/1.0.0.2021062127"
 
-//TODO "Available", "Busy", "DoNotDisturb", "BeRightBack", "Away"
-#define TEAMS_STATUS_ONLINE "Available"
-#define TEAMS_STATUS_IDLE "Away"
-#define TEAMS_STATUS_AWAY "Busy"
-#define TEAMS_STATUS_BUSY "DoNotDisturb"
-#define TEAMS_STATUS_HIDDEN "Hidden"
-#define TEAMS_STATUS_OFFLINE "Offline"
-
 
 #define TEAMS_BUDDY_IS_MSN(a) G_UNLIKELY((a) != NULL && strchr((a), '@') != NULL)
 #define TEAMS_BUDDY_IS_PHONE(a) G_UNLIKELY((a) != NULL && *(a) == '+')

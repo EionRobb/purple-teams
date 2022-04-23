@@ -154,17 +154,19 @@ teams_status_types(PurpleAccount *account)
 	status = purple_status_type_new_full(PURPLE_STATUS_OFFLINE, NULL, NULL, FALSE, FALSE, FALSE);
 	types = g_list_append(types, status);
 	
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AVAILABLE, TEAMS_STATUS_ONLINE, _("Online"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AVAILABLE, "Available", _("Available"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AWAY, TEAMS_STATUS_AWAY, _("Away"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AWAY, "Away", _("Away"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-//	status = purple_status_type_new_with_attrs(PURPLE_STATUS_EXTENDED_AWAY, TEAMS_STATUS_AWAY, _("Not Available"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
-//	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, TEAMS_STATUS_BUSY, _("Do Not Disturb"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_EXTENDED_AWAY, "BeRightBack", _("Be Right Back"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_INVISIBLE, TEAMS_STATUS_HIDDEN, _("Invisible"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "Busy", _("Busy"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_OFFLINE, TEAMS_STATUS_OFFLINE, _("Offline"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "DoNotDisturb", _("Do Not Disturb"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	types = g_list_append(types, status);
+	// status = purple_status_type_new_with_attrs(PURPLE_STATUS_INVISIBLE, "Offline", _("Appear offline"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	// types = g_list_append(types, status);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_OFFLINE, "Offline", _("Offline"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
 	
 	return types;

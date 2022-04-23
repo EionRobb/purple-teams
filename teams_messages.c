@@ -48,7 +48,7 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 	// const gchar *capabilities = json_object_get_string_member(resource, "capabilities");
 	// const gchar *lastSeenAt = json_object_get_string_member(resource, "lastSeenAt");
 	const gchar *from;
-	gboolean is_idle;
+	// gboolean is_idle;
 	
 	from = teams_contact_url_to_name(selfLink);
 	g_return_if_fail(from);
@@ -68,14 +68,14 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 		// purple_protocol_got_user_status(sa->account, from, "mobile", NULL);
 	// }
 	
-	is_idle = purple_strequal(status, TEAMS_STATUS_IDLE);
-	if (!is_idle) {
+	// is_idle = purple_strequal(status, TEAMS_STATUS_IDLE);
+	// if (!is_idle) {
 		purple_protocol_got_user_status(sa->account, from, status, NULL);
-	} else {
-		purple_protocol_got_user_status(sa->account, from, TEAMS_STATUS_ONLINE, NULL);
-	}
+	// } else {
+		// purple_protocol_got_user_status(sa->account, from, "Available", NULL);
+	// }
 	
-	purple_protocol_got_user_idle(sa->account, from, is_idle, 0);
+	// purple_protocol_got_user_idle(sa->account, from, is_idle, 0);
 }
 
 // static gboolean
@@ -331,6 +331,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			JsonObject *info = json_decode_object(content, -1);
 			JsonArray *members = json_object_get_array_member(info, "members");
 			guint i, len = json_array_get_length(members);
+			PurpleGroup *group = teams_get_blist_group(sa);
 			
 			for(i = 0; i < len; i++)
 			{
@@ -1362,7 +1363,7 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		gchar *id;
 		
 		if (TEAMS_BUDDY_IS_BOT(cur->data)) {
-			purple_protocol_got_user_status(sa->account, cur->data, TEAMS_STATUS_ONLINE, NULL);
+			purple_protocol_got_user_status(sa->account, cur->data, "Available", NULL);
 			continue;
 		}
 
@@ -1616,8 +1617,16 @@ teams_set_statusid(TeamsAccount *sa, const gchar *status)
 	
 	g_return_if_fail(status);
 	
+	post = g_strdup_printf("{\"availability\":\"%s\"}", status);
+	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/forceavailability/", post, NULL, NULL, TRUE);
+	g_free(post);
+	
+	return;
+	
+	//TODO whats this one?
+	
 	//https://presence.teams.microsoft.com/v1/me/endpoints/
-	post = g_strdup_printf("{\"id\":\"%s\",\"activity\":\"%s\",\"deviceType\":\"Desktop\"}", purple_url_encode(sa->endpoint), status);
+	post = g_strdup_printf("{\"id\":\"%s\",\"activity\":\"%s\",\"deviceType\":\"Desktop\"}", sa->endpoint, status);
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/endpoints/", post, NULL, NULL, TRUE);
 	g_free(post);
 }
@@ -1629,32 +1638,23 @@ teams_set_status(PurpleAccount *account, PurpleStatus *status)
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	
 	teams_set_statusid(sa, purple_status_get_id(status));
-	//teams_set_mood_message(sa, purple_status_get_attr_string(status, "message"));
+	teams_set_mood_message(sa, purple_status_get_attr_string(status, "message"));
 }
 
 void
 teams_set_idle(PurpleConnection *pc, int time)
 {
-	const gchar *status_id;
-	PurpleStatus *status;
-
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
+	gboolean is_active = FALSE;
+	gchar *post;
 	
-	status = purple_account_get_active_status(purple_connection_get_account(pc));
-	status_id = purple_status_get_id(status);
-
-	//todo:
-	//POST https://presence.teams.microsoft.com/v1/me/reportmyactivity/
-	//{"endpointId": "...", "isActive": true}
-
-	/* Only go idle if active status is online  */
-	if (!strcmp(status_id, TEAMS_STATUS_ONLINE)) {
-		if (time < 30) {
-			teams_set_statusid(sa, TEAMS_STATUS_ONLINE);
-		} else {
-			teams_set_statusid(sa, TEAMS_STATUS_IDLE);
-		}
+	if (time < 30) {
+		is_active = TRUE;
 	}
+	
+	post = g_strdup_printf("{\"endpointId\":\"%s\",\"isActive\":%s}", sa->endpoint, is_active ? "true" : "false");
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/reportmyactivity/", post, NULL, NULL, TRUE);
+	g_free(post);
 }
 
 
