@@ -938,7 +938,16 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 void
 teams_poll(TeamsAccount *sa)
 {
-	GString *url = g_string_new("/users/");
+	GString *url;
+	
+	if (sa->poll_conn) {
+		PurpleHttpConnection *http_conn = sa->poll_conn->http_conn;
+		if (purple_http_conn_is_running(http_conn)) {
+			return;
+		}
+	}
+	
+	url = g_string_new("/users/");
 	
 	if (sa->username) {
 		g_string_append_printf(url, "8:%s", purple_url_encode(sa->username));
@@ -957,7 +966,7 @@ teams_poll(TeamsAccount *sa)
 		g_string_append_printf(url, "?cursor=%s", sa->messages_cursor);
 	}
 	
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, sa->messages_host, url->str, NULL, teams_poll_cb, NULL, TRUE);
+	sa->poll_conn = teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, sa->messages_host, url->str, NULL, teams_poll_cb, NULL, TRUE);
 	
 	g_string_free(url, TRUE);
 }

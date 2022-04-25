@@ -188,6 +188,7 @@ struct _TeamsAccount {
 	gint refresh_token_timeout;
 	gchar *csa_access_token;
 	gchar *presence_access_token;
+	struct _TeamsConnection *poll_conn;
 };
 
 struct _TeamsBuddy {
