@@ -422,6 +422,7 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 
 	if (!json_object_has_member(obj, "tokens")) {
 		JsonObject *status = json_object_get_object_member(obj, "status");
+		
 		if (status) {
 			//{"status":{"code":40120,"text":"Authentication failed. Bad username or password."}}
 			error = g_strdup_printf(_("Login error: %s (code %" G_GINT64_FORMAT ")"),
@@ -429,6 +430,15 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 				json_object_get_int_member(status, "code")
 			);
 			error_type = PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED;
+		
+		} else {
+			//{"errorCode":"UserLicenseNotPresentForbidden","message":"User Login. Teams is disabled in user licenses"}
+			error = g_strdup_printf(_("Login error: %s (code %" G_GINT64_FORMAT ")"),
+				json_object_get_string_member(obj, "message"),
+				json_object_get_int_member(obj, "errorCode")
+			);
+			error_type = PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED;
+			
 		}
 		goto fail;
 	}
@@ -739,7 +749,7 @@ teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, 
 	g_string_append(postdata, "grant_type=refresh_token&");
 	g_string_append_printf(postdata, "refresh_token=%s&", purple_url_encode(sa->refresh_token));
 	
-	if (sa->tenant) {
+	if (sa->tenant && *sa->tenant) {
 		if (strchr(sa->tenant, '.')) {
 			// Likely a FQDN
 			tenant_host = g_strdup(sa->tenant);
@@ -818,7 +828,7 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 	g_string_append_printf(postdata, "code=%s&", purple_url_encode(auth_code));
 	g_string_append_printf(postdata, "redirect_uri=%s&", purple_url_encode(TEAMS_OAUTH_REDIRECT_URI));
 
-	if (sa->tenant) {
+	if (sa->tenant && *sa->tenant) {
 		if (strchr(sa->tenant, '.')) {
 			// Likely a FQDN
 			tenant_host = g_strdup(sa->tenant);
@@ -871,7 +881,7 @@ teams_do_web_auth(TeamsAccount *sa)
 	
 	//https://login.microsoftonline.com/Common/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=login&display=popup
 	
-	if (sa->tenant) {
+	if (sa->tenant && *sa->tenant) {
 		if (strchr(sa->tenant, '.')) {
 			// Likely a FQDN
 			tenant_host = g_strdup(sa->tenant);
