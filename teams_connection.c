@@ -80,6 +80,8 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 	
 	real_url = g_strdup_printf("%s://%s%s", method & TEAMS_METHOD_SSL ? "https" : "http", host, url);
 	
+	purple_debug_info("teams", "Fetching url %s\n", real_url);
+	
 	request = purple_http_request_new(real_url);
 	if (method & TEAMS_METHOD_POST) {
 		purple_http_request_set_method(request, "POST");
