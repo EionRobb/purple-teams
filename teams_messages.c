@@ -987,21 +987,22 @@ teams_mark_conv_seen(PurpleConversation *conv, PurpleConversationUpdateType type
 			
 			if (PURPLE_IS_IM_CONVERSATION(conv)) {
 				const gchar *buddyname = purple_conversation_get_name(conv);
-				convname = g_strconcat(teams_user_url_prefix(buddyname), buddyname, NULL);
+				convname = g_strdup(g_hash_table_lookup(sa->buddy_to_chat_lookup, buddyname));
 			} else {
 				convname = g_strdup(purple_conversation_get_data(conv, "chatname"));
 			}
 			
-			//TODO
-			url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
-			post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", last_teams_id, teams_get_js_time(), last_teams_id);
+			if (convname && *convname) {
+				url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
+				post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", last_teams_id, teams_get_js_time(), last_teams_id);
+				
+				teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
+				
+				g_free(convname);
+				g_free(post);
+				g_free(url);
 			
-			teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
-			
-			g_free(convname);
-			g_free(post);
-			g_free(url);
-			
+			}
 			g_free(last_teams_id);
 			purple_conversation_set_data(conv, "last_teams_id", NULL);
 		}
