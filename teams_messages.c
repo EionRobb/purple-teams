@@ -296,9 +296,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			for(i = 0; i < len; i++)
 			{
 				JsonObject *member = json_array_get_object_element(members, i);
-				const gchar *mri = json_object_get_string_member(member, "id");
+				const gchar *username = json_object_get_string_member(member, "id");
 				
-				const gchar *username = teams_contact_url_to_name(mri);
 				if (!purple_chat_conversation_find_user(chatconv, username)) {
 					const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
 					const gchar *meetingMemberType = json_object_get_string_member(member, "meetingMemberType");
@@ -336,9 +335,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			for(i = 0; i < len; i++)
 			{
 				JsonObject *member = json_array_get_object_element(members, i);
-				const gchar *mri = json_object_get_string_member(member, "id");
-				
-				const gchar *username = teams_contact_url_to_name(mri);
+				const gchar *username = json_object_get_string_member(member, "id");
 				
 				// Add them to the buddy list so they have a nice 'left the room' message
 				const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
