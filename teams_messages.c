@@ -1814,7 +1814,7 @@ const gchar *who, const gchar *message, PurpleMessageFlags flags)
 #endif
 
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
-	gchar *convname;
+	const gchar *convname;
 	
 	convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, who);
 	
@@ -1827,7 +1827,6 @@ const gchar *who, const gchar *message, PurpleMessageFlags flags)
 	}
 	
 	teams_send_message(sa, convname, message);
-	g_free(convname);
 	
 	return 1;
 }
