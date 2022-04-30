@@ -695,9 +695,6 @@ PurpleConnection *pc
 
 	act = purple_protocol_action_new(_("Search for friends..."), teams_search_users);
 	m = g_list_append(m, act);
-	
-	act = purple_protocol_action_new(_("People you might know..."), teams_contact_suggestions);
-	m = g_list_append(m, act);
 
 	return m;
 }

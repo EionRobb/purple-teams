@@ -941,10 +941,17 @@ teams_get_self_details(TeamsAccount *sa)
 void
 teams_search_results_add_buddy(PurpleConnection *pc, GList *row, void *user_data)
 {
+	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	PurpleAccount *account = purple_connection_get_account(pc);
+	PurpleGroup *group = teams_get_blist_group(sa);
+	const gchar *mri = g_list_nth_data(row, 0);
+	const gchar *displayName = g_list_nth_data(row, 1);
+	
+	mri = teams_strip_user_prefix(mri);
 
-	if (!purple_blist_find_buddy(account, g_list_nth_data(row, 0)))
-		purple_blist_request_add_buddy(account, g_list_nth_data(row, 0), "Skype", g_list_nth_data(row, 1));
+	if (!purple_blist_find_buddy(account, mri)) {
+		purple_blist_request_add_buddy(account, mri, purple_group_get_name(group), displayName);
+	}
 }
 
 void
@@ -998,6 +1005,12 @@ create_search_results(JsonNode *node, gint *olength)
 	
 	response = json_node_get_object(node);
 	resultsarray = json_object_get_array_member(response, "results");
+	if (resultsarray == NULL) {
+		resultsarray = json_object_get_array_member(response, "value");
+	}
+	if (resultsarray == NULL) {
+		resultsarray = json_object_get_array_member(response, "values");
+	}
 	length = json_array_get_length(resultsarray);
 	
 	PurpleNotifySearchResults *results = purple_notify_searchresults_new();
@@ -1009,15 +1022,16 @@ create_search_results(JsonNode *node, gint *olength)
 		}
 		return NULL;
 	}
-		
-	/* columns: Friend ID, Name, Network */
-	column = purple_notify_searchresults_column_new(_("Skype Name"));
+	
+	column = purple_notify_searchresults_column_new(_("ID"));
 	purple_notify_searchresults_column_add(results, column);
 	column = purple_notify_searchresults_column_new(_("Display Name"));
 	purple_notify_searchresults_column_add(results, column);
-	column = purple_notify_searchresults_column_new(_("City"));
+	column = purple_notify_searchresults_column_new(_("Email"));
 	purple_notify_searchresults_column_add(results, column);
-	column = purple_notify_searchresults_column_new(_("Country"));
+	column = purple_notify_searchresults_column_new(_("Given Name"));
+	purple_notify_searchresults_column_add(results, column);
+	column = purple_notify_searchresults_column_new(_("Surname"));
 	purple_notify_searchresults_column_add(results, column);
 	
 	purple_notify_searchresults_button_add(results,
@@ -1027,7 +1041,10 @@ create_search_results(JsonNode *node, gint *olength)
 	for(index = 0; index < length; index++)
 	{
 		JsonObject *result = json_array_get_object_element(resultsarray, index);
-		JsonObject *skypecontact = json_object_get_object_member(result, "nodeProfileData");
+		JsonObject *contact = json_object_get_object_member(result, "nodeProfileData");
+		if (contact == NULL) {
+			contact = result;
+		}
 		
 		/* the row in the search results table */
 		/* prepend to it backwards then reverse to speed up adds */
@@ -1035,14 +1052,15 @@ create_search_results(JsonNode *node, gint *olength)
 
 #define add_skypecontact_row(value) (\
 		row = g_list_prepend(row, \
-			!json_object_has_member(skypecontact, (value)) ? NULL : \
-			g_strdup(json_object_get_string_member(skypecontact, (value)))\
+			!json_object_has_member(contact, (value)) ? NULL : \
+			g_strdup(json_object_get_string_member(contact, (value)))\
 		) \
 )		
-		add_skypecontact_row("skypeId");
-		add_skypecontact_row("name");
-		add_skypecontact_row("city");
-		add_skypecontact_row("country");
+		add_skypecontact_row("mri");
+		add_skypecontact_row("email");
+		add_skypecontact_row("displayName");
+		add_skypecontact_row("givenName");
+		add_skypecontact_row("surname");
 		
 		row = g_list_reverse(row);
 		
@@ -1075,33 +1093,14 @@ teams_search_users_text_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	purple_notify_searchresults(sa->pc, NULL, search_term, NULL, results, NULL, NULL);
 }
 
-static void
-teams_contact_suggestions_received_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
-{
-	gint length;
-	PurpleNotifySearchResults *results = create_search_results(node, &length);
-	
-	if (results == NULL || length == 0)
-	{
-		purple_notify_warning(sa->pc, _("No results"), _("There are no contact suggestions available for you"), "", purple_request_cpar_from_connection(sa->pc));
-		return;
-	}
-	
-	purple_notify_searchresults(sa->pc, _("Contact suggestions"), NULL, NULL, results, NULL, NULL);
-}
-
 void
 teams_search_users_text(gpointer user_data, const gchar *text)
 {
 	TeamsAccount *sa = user_data;
-	GString *url = g_string_new("/search/v1.1/namesearch/swx/?");
+	const gchar *url = "/api/mt/apac/beta/users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
 	
-	g_string_append_printf(url, "searchstring=%s&", purple_url_encode(text));
-	g_string_append(url, "requestId=1&");
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, text, teams_search_users_text_cb, g_strdup(text), TRUE);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_GRAPH_HOST, url->str, NULL, teams_search_users_text_cb, g_strdup(text), FALSE);
-	
-	g_string_free(url, TRUE);
 }
 
 void
@@ -1110,8 +1109,8 @@ teams_search_users(PurpleProtocolAction *action)
 	PurpleConnection *pc = purple_protocol_action_get_connection(action);
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	
-	purple_request_input(pc, "Search for Skype Friends",
-					   "Search for Skype Friends",
+	purple_request_input(pc, "Search for Teams Contacts",
+					   "Search for Teams Contacts",
 					   NULL,
 					   NULL, FALSE, FALSE, NULL,
 					   _("_Search"), G_CALLBACK(teams_search_users_text),
@@ -1119,19 +1118,6 @@ teams_search_users(PurpleProtocolAction *action)
 					   purple_request_cpar_from_connection(pc),
 					   sa);
 
-}
-
-void
-teams_contact_suggestions(PurpleProtocolAction *action)
-{
-	PurpleConnection *pc = purple_protocol_action_get_connection(action);
-	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
-	
-	GString *url = g_string_new("/v1.1/recommend?requestId=1&locale=en-US&count=20");
-	
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_DEFAULT_CONTACT_SUGGESTIONS_HOST, url->str, NULL, teams_contact_suggestions_received_cb, 0, FALSE);
-	
-	g_string_free(url, TRUE);
 }
 
 static void

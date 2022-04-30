@@ -66,6 +66,4 @@ gboolean teams_check_authrequests(TeamsAccount *sa);
 
 void teams_set_mood_message(TeamsAccount *sa, const gchar *mood);
 
-void teams_contact_suggestions(PurpleProtocolAction *action);
-
 #endif /* TEAMS_CONTACTS_H */
