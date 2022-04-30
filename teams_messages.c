@@ -282,8 +282,11 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				target = purple_xmlnode_get_next_twin(target))
 			{
 				gchar *user = purple_xmlnode_get_data(target);
-				if (!purple_chat_conversation_find_user(chatconv, &user[2]))
-					purple_chat_conversation_add_user(chatconv, &user[2], NULL, PURPLE_CHAT_USER_NONE, TRUE);
+				const gchar *username = user;
+				username = teams_strip_user_prefix(username);
+				
+				if (!purple_chat_conversation_find_user(chatconv, username))
+					purple_chat_conversation_add_user(chatconv, username, NULL, PURPLE_CHAT_USER_NONE, TRUE);
 				g_free(user);
 			}
 			purple_xmlnode_free(blob);
@@ -297,6 +300,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			{
 				JsonObject *member = json_array_get_object_element(members, i);
 				const gchar *username = json_object_get_string_member(member, "id");
+				username = teams_strip_user_prefix(username);
 				
 				if (!purple_chat_conversation_find_user(chatconv, username)) {
 					const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
@@ -336,6 +340,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			{
 				JsonObject *member = json_array_get_object_element(members, i);
 				const gchar *username = json_object_get_string_member(member, "id");
+				username = teams_strip_user_prefix(username);
 				
 				// Add them to the buddy list so they have a nice 'left the room' message
 				const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
@@ -373,18 +378,23 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				target = purple_xmlnode_get_next_twin(target))
 			{
 				gchar *user = purple_xmlnode_get_data(target);
-				if (teams_is_user_self(sa, &user[2]))
+				const gchar *username = user;
+				username = teams_strip_user_prefix(username);
+				
+				if (teams_is_user_self(sa, username))
 					purple_chat_conversation_leave(chatconv);
-				purple_chat_conversation_remove_user(chatconv, &user[2], NULL);
+				purple_chat_conversation_remove_user(chatconv, username, NULL);
 				g_free(user);
 			}
 			purple_xmlnode_free(blob);
 		} else if (g_str_equal(messagetype, "ThreadActivity/TopicUpdate")) {
 			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
 			gchar *initiator = purple_xmlnode_get_data(purple_xmlnode_get_child(blob, "initiator"));
+			const gchar *username = initiator;
 			gchar *value = purple_xmlnode_get_data(purple_xmlnode_get_child(blob, "value"));
 			
-			purple_chat_conversation_set_topic(chatconv, &initiator[2], value);
+			username = teams_strip_user_prefix(username);
+			purple_chat_conversation_set_topic(chatconv, username, value);
 			purple_conversation_update(conv, PURPLE_CONVERSATION_UPDATE_TOPIC);
 				
 			g_free(initiator);
@@ -401,6 +411,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				gchar *user = purple_xmlnode_get_data(purple_xmlnode_get_child(target, "id"));
 				gchar *role = purple_xmlnode_get_data(purple_xmlnode_get_child(target, "role"));
 				PurpleChatUserFlags cbflags = PURPLE_CHAT_USER_NONE;
+				const gchar *username = user;
+				username = teams_strip_user_prefix(username);
 				
 				if (role && *role) {
 					if (g_str_equal(role, "Admin") || g_str_equal(role, "admin")) {
@@ -410,10 +422,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					}
 				}
 				#if !PURPLE_VERSION_CHECK(3, 0, 0)
-					purple_conv_chat_user_set_flags(chatconv, &user[2], cbflags);
+					purple_conv_chat_user_set_flags(chatconv, username, cbflags);
 					(void) cb;
 				#else
-					cb = purple_chat_conversation_find_user(chatconv, &user[2]);
+					cb = purple_chat_conversation_find_user(chatconv, username);
 					purple_chat_user_set_flags(cb, cbflags);
 				#endif
 				g_free(user);
