@@ -1343,6 +1343,8 @@ static void _purple_http_send(gpointer _hc, gint fd, PurpleInputCondition cond)
 	int written, write_len;
 	const gchar *write_from;
 	gboolean writing_headers;
+	
+	g_return_if_fail(hc->socket);
 
 	/* Waiting for data. This could be written more efficiently, by removing
 	 * (and later, adding) hs->inpa. */
