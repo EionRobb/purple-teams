@@ -1147,9 +1147,30 @@ teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		JsonObject *conversation = json_array_get_object_element(conversations, index);
 		const gchar *id = json_object_get_string_member(conversation, "id");
 		JsonObject *lastMessage = json_object_get_object_member(conversation, "lastMessage");
+		
 		if (lastMessage != NULL && json_object_has_member(lastMessage, "composetime")) {
 			const gchar *composetime = json_object_get_string_member(lastMessage, "composetime");
 			gint composetimestamp = (gint) purple_str_to_time(composetime, TRUE, NULL, NULL, NULL);
+			
+			// Check if it's a one-to-one before we fetch history
+			JsonObject *threadProperties = json_object_get_object_member(conversation, "threadProperties");
+			if (threadProperties != NULL) {
+				const gchar *uniquerosterthread = json_object_get_string_member(threadProperties, "uniquerosterthread");
+				if (purple_strequal(uniquerosterthread, "true")) {
+					// This is a one-to-one chat
+					
+					if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
+						// ... and we dont know about it yet
+						const gchar *from = json_object_get_string_member(lastMessage, "from");
+						const gchar *buddyid = teams_contact_url_to_name(from);
+						
+						if (buddyid != NULL) {
+							g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+							g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+						}
+					}
+				}
+			}
 			
 			if (composetimestamp > since) {
 				teams_get_conversation_history_since(sa, id, since);

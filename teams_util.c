@@ -139,6 +139,8 @@ teams_contact_url_to_name(const gchar *url)
 	static gchar *tempname = NULL;
 	const gchar *start, *end;
 	
+	g_return_val_if_fail(url != NULL, NULL);
+	
 	// Strip the numeric prefix off these ones
 	start = g_strrstr(url, "/8:");
 	if (!start) start = g_strrstr(url, "/1:");
