@@ -1187,6 +1187,7 @@ void
 teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 {
 	const gchar *profiles_url = "/api/mt/apac/beta/users/fetchShortProfile?isMailAddress=false&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true";
+	const gchar *federated_profiles_url = "/api/mt/apac/beta/users/fetchFederated";
 	GString *postdata;
 	GSList *cur = contacts;
 	
@@ -1202,6 +1203,7 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 	g_string_append(postdata, "]");
 	
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 	
 	g_string_free(postdata, TRUE);
 }
@@ -1214,7 +1216,6 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	PurpleNotifyUserInfo *user_info;
 	JsonObject *userobj;
 	PurpleBuddy *buddy;
-	TeamsBuddy *sbuddy;
 	
 	if (node == NULL)
 		return;
@@ -1227,8 +1228,13 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		userobj = json_object_get_object_member(userobj, "value");
 	}
 	
+	if (!json_object_has_member(userobj, "mri")) {
+		return;
+	}
+	
 	if (!username || !*username) {
 		const gchar *mri = json_object_get_string_member(userobj, "mri");
+		g_free(username);
 		username = g_strdup(teams_strip_user_prefix(mri));
 	}
 	if (!username || !*username) {
@@ -1244,14 +1250,18 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	_SKYPE_USER_INFO("givenName", "First Name");
 	_SKYPE_USER_INFO("surname", "Last Name");
 	_SKYPE_USER_INFO("email", "Email");
+	_SKYPE_USER_INFO("tenantName", "Tenant");
+	_SKYPE_USER_INFO("displayName", "Display Name");
+	_SKYPE_USER_INFO("type", "User Type");
 	
 	buddy = purple_blist_find_buddy(sa->account, username);
 	if (buddy) {
-		sbuddy = purple_buddy_get_protocol_data(buddy);
+		const gchar *firstname = json_object_get_string_member(userobj, "givenName");
+		const gchar *surname = json_object_get_string_member(userobj, "surname");
+		const gchar *display_name = json_object_get_string_member(userobj, "displayName");
+		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
+		
 		if (sbuddy == NULL) {
-			const gchar *firstname = json_object_get_string_member(userobj, "givenName");
-			const gchar *surname = json_object_get_string_member(userobj, "surname");
-			const gchar *display_name = json_object_get_string_member(userobj, "displayName");
 			
 			sbuddy = g_new0(TeamsBuddy, 1);
 			sbuddy->skypename = g_strdup(username);
@@ -1261,6 +1271,10 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			
 			sbuddy->buddy = buddy;
 			purple_buddy_set_protocol_data(buddy, sbuddy);
+			
+		} else {
+			sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
+			sbuddy->display_name = g_strdup(display_name);
 		}
 		
 		if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
@@ -1281,12 +1295,23 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *url = NULL;
+	gchar *postdata;
 	
 	url = g_strconcat("/api/mt/apac/beta/users/", teams_user_url_prefix(username), purple_url_encode(username), "/?throwIfNotFound=false&isMailAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true", NULL);
 	
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_got_info, g_strdup(username), TRUE);
 	
 	g_free(url);
+	
+	// just in case they're a user on a different tenant:
+	
+	url = "/api/mt/apac/beta/users/fetchFederated";
+	
+	postdata = g_strconcat("[\"", teams_user_url_prefix(username), username, "\"]", NULL);
+	
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, postdata, teams_got_info, g_strdup(username), TRUE);
+	
+	g_free(postdata);
 }
 
 void
