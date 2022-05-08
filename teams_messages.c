@@ -1182,10 +1182,24 @@ teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 						// ... and we dont know about it yet
 						const gchar *from = json_object_get_string_member(lastMessage, "from");
 						const gchar *buddyid = teams_contact_url_to_name(from);
+						gchar** split = NULL;
 						
-						if (buddyid != NULL) {
-							g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
-							g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+						if (buddyid == NULL || teams_is_user_self(sa, buddyid)) {
+							// Try to guess the other person from the chat id
+							split = g_strsplit_set(id, ":_@", 4);
+							buddyid = g_strconcat("orgid:", split[1], NULL);
+							if (teams_is_user_self(sa, buddyid)) {
+								g_free((gpointer) buddyid);
+								buddyid = g_strconcat("orgid:", split[2], NULL);
+							}
+						}
+						
+						g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+						g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+						
+						if (split != NULL) {
+							g_strfreev(split);
+							g_free((gpointer) buddyid);
 						}
 					}
 				}
