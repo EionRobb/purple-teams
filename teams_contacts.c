@@ -1403,7 +1403,7 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 			
 		} else {
 			
-			if (!teams_find_chat_in_group(sa->account, id, group)) {
+			if (!teams_find_chat(sa->account, id)) {
 				const gchar *title = json_object_get_string_member(chat, "title");
 				GHashTable *components = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 				g_hash_table_replace(components, g_strdup("chatname"), g_strdup(id));
