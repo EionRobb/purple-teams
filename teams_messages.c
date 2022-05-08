@@ -937,6 +937,10 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		}
 		
 		//TODO record id of highest recieved id to make sure we dont process the same id twice
+		
+	} else {
+		// No data received, or timeout
+		sa->poll_conn = NULL;
 	}
 	
 	if (!purple_connection_is_disconnecting(sa->pc)) {
@@ -952,6 +956,9 @@ teams_poll(TeamsAccount *sa)
 	if (sa->poll_conn) {
 		PurpleHttpConnection *http_conn = sa->poll_conn->http_conn;
 		if (purple_http_conn_is_running(http_conn)) {
+			
+			// This will trigger a reconnection
+			purple_http_conn_cancel(http_conn);
 			return;
 		}
 	}
