@@ -1766,6 +1766,8 @@ teams_sent_message_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	g_free(convname);
 }
 
+static void teams_conversation_check_message_for_images(TeamsAccount *sa, const gchar *convname, gchar *message);
+
 static void
 teams_send_message(TeamsAccount *sa, const gchar *convname, const gchar *message)
 {
@@ -1777,6 +1779,7 @@ teams_send_message(TeamsAccount *sa, const gchar *convname, const gchar *message
 	static GRegex *font_strip_regex = NULL;
 	gchar *font_stripped;
 	
+	
 	url = g_strdup_printf("/v1/users/ME/conversations/%s/messages", purple_url_encode(convname));
 	
 	clientmessageid = teams_get_js_time();
@@ -1784,6 +1787,12 @@ teams_send_message(TeamsAccount *sa, const gchar *convname, const gchar *message
 	
 	// Some clients don't receive messages with <br>'s in them
 	stripped = purple_strreplace(message, "<br>", "\r\n");
+	
+	teams_conversation_check_message_for_images(sa, convname, stripped);
+	if (!stripped || !*stripped) {
+		// Nothing to send
+		return;
+	}
 	
 	// Pidgin has a nasty habit of sending <font size="3"> when copy-pasting text
 	if (font_strip_regex == NULL) {
@@ -2056,4 +2065,183 @@ teams_get_thread_url(TeamsAccount *sa, const gchar *thread)
 	// {"Id":"MeMxigEAAAAxOTo5NDZkMjExMGQ4YmU0ZjQzODc3NjMxNDQ3ZTgxYWNmNkB0aHJlYWQuc2t5cGU","Blob":null,"JoinUrl":"https://join.skype.com/ALXsHZ2RFQnk","ThreadId":"19:946d2110d8be4f43877631447e81acf6@thread.skype"}
 }
 
+static void
+teams_conversation_send_image_part2_cb(PurpleHttpConnection *connection, PurpleHttpResponse *response, gpointer user_data)
+{
+	PurpleConnection *pc = purple_http_conn_get_purple_connection(connection);
+	TeamsAccount *sa;
+	gchar *convname;
+	gchar *image_id;
+	gchar *image_url;
+	gchar *html;
+	
+	if (purple_http_response_get_error(response) != NULL) {
+		purple_notify_error(pc, _("Image Send Error"), _("There was an error sending the image"), purple_http_response_get_error(response), purple_request_cpar_from_connection(pc));
+		g_dataset_destroy(connection);
+		return;
+	}
+	
+	sa = user_data;
+	convname = g_dataset_get_data(connection, "convname");
+	image_id = g_dataset_get_data(connection, "image_id");
+	
+	image_url = g_strdup_printf("https://as-api.asm.skype.com/v1/objects/%s/views/imgo", purple_url_encode(image_id));
+	html = g_strdup_printf("<p><img itemscope=\"image\" style=\"vertical-align:bottom\" src=\"%s\" alt=\"image\" itemtype=\"http://schema.skype.com/AMSImage\" width=\"50%%\" height=\"250\" id=\"%s\" itemid=\"%s\" href=\"%s\" target-src=\"%s\"></p>", image_url, image_id, image_id, image_url, image_url);
+	
+	teams_send_message(sa, convname, html);
+	
+	g_free(html);
+	g_free(image_url);
+}
+
+static void
+teams_conversation_send_image_cb(PurpleHttpConnection *connection, PurpleHttpResponse *response, gpointer user_data)
+{
+	TeamsAccount *sa;
+	gchar *convname;
+	PurpleImage *image;
+	PurpleHttpRequest *request;
+	PurpleHttpConnection *new_connection;
+	PurpleConnection *pc = purple_http_conn_get_purple_connection(connection);
+	JsonObject *obj;
+	const gchar *data;
+	gsize len;
+	const gchar *id;
+	gchar *upload_url;
+	
+	sa = user_data;
+	convname = g_dataset_get_data(connection, "convname");
+	image = g_dataset_get_data(connection, "image");
+	
+	if (purple_http_response_get_error(response) != NULL) {
+		purple_notify_error(pc, _("Image Send Error"), _("There was an error sending the image"), purple_http_response_get_error(response), purple_request_cpar_from_connection(pc));
+		purple_image_unref(image);
+		g_dataset_destroy(connection);
+		return;
+	}
+	
+	data = purple_http_response_get_data(response, &len);
+	obj = json_decode_object(data, len);
+	if (obj == NULL || !json_object_has_member(obj, "id")) {
+		purple_image_unref(image);
+		g_dataset_destroy(connection);
+		return;
+	}
+	
+	id = json_object_get_string_member(obj, "id");
+	
+	upload_url = g_strdup_printf("https://as-prod.asyncgw.teams.microsoft.com/v1/objects/%s/content/imgpsh", purple_url_encode(id));
+	
+	request = purple_http_request_new(upload_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
+	purple_http_request_header_set(request, "Content-Type", "application/octet-stream");
+	purple_http_request_header_set_printf(request, "Authorization", "skype_token %s", sa->skype_token);
+	purple_http_request_header_set(request, "Referer", "https://teams.microsoft.com/");
+	purple_http_request_header_set(request, "Accept", "*/*");
+	purple_http_request_set_method(request, "PUT");
+	purple_http_request_set_contents(request, purple_image_get_data(image), purple_image_get_data_size(image));
+	purple_http_request_set_max_redirects(request, 0);
+	purple_http_request_set_timeout(request, 120);
+
+	new_connection = purple_http_request(sa->pc, request, teams_conversation_send_image_part2_cb, sa);
+	purple_http_request_unref(request);
+	
+	g_dataset_set_data_full(new_connection, "convname", g_strdup(convname), g_free);
+	g_dataset_set_data_full(new_connection, "image_id", g_strdup(id), g_free);
+	
+	g_dataset_destroy(connection);
+	g_free(upload_url);
+	purple_image_unref(image);
+}
+
+static void
+teams_conversation_send_image(TeamsAccount *sa, const gchar *convname, PurpleImage *image)
+{
+	PurpleHttpRequest *request;
+	PurpleHttpConnection *connection;
+	gchar *filename;
+	gchar *postdata;
+	JsonObject *obj, *permissions;
+	JsonArray *permissions_array;
+	
+	filename = (gchar *)purple_image_get_path(image);
+	if (filename != NULL) {
+		filename = g_path_get_basename(filename);
+	} else {
+		filename = g_strdup_printf("MicrosoftTeams-image.%s", purple_image_get_extension(image));
+	}
+	
+	permissions_array = json_array_new();
+	json_array_add_string_element(permissions_array, "read");
+	
+	permissions = json_object_new();
+	json_object_set_array_member(permissions, convname, permissions_array);
+	
+	obj = json_object_new();
+	json_object_set_string_member(obj, "type", "pish/image");
+	json_object_set_object_member(obj, "permissions", permissions);
+	json_object_set_string_member(obj, "filename", filename);
+	json_object_set_string_member(obj, "sharingMode", "Inline");
+	postdata = teams_jsonobj_to_string(obj);
+	
+	request = purple_http_request_new("https://as-prod.asyncgw.teams.microsoft.com/v1/objects/");
+	purple_http_request_set_method(request, "POST");
+	purple_http_request_header_set(request, "content-type", "application/json");
+	purple_http_request_header_set_printf(request, "Authorization", "skype_token %s", sa->skype_token);
+	purple_http_request_header_set(request, "x-ms-client-version", TEAMS_CLIENTINFO_VERSION);
+	purple_http_request_header_set(request, "Accept", "application/json");
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
+	purple_http_request_set_contents(request, postdata, strlen(postdata));
+	purple_http_request_set_max_redirects(request, 0);
+	purple_http_request_set_timeout(request, 120);
+	
+	connection = purple_http_request(sa->pc, request, teams_conversation_send_image_cb, sa);
+	purple_http_request_unref(request);
+	
+	g_dataset_set_data_full(connection, "convname", g_strdup(convname), g_free);
+	purple_image_ref(image);
+	g_dataset_set_data_full(connection, "image", image, NULL);
+	
+	g_free(filename);
+}
+
+
+static void
+teams_conversation_check_message_for_images(TeamsAccount *sa, const gchar *convname, gchar *message)
+{
+	int imgid;
+	gchar *img;
+	PurpleImage *image;
+	
+	if ((img = strstr(message, "<img ")) || (img = strstr(message, "<IMG "))) {
+		const gchar *id, *src;
+		const gchar *close = strchr(img, '>');
+		imgid = 0;
+		
+		if (((id = strstr(img, "ID=\"")) || (id = strstr(img, "id=\""))) &&
+				id < close) {
+			imgid = atoi(id + 4);
+			image = purple_image_store_get(imgid);
+			
+			if (image != NULL) {
+				teams_conversation_send_image(sa, convname, image);
+			}
+		} else if (((src = strstr(img, "SRC=\"")) || (src = strstr(img, "src=\""))) &&
+				src < close) {
+			// purple3 embeds images using src="purple-image:1"
+			if (strncmp(src + 5, "purple-image:", 13) == 0) {
+				imgid = atoi(src + 5 + 13);
+				image = purple_image_store_get(imgid);
+				
+				if (image != NULL) {
+					teams_conversation_send_image(sa, convname, image);
+				}
+			}
+		}
+		
+		if (imgid && image != NULL) {
+			g_memmove(img, close, strlen(close) + 2);
+		}
+	}
+}
 

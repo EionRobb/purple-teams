@@ -10,6 +10,8 @@
 #define purple_image_get_data_size        purple_imgstore_get_size
 #define purple_image_get_data             purple_imgstore_get_data
 #define purple_image_get_extension        purple_imgstore_get_extension
+#define purple_image_ref                  purple_imgstore_ref
+#define purple_image_unref                purple_imgstore_unref
 
 
 static inline const gchar *

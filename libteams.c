@@ -723,7 +723,7 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	//PurpleProtocol
 	info->id = TEAMS_PLUGIN_ID;
 	info->name = "Teams";
-	prpl_info->options = OPT_PROTO_NO_PASSWORD | OPT_PROTO_CHAT_TOPIC | OPT_PROTO_INVITE_MESSAGE /*| OPT_PROTO_IM_IMAGE*/;
+	prpl_info->options = OPT_PROTO_NO_PASSWORD | OPT_PROTO_CHAT_TOPIC /*| OPT_PROTO_INVITE_MESSAGE*/ | OPT_PROTO_IM_IMAGE;
 	
 	//TODO tidy up
 	// alt_login = purple_account_option_bool_new(N_("Use alternative login method"), "alt-login", TRUE);

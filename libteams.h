@@ -95,6 +95,8 @@
 #include "connection.h"
 #include "debug.h"
 #include "http.h"
+#include "image.h"
+#include "image-store.h"
 #include "plugins.h"
 #include "proxy.h"
 #include "request.h"
