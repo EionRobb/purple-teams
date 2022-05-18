@@ -1190,6 +1190,7 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 	const gchar *federated_profiles_url = "/api/mt/apac/beta/users/fetchFederated";
 	GString *postdata;
 	GSList *cur = contacts;
+	const gchar *user_prefix;
 	
 	if (contacts == NULL)
 		return;
@@ -1197,7 +1198,9 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 	postdata = g_string_new("[\"\"");
 	
 	do {
-		g_string_append_printf(postdata, ",\"%s%s\"", teams_user_url_prefix(cur->data), (gchar *) cur->data);
+		user_prefix = teams_user_url_prefix(cur->data);
+		if (g_str_equal(user_prefix, "8:") && strncmp(cur->data, "orgid:", 6) != 0) continue;
+		g_string_append_printf(postdata, ",\"%s%s\"", user_prefix, (gchar *) cur->data);
 	} while((cur = g_slist_next(cur)));
 	
 	g_string_append(postdata, "]");
@@ -1225,7 +1228,11 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		return;
 	userobj = json_node_get_object(node);
 	if (json_object_has_member(userobj, "value")) {
-		userobj = json_object_get_object_member(userobj, "value");
+		node = json_object_get_member(userobj, "value");
+		
+		if (json_node_get_node_type(node) == JSON_NODE_ARRAY)
+			node = json_array_get_element(json_node_get_array(node), 0);
+		userobj = json_node_get_object(node);
 	}
 	
 	if (!json_object_has_member(userobj, "mri")) {
@@ -1304,6 +1311,10 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 	g_free(url);
 	
 	// just in case they're a user on a different tenant:
+	
+	if (strncmp(username, "orgid:", 6) != 0) {
+		return;
+	}
 	
 	url = "/api/mt/apac/beta/users/fetchFederated";
 	
