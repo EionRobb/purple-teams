@@ -102,7 +102,7 @@ libteams.dll: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
 libteams3.dll: $(PURPLE_C_FILES)
 	$(WIN32_CC) -shared -o $@ $^ $(WIN32_PIDGIN3_CFLAGS) $(WIN32_PIDGIN3_LDFLAGS)
 
-install: $(TEAMS_TARGET) install-icons install-theme
+install: $(TEAMS_TARGET) install-icons
 	mkdir -m $(DIR_PERM) -p $(TEAMS_DEST)
 	install -m $(LIB_PERM) -p $(TEAMS_TARGET) $(TEAMS_DEST)
 
@@ -116,10 +116,6 @@ install-icons: icons/16/teams.png icons/22/teams.png icons/48/teams.png
 
 installer: pidgin-teams.nsi libteams.dll
 	$(MAKENSIS) "/DPIDGIN_VARIANT"="Pidgin" "/DPRODUCT_NAME"="pidgin-teams" "/DINSTALLER_NAME"="pidgin-teams-installer" "/DJSON_GLIB_DLL"="libjson-glib-1.0.dll" pidgin-teams.nsi
-
-install-theme: theme
-	mkdir -m $(DIR_PERM) -p $(TEAMS_THEME_DEST)
-	install -m $(FILE_PERM) -p theme $(TEAMS_THEME_DEST)/theme
 
 translations: po/purple-teams.pot
 
