@@ -102,8 +102,8 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 	tmp = *msg_content;
 	
 	while (purple_markup_find_tag("img", tmp, &start, &end, &attributes)) {
-		char *srcstr = NULL;
-		char *itemtype = NULL;
+		const char *srcstr = NULL;
+		const char *itemtype = NULL;
 
 		if (newmsg == NULL)
 			newmsg = g_string_new("");
@@ -113,10 +113,20 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 			g_string_append_len(newmsg, tmp, start - tmp);
 		
 		itemtype = g_datalist_get_data(&attributes, "itemtype");
-		if (itemtype != NULL && purple_strequal(itemtype, "http://schema.skype.com/AMSImage")) {
-			srcstr = g_datalist_get_data(&attributes, "src");
-			if (srcstr != NULL) {
-				teams_download_uri_to_conv(sa, srcstr, conv, msg_time, msg_who);
+		if (itemtype != NULL) {
+			if (purple_strequal(itemtype, "http://schema.skype.com/AMSImage")) {
+				srcstr = g_datalist_get_data(&attributes, "src");
+				if (srcstr != NULL) {
+					teams_download_uri_to_conv(sa, srcstr, conv, msg_time, msg_who);
+				}
+				
+			} else if (purple_strequal(itemtype, "http://schema.skype.com/Emoji")) {
+				const gchar *alt = g_datalist_get_data(&attributes, "alt");
+				g_string_append(newmsg, alt);
+				
+			} else {
+				srcstr = g_datalist_get_data(&attributes, "src");
+				g_string_append(newmsg, srcstr);
 			}
 		}
 		
