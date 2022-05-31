@@ -159,6 +159,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 	PurpleConversation *conv = NULL;
 	gchar *convname = NULL;
 	const gchar *chatname = NULL;
+	JsonObject *properties = NULL;
 	
 	g_return_if_fail(messagetype != NULL);
 	
@@ -173,9 +174,21 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		return;
 	}
 	
-	if (json_object_has_member(resource, "skypeeditedid"))
+	if (json_object_has_member(resource, "skypeeditedid")) {
 		skypeeditedid = json_object_get_string_member(resource, "skypeeditedid");
-	if (json_object_has_member(resource, "content"))
+	}
+	if (json_object_has_member(resource, "properties")) {
+		properties = json_object_get_object_member(resource, "properties");
+		if (json_object_has_member(properties, "edittime")) {
+			skypeeditedid = json_object_get_string_member(properties, "edittime");
+		}
+		
+		//TODO use "importance" for nudges
+		//purple_prpl_got_attention(pc, username, 0);
+		//purple_prpl_got_attention_in_chat(pc, id, username, 0);
+	}
+	
+	if (json_object_has_member(resource, "content")) {
 		content = json_object_get_string_member(resource, "content");
 	}
 	
@@ -941,7 +954,8 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 					process_thread_resource(sa, resource);
 				} else if (purple_strequal(resourceType, "MessageUpdate"))
 				{
-					//TODO message edited
+					//Message edited
+					process_message_resource(sa, resource);
 				}
 			}
 		} else if (json_object_has_member(obj, "errorCode")) {
