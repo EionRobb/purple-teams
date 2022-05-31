@@ -1143,6 +1143,8 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *mri = json_object_get_string_member(contact, "mri");
 		const gchar *username = teams_strip_user_prefix(mri);
 		const gchar *new_avatar;
+		const gchar *displayName = json_object_get_string_member(contact, "displayName");
+		const gchar *givenName = json_object_get_string_member(contact, "givenName");
 		
 		buddy = purple_blist_find_buddy(sa->account, username);
 		if (!buddy)
@@ -1160,17 +1162,19 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		}
 		
 		g_free(sbuddy->display_name); 
-		sbuddy->display_name = g_strdup(json_object_get_string_member(contact, "displayName"));
+		sbuddy->display_name = g_strdup(displayName);
 		purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
 		
-		if (json_object_has_member(contact, "surname")) {
-			gchar *fullname = g_strconcat(json_object_get_string_member(contact, "givenName"), " ", json_object_get_string_member(contact, "surname"), NULL);
-			
-			purple_buddy_set_server_alias(buddy, fullname);
-			
-			g_free(fullname);
-		} else {
-			purple_buddy_set_server_alias(buddy, json_object_get_string_member(contact, "givenName"));
+		if (!purple_strequal(json_object_get_string_member(contact, "email"), givenName)) {
+			if (json_object_has_member(contact, "surname")) {
+				gchar *fullname = g_strconcat(givenName, " ", json_object_get_string_member(contact, "surname"), NULL);
+				
+				purple_buddy_set_server_alias(buddy, fullname);
+				
+				g_free(fullname);
+			} else {
+				purple_buddy_set_server_alias(buddy, givenName);
+			}
 		}
 		
 		// Only bots have images

@@ -793,7 +793,11 @@ process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 					buddyid = teams_strip_user_prefix(mri);
 				}
 				
-				//XXX should we fetch buddy presence here?
+				//Fetch buddy presence
+				GSList *users_to_fetch = g_slist_prepend(NULL, (gchar *) buddyid);
+				teams_get_friend_profiles(sa, users_to_fetch);
+				teams_subscribe_to_contact_status(sa, users_to_fetch);
+				g_slist_free(users_to_fetch);
 				
 				//Create an array of one to one mappings for IMs
 				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
@@ -1037,6 +1041,7 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	JsonArray *members;
 	gint length, index;
 	PurpleGroup *group = teams_get_blist_group(sa);
+	GSList *users_to_fetch = NULL;
 	
 	chatconv = purple_conversations_find_chat_with_account(chatname, sa->account);
 	if (chatconv == NULL)
@@ -1079,6 +1084,7 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 						purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
 					}
 					purple_blist_add_buddy(buddy, NULL, group, NULL);
+					
 				}
 				
 				local_alias = purple_buddy_get_local_alias(buddy);
@@ -1088,8 +1094,13 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			}
 			
 			purple_chat_conversation_add_user(chatconv, username, NULL, cbflags, FALSE);
+			users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(username));
 		}
 	}
+	
+	teams_get_friend_profiles(sa, users_to_fetch);
+	teams_subscribe_to_contact_status(sa, users_to_fetch);
+	g_slist_free_full(users_to_fetch, g_free);
 }
 
 void
@@ -1422,6 +1433,11 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 void
 teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 {
+	teams_lookup_contact_statuses(sa, contacts);
+	
+	//TODO - switch to websocket for contact status reverse-webhooks
+	return;
+	
 	const gchar *contacts_url = "/v2/users/ME/contacts";
 	gchar *post;
 	GSList *cur = contacts;
@@ -1457,7 +1473,8 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		json_array_add_object_element(contacts_array, contact);
 		
 		if (id && id[0] == '8') {
-			gchar *contact_url = g_strconcat("/v1/users/ME/contacts/", id, NULL);
+			//gchar *contact_url = g_strconcat("/v1/users/ME/contacts/", id, NULL);
+			gchar *contact_url = g_strconcat("/v1/users/communications/presences/", id, NULL);
 			json_array_add_string_element(interested, contact_url);
 			g_free(contact_url);
 		}
@@ -1521,7 +1538,6 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 	g_free(post);
 	json_object_unref(obj);
 	
-	teams_lookup_contact_statuses(sa, contacts);
 }
 
 
