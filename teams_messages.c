@@ -221,6 +221,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 				
 				purple_chat_user_set_flags(cb, cbflags);
+				
+				//TODO clear typing after X seconds
 			}
 			
 		} else if (g_str_equal(messagetype_parts[0], "RichText") || g_str_equal(messagetype_parts[0], "Text")) {
@@ -854,9 +856,9 @@ teams_timeout(gpointer userdata)
 	TeamsAccount *sa = userdata;
 	teams_poll(sa);
 	
-	// If no response within 3 minutes, assume connection lost and try again
+	// If no response within 1 minute, assume connection lost and try again
 	g_source_remove(sa->watchdog_timeout);
-	sa->watchdog_timeout = g_timeout_add_seconds(3 * 60, teams_timeout, sa);
+	sa->watchdog_timeout = g_timeout_add_seconds(60, teams_timeout, sa);
 	
 	return FALSE;
 }
@@ -903,7 +905,7 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		
 		if (messages != NULL) {
 			length = json_array_get_length(messages);
-			for(index = length - 1; index >= 0; index--)
+			for(index = 0; index < length; index++)
 			{
 				JsonObject *message = json_array_get_object_element(messages, index);
 				const gchar *resourceType = json_object_get_string_member(message, "resourceType");
@@ -924,6 +926,9 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 				} else if (purple_strequal(resourceType, "ThreadUpdate"))
 				{
 					process_thread_resource(sa, resource);
+				} else if (purple_strequal(resourceType, "MessageUpdate"))
+				{
+					//TODO message edited
 				}
 			}
 		} else if (json_object_has_member(obj, "errorCode")) {
