@@ -1673,7 +1673,7 @@ teams_got_authrequests(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *displayname = json_object_get_string_member(invite, "displayname");
 		
 		latest_timestamp = MAX(latest_timestamp, event_timestamp);
-		if (sa->last_authrequest && event_timestamp <= sa->last_authrequest)
+		if (sa->last_authrequest && latest_timestamp <= sa->last_authrequest)
 			continue;
 		
 		if (sender == NULL)

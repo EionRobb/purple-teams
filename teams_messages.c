@@ -177,6 +177,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		skypeeditedid = json_object_get_string_member(resource, "skypeeditedid");
 	if (json_object_has_member(resource, "content"))
 		content = json_object_get_string_member(resource, "content");
+	}
 	
 	if (conversationLink) {
 		chatname = teams_thread_url_to_name(conversationLink);
@@ -232,7 +233,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				
 				purple_chat_user_set_flags(cb, cbflags);
 				
-				//TODO clear typing after X seconds
+				//TODO clear typing after 22 seconds
 			}
 			
 		} else if (g_str_equal(messagetype_parts[0], "RichText") || g_str_equal(messagetype_parts[0], "Text")) {
@@ -252,7 +253,6 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				return;
 			}
 			
-			// Remove typing notification icon w/o "show-typing-as-icon" option check.
 			// Hard reset cbflags even if user changed settings while someone typing message.
 			
 			cb = purple_chat_conversation_find_user(chatconv, from);
@@ -323,7 +323,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 						const gchar *local_alias;
 						
 						if (buddy == NULL) {
-							purple_buddy_new(sa->account, from, NULL);
+							purple_buddy_new(sa->account, username, NULL);
 							if (purple_strequal(meetingMemberType, "temp")) {
 								purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
 							}
@@ -363,7 +363,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					const gchar *local_alias;
 					
 					if (buddy == NULL) {
-						purple_buddy_new(sa->account, from, NULL);
+						purple_buddy_new(sa->account, username, NULL);
 						if (purple_strequal(meetingMemberType, "temp")) {
 							purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
 						}
@@ -450,9 +450,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");
 			
 			from = teams_contact_url_to_name(from);
-			g_return_if_fail(from);
 			
-			teams_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
+			if (from && *from) {
+				teams_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
+			}
 			purple_xmlnode_free(blob);
 			
 		} else if (g_str_equal(messagetype, "Event/Call")) {
@@ -460,6 +461,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			//"content": "<partlist alt =\"\"></partlist>",
 			PurpleXmlNode *partlist = purple_xmlnode_from_str(content, -1);
 			const gchar *message = NULL;
+			
+			from = teams_contact_url_to_name(from);
 			
 			if (strstr(content, "<ended/>")) {
 				message = _("Call ended");
@@ -1398,7 +1401,7 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 {
 	const gchar *presence_path =  "/v1/presence/getpresence/";
 	gchar *post;
-	GSList *cur = contacts;
+	GSList *cur;
 	JsonArray *contacts_array;
 	guint count = 0;
 	
@@ -1822,6 +1825,8 @@ teams_send_message(TeamsAccount *sa, const gchar *convname, const gchar *message
 	teams_conversation_check_message_for_images(sa, convname, stripped);
 	if (!stripped || !*stripped) {
 		// Nothing to send
+		g_free(url);
+		g_free(clientmessageid_str);
 		return;
 	}
 	
@@ -2270,7 +2275,7 @@ teams_conversation_check_message_for_images(TeamsAccount *sa, const gchar *convn
 			}
 		}
 		
-		if (imgid && image != NULL) {
+		if (imgid && image != NULL && close != NULL) {
 			g_memmove(img, close, strlen(close) + 2);
 		}
 	}
