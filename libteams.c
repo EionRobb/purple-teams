@@ -717,7 +717,7 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 {
 	PurpleProtocol *info = prpl_info;
 #endif
-	PurpleAccountOption *alt_login;
+	PurpleAccountOption *opt, *opt2;
 	PurpleBuddyIconSpec icon_spec = {"jpeg", 0, 0, 96, 96, 0, PURPLE_ICON_SCALE_DISPLAY};
 
 	//PurpleProtocol
@@ -725,15 +725,16 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	info->name = "Teams";
 	prpl_info->options = OPT_PROTO_NO_PASSWORD | OPT_PROTO_CHAT_TOPIC /*| OPT_PROTO_INVITE_MESSAGE*/ | OPT_PROTO_IM_IMAGE;
 	
-	//TODO tidy up
-	// alt_login = purple_account_option_bool_new(N_("Use alternative login method"), "alt-login", TRUE);
-	alt_login = purple_account_option_string_new("Tenant", "tenant", "");
+	opt = purple_account_option_string_new("Tenant", "tenant", "");
+	opt2 = purple_account_option_bool_new("Set global status", "set-global-status", TRUE);
 
 #if !PURPLE_VERSION_CHECK(3, 0, 0)
-	prpl_info->protocol_options = g_list_append(prpl_info->protocol_options, alt_login);
+	prpl_info->protocol_options = g_list_append(prpl_info->protocol_options, opt);
+	prpl_info->protocol_options = g_list_append(prpl_info->protocol_options, opt2);
 	prpl_info->icon_spec = icon_spec;
 #else
-	prpl_info->account_options = g_list_append(prpl_info->account_options, alt_login);
+	prpl_info->account_options = g_list_append(prpl_info->account_options, opt);
+	prpl_info->account_options = g_list_append(prpl_info->account_options, opt2);
 	prpl_info->icon_spec = &icon_spec;
 #endif
 	

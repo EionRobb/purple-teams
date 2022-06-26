@@ -1768,6 +1768,10 @@ teams_set_status(PurpleAccount *account, PurpleStatus *status)
 	PurpleConnection *pc = purple_account_get_connection(account);
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	
+	if (!purple_account_get_bool(account, "set-global-status", TRUE)) {
+		return;
+	}
+	
 	teams_set_statusid(sa, purple_status_get_id(status));
 	teams_set_mood_message(sa, purple_status_get_attr_string(status, "message"));
 }
