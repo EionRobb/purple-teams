@@ -810,7 +810,7 @@ process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 			if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
 				// ... and we dont know about it yet
 				
-				JsonObject *member = json_array_get_object_element(members, 1);
+				JsonObject *member = json_array_get_object_element(members, 0);
 				const gchar *mri = json_object_get_string_member(member, "id");
 				const gchar *buddyid = teams_strip_user_prefix(mri);
 				
