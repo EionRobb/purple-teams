@@ -294,6 +294,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				
 				teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
 				
+				//"properties": {				"files": "[{\"@type\":\"http://schema.skype.com/File\",\"version\":2,\"id\":\"abcd1234-b7e0-45cf-a4d4-23b1ce8540a9\",\"baseUrl\":\"https://my.sharepoint.com/personal/eion_robb/\",\"type\":\"jpg\",\"title\":\"Screenshot 2022-08-16 200424.jpg\",\"state\":\"active\",\"objectUrl\":\"https://my.sharepoint.com/personal/eion_robb/Documents/Microsoft Teams Chat Files/Screenshot 2022-08-16 200424.jpg\",\"itemid\":\"abcd1234-b7e0-45cf-a4d4-23b1ce8540a9\",\"fileName\":\"Screenshot 2022-08-16 200424.jpg\",\"fileType\":\"jpg\",\"fileInfo\":{\"itemId\":null,\"fileUrl\":\"https://my.sharepoint.com/personal/eion_robb/Documents/Microsoft Teams Chat Files/Screenshot 2022-08-16 200424.jpg\",\"siteUrl\":\"https://my.sharepoint.com/personal/eion_robb/\",\"serverRelativeUrl\":\"\",\"shareUrl\":\"https://my.sharepoint.com/:i:/g/personal/eion_robb/abcd1234\",\"shareId\":\"abcd1234-b1bf-4edd-b37a-2e964f15dcbb\"},\"botFileProperties\":{},\"filePreview\":{\"previewUrl\":\"https://as-api.asm.skype.com/v1/objects/0-eaua-d3-abcd1234/views/imgo\",\"previewHeight\":571,\"previewWidth\":734},\"fileChicletState\":{\"serviceName\":\"p2p\",\"state\":\"active\"}}]" }
+				
 				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
 				
 				
@@ -901,9 +903,9 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	gint index, length;
 	JsonObject *obj = NULL;
 
-	if (((int)time(NULL)) > sa->vdms_expiry) {
-		teams_get_vdms_token(sa);
-	}
+	// if (((int)time(NULL)) > sa->vdms_expiry) {
+		// teams_get_vdms_token(sa);
+	// }
 
 	// if (node == NULL && ((int)time(NULL)) > sa->registration_expiry) {
 		// teams_get_registration_token(sa);
