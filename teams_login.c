@@ -667,7 +667,8 @@ teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 	} else {
 		if (obj != NULL) {
 			if (json_object_has_member(obj, "error")) {
-				if (g_strcmp0(json_object_get_string_member(obj, "error"), "invalid_grant") == 0) {
+				const gchar *error = json_object_get_string_member(obj, "error");
+				if (g_strcmp0(error, "invalid_grant") == 0 || g_strcmp0(error, "interaction_required") == 0) {
 					teams_save_refresh_token_password(sa->account, NULL);
 					purple_connection_error(sa->pc, PURPLE_CONNECTION_ERROR_NETWORK_ERROR,
 						json_object_get_string_member(obj, "error_description"));
