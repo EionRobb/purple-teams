@@ -830,6 +830,11 @@ process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 				//Create an array of one to one mappings for IMs
 				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
 				g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+				
+				PurpleChatConversation *conv = purple_conversations_find_chat_with_account(id, sa->account);
+				if (conv != NULL) {
+					purple_conversation_destroy(PURPLE_CONVERSATION(conv));
+				}
 			}
 		}
 	}
@@ -2000,7 +2005,35 @@ teams_chat_kick(PurpleConnection *pc, int id, const char *who)
 static void
 teams_created_chat(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
+	JsonObject *obj = json_node_get_object(node);
+	gchar *initial_message_copy = user_data;
+	const gchar *convname = json_object_get_string_member(obj, "id");
+	gint64 errorCode = json_object_get_int_member(obj, "errorCode");
 	
+	if (!errorCode && convname != NULL) {
+		process_thread_resource(sa, obj);
+		
+		teams_send_message(sa, convname, initial_message_copy);
+		
+		const gchar *convbuddyname = g_hash_table_lookup(sa->chat_to_buddy_lookup, convname);
+		if (convbuddyname != NULL) {
+			PurpleMessage *msg;
+			PurpleIMConversation *conv = purple_conversations_find_im_with_account(convbuddyname, sa->account);
+			
+			msg = purple_message_new_outgoing(convbuddyname, initial_message_copy, PURPLE_MESSAGE_SEND);
+			purple_message_set_time(msg, time(NULL));
+			purple_conversation_write_message(PURPLE_CONVERSATION(conv), msg);
+			purple_message_destroy(msg);
+		}
+		
+	} else if (errorCode) {
+		const gchar *message = json_object_get_string_member(obj, "message");
+		
+		//TODO present the error somehow... popup?
+		(void) message;
+	}
+	
+	g_free(initial_message_copy);
 }
 
 void
@@ -2009,6 +2042,7 @@ teams_initiate_chat(TeamsAccount *sa, const gchar *who, gboolean one_to_one, con
 	JsonObject *obj, *contact, *properties;
 	JsonArray *members;
 	gchar *id, *post, *initial_message_copy;
+	TeamsConnection *conn;
 	
 	obj = json_object_new();
 	members = json_array_new();
@@ -2040,24 +2074,19 @@ teams_initiate_chat(TeamsAccount *sa, const gchar *who, gboolean one_to_one, con
 	
 	post = teams_jsonobj_to_string(obj);
 	
-	//TODO change to raw request
-	// if (initial_message && *initial_message) {
-		// initial_message_copy = g_strdup(initial_message);
-	// } else {
+	if (initial_message && *initial_message) {
+		initial_message_copy = g_strdup(initial_message);
+	} else {
 		initial_message_copy = NULL;
-	// }
+	}
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, "/v1/threads", post, teams_created_chat, initial_message_copy, TRUE);
+	conn = teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, "/v1/threads", post, teams_created_chat, initial_message_copy, TRUE);
 	
-	// Cant use teams_post_or_get because we need the Location: response
-	// purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
-	// purple_http_request_header_set(request, "X-Stratus-Caller", TEAMS_CLIENTINFO_NAME);
-	// purple_http_request_header_set(request, "X-Stratus-Request", "abcd1234");
-	// purple_http_request_header_set(request, "Origin", "https://teams.microsoft.com");
-	// purple_http_request_header_set(request, "Referer", "https://teams.microsoft.com/");
-	// purple_http_request_header_set(request, "Accept", "application/json; ver=1.0;");
-	//  teams_created_chat
-	// initial_message_copy
+	// Enable redirects
+	if (conn != NULL) {
+		PurpleHttpRequest *request = purple_http_conn_get_request(conn->http_conn);
+		purple_http_request_set_max_redirects(request, 1);
+	}
 
 	g_free(post);
 	json_object_unref(obj);
