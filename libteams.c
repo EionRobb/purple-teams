@@ -26,7 +26,7 @@
 void
 teams_do_all_the_things(TeamsAccount *sa)
 {
-	teams_get_vdms_token(sa);
+	// teams_get_vdms_token(sa);
 
 	if (!sa->username) {
 		teams_get_self_details(sa);
