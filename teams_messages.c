@@ -1940,7 +1940,11 @@ const gchar *who, const gchar *message, PurpleMessageFlags flags)
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	const gchar *convname;
 	
-	convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, who);
+	if (TEAMS_BUDDY_IS_NOTIFICATIONS(who)) {
+		convname = who;
+	} else {
+		convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, who);
+	}
 	
 	//convname should be like
 	//19:{guid of user1}_{guid of user2}@unq.gpl.spaces
