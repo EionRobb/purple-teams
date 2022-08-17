@@ -1845,7 +1845,8 @@ teams_send_message(TeamsAccount *sa, const gchar *convname, const gchar *message
 	clientmessageid_str = g_strdup_printf("%" G_GINT64_FORMAT "", clientmessageid);
 	
 	// Some clients don't receive messages with <br>'s in them
-	stripped = purple_strreplace(message, "<br>", "\r\n");
+	//stripped = purple_strreplace(message, "<br>", "\r\n");
+	stripped = g_strdup(message);
 	
 	teams_conversation_check_message_for_images(sa, convname, stripped);
 	if (!stripped || !*stripped) {
