@@ -23,6 +23,7 @@ gchar *teams_string_get_chunk(const gchar *haystack, gsize len, const gchar *sta
 gchar *teams_jsonobj_to_string(JsonObject *jsonobj);
 gchar *teams_jsonarr_to_string(JsonArray *jsonarr);
 JsonObject *json_decode_object(const gchar *data, gssize len);
+JsonArray *json_decode_array(const gchar *data, gssize len);
 
 const gchar *teams_contact_url_to_name(const gchar *url);
 const gchar *teams_thread_url_to_name(const gchar *url);

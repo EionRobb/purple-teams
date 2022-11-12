@@ -145,6 +145,39 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 	}
 }
 
+static gchar *
+teams_process_files_in_properties(JsonObject *properties, gchar **html)
+{
+	if (json_object_has_member(properties, "files")) {
+		const gchar *files_str = json_object_get_string_member(properties, "files");
+		JsonArray *files = json_decode_array(files_str, -1);
+		GString *files_string = g_string_new(_("Files sent:"));
+		guint i, len = json_array_get_length(files);
+		
+		g_string_append(files_string, "<br>");
+		for(i = 0; i < len; i++) {
+			JsonObject *file = json_array_get_object_element(files, i);
+			g_string_append(files_string, "* <a href=\"");
+			g_string_append(files_string, json_object_get_string_member(file, "objectUrl"));
+			g_string_append(files_string, "\">");
+			g_string_append(files_string, json_object_get_string_member(file, "fileName"));
+			g_string_append(files_string, "<br>");
+			
+			//Potentially use the preview image in  file.filePreview.previewUrl
+		}
+		
+		json_array_unref(files);
+		
+		gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
+		g_free(*html);
+		*html = temp;
+		
+		g_string_free(files_string, TRUE);
+	}
+	
+	return *html;
+}
+
 static void
 process_message_resource(TeamsAccount *sa, JsonObject *resource)
 {
@@ -187,6 +220,24 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		//TODO use "importance" for nudges
 		//purple_prpl_got_attention(pc, username, 0);
 		//purple_prpl_got_attention_in_chat(pc, id, username, 0);
+		
+		if (json_object_has_member(properties, "deletetime")) {
+			// Deleted a message
+		}
+		
+		if (json_object_has_member(properties, "emotions")) {
+			// "emotions": [{
+					// "key": "heart",
+					// "users": []
+				// }, {
+					// "key": "like",
+					// "users": [{
+						// "mri": "8:orgid:{...guid...}",
+						// "time": 1668285027384,
+						// "value": "1668285027230"
+					// }]
+				// }]
+		}
 	}
 	
 	if (json_object_has_member(resource, "content")) {
@@ -251,7 +302,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			}
 			
 		} else if (g_str_equal(messagetype_parts[0], "RichText") || g_str_equal(messagetype_parts[0], "Text")) {
-			gchar *html;
+			gchar *html = NULL;
 			gint64 skypeemoteoffset = 0;
 			PurpleChatUserFlags cbflags;
 			PurpleChatUser *cb;
@@ -294,15 +345,23 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 				
 				teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
+			}
 				
-				//"properties": {				"files": "[{\"@type\":\"http://schema.skype.com/File\",\"version\":2,\"id\":\"abcd1234-b7e0-45cf-a4d4-23b1ce8540a9\",\"baseUrl\":\"https://my.sharepoint.com/personal/eion_robb/\",\"type\":\"jpg\",\"title\":\"Screenshot 2022-08-16 200424.jpg\",\"state\":\"active\",\"objectUrl\":\"https://my.sharepoint.com/personal/eion_robb/Documents/Microsoft Teams Chat Files/Screenshot 2022-08-16 200424.jpg\",\"itemid\":\"abcd1234-b7e0-45cf-a4d4-23b1ce8540a9\",\"fileName\":\"Screenshot 2022-08-16 200424.jpg\",\"fileType\":\"jpg\",\"fileInfo\":{\"itemId\":null,\"fileUrl\":\"https://my.sharepoint.com/personal/eion_robb/Documents/Microsoft Teams Chat Files/Screenshot 2022-08-16 200424.jpg\",\"siteUrl\":\"https://my.sharepoint.com/personal/eion_robb/\",\"serverRelativeUrl\":\"\",\"shareUrl\":\"https://my.sharepoint.com/:i:/g/personal/eion_robb/abcd1234\",\"shareId\":\"abcd1234-b1bf-4edd-b37a-2e964f15dcbb\"},\"botFileProperties\":{},\"filePreview\":{\"previewUrl\":\"https://as-api.asm.skype.com/v1/objects/0-eaua-d3-abcd1234/views/imgo\",\"previewHeight\":571,\"previewWidth\":734},\"fileChicletState\":{\"serviceName\":\"p2p\",\"state\":\"active\"}}]" }
+			if (properties != NULL) {
+				if (json_object_has_member(properties, "deletetime")) {
+					g_free(html);
+					html = g_strconcat("<b>", _("User deleted their message"), "</b>", NULL);
+				}
 				
+				html = teams_process_files_in_properties(properties, &html);
+			}
+			
+			if (html != NULL) {
 				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
 				
-				
-						
 				g_free(html);
 			}
+			
 		} else if (g_str_equal(messagetype, "ThreadActivity/AddMember")) {
 			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
 			PurpleXmlNode *target;
@@ -522,8 +581,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			} else if (g_str_equal(messagetype_parts[1], "Typing")) {
 				purple_serv_got_typing(sa->pc, from, 22, PURPLE_IM_TYPING);
 			}
-		} else if ((g_str_equal(messagetype_parts[0], "RichText") || g_str_equal(messagetype, "Text")) && content && *content) {
-			gchar *html;
+		} else if ((g_str_equal(messagetype_parts[0], "RichText") || g_str_equal(messagetype, "Text"))) {
+			gchar *html = NULL;
 			gint64 skypeemoteoffset = 0;
 			PurpleIMConversation *imconv;
 			
@@ -531,47 +590,60 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				skypeemoteoffset = g_ascii_strtoll(json_object_get_string_member(resource, "skypeemoteoffset"), NULL, 10);
 			}
 			
-			if (g_str_equal(messagetype, "Text")) {
-				gchar *temp = teams_meify(content, skypeemoteoffset);
-				html = purple_markup_escape_text(temp, -1);
-				g_free(temp);
-			} else {
-				html = teams_meify(content, skypeemoteoffset);
-			}
+			if (content && *content) {
+				if (g_str_equal(messagetype, "Text")) {
+					gchar *temp = teams_meify(content, skypeemoteoffset);
+					html = purple_markup_escape_text(temp, -1);
+					g_free(temp);
+				} else {
+					html = teams_meify(content, skypeemoteoffset);
+				}
 
-			if (skypeeditedid && *skypeeditedid) {
-				gchar *temp = g_strconcat(_("Edited: "), html, NULL);
-				g_free(html);
-				html = temp;
+				if (skypeeditedid && *skypeeditedid) {
+					gchar *temp = g_strconcat(_("Edited: "), html, NULL);
+					g_free(html);
+					html = temp;
+				}
+			}
+			
+			if (properties != NULL) {
+				if (json_object_has_member(properties, "deletetime")) {
+					g_free(html);
+					html = g_strconcat("<b>", _("User deleted their message"), "</b>", NULL);
+				}
+				
+				html = teams_process_files_in_properties(properties, &html);
 			}
 			
 			if (json_object_has_member(resource, "imdisplayname")) {
 				//TODO use this for an alias
 			}
 			
-			imconv = purple_conversations_find_im_with_account(convbuddyname, sa->account);
-			if (imconv == NULL)
-			{
-				imconv = purple_im_conversation_new(sa->account, convbuddyname);
-			}
-			conv = PURPLE_CONVERSATION(imconv);
-			
-			teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
-			
-			if (teams_is_user_self(sa, from)) {
-				if (!g_str_has_prefix(html, "?OTR")) {
-					PurpleMessage *msg;
-					
-					msg = purple_message_new_outgoing(convbuddyname, html, PURPLE_MESSAGE_SEND);
-					purple_message_set_time(msg, composetimestamp);
-					purple_conversation_write_message(conv, msg);
-					purple_message_destroy(msg);
+			if (html != NULL) {
+				imconv = purple_conversations_find_im_with_account(convbuddyname, sa->account);
+				if (imconv == NULL)
+				{
+					imconv = purple_im_conversation_new(sa->account, convbuddyname);
 				}
+				conv = PURPLE_CONVERSATION(imconv);
 				
-			} else {
-				purple_serv_got_im(sa->pc, from, html, PURPLE_MESSAGE_RECV, composetimestamp);
+				teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
+				
+				if (teams_is_user_self(sa, from)) {
+					if (!g_str_has_prefix(html, "?OTR")) {
+						PurpleMessage *msg;
+						
+						msg = purple_message_new_outgoing(convbuddyname, html, PURPLE_MESSAGE_SEND);
+						purple_message_set_time(msg, composetimestamp);
+						purple_conversation_write_message(conv, msg);
+						purple_message_destroy(msg);
+					}
+					
+				} else {
+					purple_serv_got_im(sa->pc, from, html, PURPLE_MESSAGE_RECV, composetimestamp);
+				}
+				g_free(html);
 			}
-			g_free(html);
 		} else if (g_str_equal(messagetype, "RichText/UriObject")) {
 			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
 			const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");

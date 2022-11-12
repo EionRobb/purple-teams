@@ -96,7 +96,7 @@ json_decode(const gchar *data, gssize len)
 	
 	if (!data || !json_parser_load_from_data(parser, data, len, NULL))
 	{
-		purple_debug_error("googlechat", "Error parsing JSON: %s\n", data ? data : "(null)");
+		purple_debug_error("teams", "Error parsing JSON: %s\n", data ? data : "(null)");
 	} else {
 		root = json_parser_get_root(parser);
 		if (root != NULL) {
@@ -123,6 +123,26 @@ json_decode_object(const gchar *data, gssize len)
 	}
 	
 	ret = json_node_dup_object(root);
+
+	json_node_free(root);
+
+	return ret;
+}
+
+JsonArray *
+json_decode_array(const gchar *data, gssize len)
+{
+	JsonNode *root = json_decode(data, len);
+	JsonArray *ret;
+	
+	g_return_val_if_fail(root, NULL);
+	
+	if (!JSON_NODE_HOLDS_ARRAY(root)) {
+		json_node_free(root);
+		return NULL;
+	}
+	
+	ret = json_node_dup_array(root);
 
 	json_node_free(root);
 
@@ -354,8 +374,10 @@ teams_get_blist_group(TeamsAccount *sa)
 {
 	PurpleGroup *group;
 	gchar *group_name;
-		
-	if (!sa->tenant || !*sa->tenant) {
+	
+	if (purple_account_get_string(sa->account, "group_name", NULL)) {
+		group_name = g_strdup(purple_account_get_string(sa->account, "group_name", NULL));
+	} else if (!sa->tenant || !*sa->tenant) {
 		group_name = g_strdup("Teams");
 	} else {
 		//TODO nicer name
