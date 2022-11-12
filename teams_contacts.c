@@ -226,7 +226,12 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	
 	request = purple_http_request_new(uri);
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
-	purple_http_request_header_set_printf(request, "Cookie", "skypetoken_asm=%s", sa->skype_token);
+	
+	//Only for skype domains
+	if (strncmp(uri, "https://as-api.asm.skype.com/", 29) == 0) {
+		purple_http_request_header_set_printf(request, "Cookie", "skypetoken_asm=%s", sa->skype_token);
+	}
+	
 	purple_http_request_header_set(request, "Accept", "image/*");
 	SkypeImgMsgContext *ctx = g_new(SkypeImgMsgContext, 1);
 	ctx->composetimestamp = ts;

@@ -113,21 +113,22 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 			g_string_append_len(newmsg, tmp, start - tmp);
 		
 		itemtype = g_datalist_get_data(&attributes, "itemtype");
-		if (itemtype != NULL) {
-			if (purple_strequal(itemtype, "http://schema.skype.com/AMSImage")) {
-				srcstr = g_datalist_get_data(&attributes, "src");
-				if (srcstr != NULL) {
-					teams_download_uri_to_conv(sa, srcstr, conv, msg_time, msg_who);
-				}
-				
-			} else if (purple_strequal(itemtype, "http://schema.skype.com/Emoji")) {
-				const gchar *alt = g_datalist_get_data(&attributes, "alt");
-				g_string_append(newmsg, alt);
-				
-			} else {
-				srcstr = g_datalist_get_data(&attributes, "src");
-				g_string_append(newmsg, srcstr);
+		if (purple_strequal(itemtype, "http://schema.skype.com/AMSImage")) {
+			srcstr = g_datalist_get_data(&attributes, "src");
+			if (srcstr != NULL) {
+				teams_download_uri_to_conv(sa, srcstr, conv, msg_time, msg_who);
 			}
+			
+		} else if (purple_strequal(itemtype, "http://schema.skype.com/Emoji")) {
+			const gchar *alt = g_datalist_get_data(&attributes, "alt");
+			g_string_append(newmsg, alt);
+			
+		} else {
+			srcstr = g_datalist_get_data(&attributes, "src");
+			if (srcstr != NULL) {
+				teams_download_uri_to_conv(sa, srcstr, conv, msg_time, msg_who);
+			}
+			g_string_append(newmsg, srcstr);
 		}
 		
 		// Continue from the end of the tag 
@@ -2017,7 +2018,7 @@ teams_created_chat(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	const gchar *convname = json_object_get_string_member(obj, "id");
 	gint64 errorCode = json_object_get_int_member(obj, "errorCode");
 	
-	if (!errorCode && convname != NULL) {
+	if (!errorCode && convname != NULL && initial_message_copy && *initial_message_copy) {
 		process_thread_resource(sa, obj);
 		
 		teams_send_message(sa, convname, initial_message_copy);
