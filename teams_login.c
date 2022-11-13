@@ -409,7 +409,6 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 	TeamsAccount *sa = user_data;
 	const gchar *data;
 	gsize len;
-	JsonParser *parser = NULL;
 	JsonObject *obj, *tokens;
 	gchar *error = NULL;
 	PurpleConnectionError error_type = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
@@ -459,13 +458,8 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 
 	teams_do_all_the_things(sa);
 
-	g_object_unref(parser);
 	return;
 fail:
-	if (parser) {
-		g_object_unref(parser);
-	}
-
 	purple_connection_error(sa->pc, error_type,
 		error ? error : _("Failed getting Skype Token (alt)"));
 

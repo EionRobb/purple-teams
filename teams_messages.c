@@ -127,8 +127,8 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 			srcstr = g_datalist_get_data(&attributes, "src");
 			if (srcstr != NULL) {
 				teams_download_uri_to_conv(sa, srcstr, conv, msg_time, msg_who);
+				g_string_append(newmsg, srcstr);
 			}
-			g_string_append(newmsg, srcstr);
 		}
 		
 		// Continue from the end of the tag 
@@ -564,6 +564,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		from = teams_contact_url_to_name(from);
 		if (from == NULL) {
 			g_free(convname);
+			g_strfreev(messagetype_parts);
 			g_return_if_reached();
 			return;
 		}
@@ -1304,26 +1305,25 @@ teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 					if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
 						// ... and we dont know about it yet
 						const gchar *from = json_object_get_string_member(lastMessage, "from");
-						const gchar *buddyid = teams_contact_url_to_name(from);
+						gchar *buddyid = g_strdup(teams_contact_url_to_name(from));
 						gchar** split = NULL;
 						
 						if (buddyid == NULL || teams_is_user_self(sa, buddyid)) {
 							// Try to guess the other person from the chat id
 							split = g_strsplit_set(id, ":_@", 4);
+							g_free(buddyid);
 							buddyid = g_strconcat("orgid:", split[1], NULL);
 							if (teams_is_user_self(sa, buddyid)) {
-								g_free((gpointer) buddyid);
+								g_free(buddyid);
 								buddyid = g_strconcat("orgid:", split[2], NULL);
 							}
+							g_strfreev(split);
 						}
 						
 						g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
 						g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
 						
-						if (split != NULL) {
-							g_strfreev(split);
-							g_free((gpointer) buddyid);
-						}
+						g_free(buddyid);
 					}
 				}
 			}
