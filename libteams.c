@@ -41,6 +41,8 @@ teams_do_all_the_things(TeamsAccount *sa)
 		purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
 
 		teams_get_friend_list(sa);
+		//TODO remove me when switching to websocket
+		sa->friend_list_poll_timeout = g_timeout_add_seconds(300, (GSourceFunc)teams_get_friend_list, sa);
 		teams_poll(sa);
 		
 		skype_web_get_offline_history(sa);
@@ -397,6 +399,7 @@ teams_close(PurpleConnection *pc)
 	sa = purple_connection_get_protocol_data(pc);
 	g_return_if_fail(sa != NULL);
 	
+	g_source_remove(sa->friend_list_poll_timeout);
 	g_source_remove(sa->authcheck_timeout);
 	g_source_remove(sa->poll_timeout);
 	g_source_remove(sa->watchdog_timeout);

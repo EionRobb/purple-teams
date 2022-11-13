@@ -191,6 +191,7 @@ struct _TeamsAccount {
 	gchar *csa_access_token;
 	gchar *presence_access_token;
 	struct _TeamsConnection *poll_conn;
+	guint friend_list_poll_timeout;
 };
 
 struct _TeamsBuddy {
