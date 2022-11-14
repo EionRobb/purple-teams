@@ -20,6 +20,8 @@
 #include "teams_util.h"
 
 
+#define TEAMS_GUID_REGEX_PATTERN "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
+
 static void
 teams_login_did_auth(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
 {
@@ -748,6 +750,8 @@ teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, 
 		if (strchr(sa->tenant, '.')) {
 			// Likely a FQDN
 			tenant_host = g_strdup(sa->tenant);
+		} else if (g_regex_match_simple(TEAMS_GUID_REGEX_PATTERN, sa->tenant, 0, 0)) {
+			tenant_host = g_strdup(sa->tenant);
 		} else {
 			tenant_host = g_strconcat(sa->tenant, ".onmicrosoft.com", NULL);
 		}
@@ -827,6 +831,8 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 		if (strchr(sa->tenant, '.')) {
 			// Likely a FQDN
 			tenant_host = g_strdup(sa->tenant);
+		} else if (g_regex_match_simple(TEAMS_GUID_REGEX_PATTERN, sa->tenant, 0, 0)) {
+			tenant_host = g_strdup(sa->tenant);
 		} else {
 			tenant_host = g_strconcat(sa->tenant, ".onmicrosoft.com", NULL);
 		}
@@ -879,6 +885,8 @@ teams_do_web_auth(TeamsAccount *sa)
 	if (sa->tenant && *sa->tenant) {
 		if (strchr(sa->tenant, '.')) {
 			// Likely a FQDN
+			tenant_host = g_strdup(sa->tenant);
+		} else if (g_regex_match_simple(TEAMS_GUID_REGEX_PATTERN, sa->tenant, 0, 0)) {
 			tenant_host = g_strdup(sa->tenant);
 		} else {
 			tenant_host = g_strconcat(sa->tenant, ".onmicrosoft.com", NULL);
