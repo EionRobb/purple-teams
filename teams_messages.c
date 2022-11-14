@@ -326,7 +326,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				PurpleXmlNode *uriobject = purple_xmlnode_from_str(content, -1);
 				const gchar *uriobject_type = purple_xmlnode_get_attrib(uriobject, "type");
 				
-				if (purple_strequal(purple_xmlnode_get_name(uriobject, "URIObject")) && purple_strequal(uriobject_type, "SWIFT.1")) {
+				if (purple_strequal(purple_xmlnode_get_name(uriobject), "URIObject") && purple_strequal(uriobject_type, "SWIFT.1")) {
 					PurpleXmlNode *swift = purple_xmlnode_get_child(uriobject, "Swift");
 					const gchar *swift_b64 = purple_xmlnode_get_attrib(swift, "b64");
 					guint swift_b64_len;

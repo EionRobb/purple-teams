@@ -243,6 +243,7 @@ purple_chat_conversation_find_user(PurpleChatConversation *chat, const char *nam
 #define purple_xmlnode_set_attrib    xmlnode_set_attrib
 #define purple_xmlnode_insert_data   xmlnode_insert_data
 #define purple_xmlnode_free          xmlnode_free
+#define purple_xmlnode_get_name(n)   ((n) && (n)->name ? (n)->name : NULL)
 
 #define purple_xfer_set_protocol_data(xfer, proto_data)  ((xfer)->data = (proto_data))
 #define purple_xfer_get_protocol_data(xfer)              ((xfer)->data)
