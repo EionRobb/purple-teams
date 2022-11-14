@@ -1084,6 +1084,8 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 				// "Subscription requested could not be found."
 				// No more Womens Weekly? :O
 			}
+		} else if (purple_strequal(json_object_get_string_member(obj, "code"), "Forbidden")) {
+			teams_subscribe(sa);
 		}
 		
 		//TODO record id of highest recieved id to make sure we dont process the same id twice
