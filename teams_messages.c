@@ -305,7 +305,50 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			gchar *html = NULL;
 			gint64 skypeemoteoffset = 0;
 			PurpleChatUserFlags cbflags;
-			PurpleChatUser *cb;
+			PurpleChatUser *cb; 
+			
+			if (g_str_equal(messagetype, "RichText/UriObject")) {
+				PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
+				const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");
+				
+				from = teams_contact_url_to_name(from);
+				
+				if (from && *from) {
+					teams_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
+				}
+				purple_xmlnode_free(blob);
+				
+				g_free(messagetype_parts);
+				return;
+				
+			} else if (purple_strequal(messagetype, "RichText/Media_Card")) {
+				gboolean message_processed = FALSE;
+				PurpleXmlNode *uriobject = purple_xmlnode_from_str(content, -1);
+				const gchar *uriobject_type = purple_xmlnode_get_attrib(uriobject, "type");
+				
+				if (purple_strequal(purple_xmlnode_get_name(uriobject, "URIObject")) && purple_strequal(uriobject_type, "SWIFT.1")) {
+					PurpleXmlNode *swift = purple_xmlnode_get_child(uriobject, "Swift");
+					const gchar *swift_b64 = purple_xmlnode_get_attrib(swift, "b64");
+					guint swift_b64_len;
+					guchar *swift_data = purple_base64_decode(swift_b64, &swift_b64_len);
+					
+					from = teams_contact_url_to_name(from);
+					html = purple_markup_escape_text((gchar *)swift_data, swift_b64_len);
+					
+					//TODO process JSON blob of a Card into something vaguely HTML
+					purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+					
+					g_free(html);
+					g_free(swift_data);
+					message_processed = TRUE;
+				}
+				
+				purple_xmlnode_free(uriobject);
+				if (message_processed) {
+					g_free(messagetype_parts);
+					return;
+				}
+			}
 			
 			if (json_object_has_member(resource, "skypeemoteoffset")) {
 				skypeemoteoffset = g_ascii_strtoll(json_object_get_string_member(resource, "skypeemoteoffset"), NULL, 10);
@@ -520,17 +563,6 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			} 
 			
 			purple_xmlnode_free(blob);
-		} else if (g_str_equal(messagetype, "RichText/UriObject")) {
-			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
-			const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");
-			
-			from = teams_contact_url_to_name(from);
-			
-			if (from && *from) {
-				teams_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
-			}
-			purple_xmlnode_free(blob);
-			
 		} else if (g_str_equal(messagetype, "Event/Call")) {
 			//"content": "<ended/><partlist
 			//"content": "<partlist alt =\"\"></partlist>",
@@ -553,6 +585,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			purple_xmlnode_free(partlist);
 			
 			purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_SYSTEM, message, composetimestamp);
+		
 		} else {
 			purple_debug_warning("teams", "Unhandled thread message resource messagetype '%s'\n", messagetype);
 		}
