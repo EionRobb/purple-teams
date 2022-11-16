@@ -567,16 +567,17 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			//"content": "<ended/><partlist
 			//"content": "<partlist alt =\"\"></partlist>",
 			PurpleXmlNode *partlist = purple_xmlnode_from_str(content, -1);
-			const gchar *message = NULL;
+			gchar *message = NULL;
 			
 			from = teams_contact_url_to_name(from);
 			
 			if (strstr(content, "<ended/>")) {
-				message = _("Call ended");
+				message = g_strdup(_("Call ended"));
 			} else {
 				const gchar *count = purple_xmlnode_get_attrib(partlist, "count");
 				if (!count) {
-					message = _("Call started");
+					// Add join link:  https://teams.microsoft.com/l/meetup-join/{convID}/0
+					message = g_strconcat(_("Call started"), " - https://teams.microsoft.com/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
 				} else {
 					// someone left
 				}
@@ -586,6 +587,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			
 			purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_SYSTEM, message, composetimestamp);
 		
+			g_free(message);
 		} else {
 			purple_debug_warning("teams", "Unhandled thread message resource messagetype '%s'\n", messagetype);
 		}
@@ -732,7 +734,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		} else if (g_str_equal(messagetype, "Event/Call")) {
 			PurpleXmlNode *partlist = purple_xmlnode_from_str(content, -1);
 			const gchar *partlisttype = purple_xmlnode_get_attrib(partlist, "type");
-			const gchar *message = NULL;
+			gchar *message = NULL;
 			PurpleIMConversation *imconv;
 			gboolean incoming = TRUE;
 			
@@ -752,7 +754,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					
 					conv = PURPLE_CONVERSATION(imconv);
 					if (g_str_equal(partlisttype, "started")) {
-						message = _("Call started");
+						message = g_strconcat(_("Call started"), " - https://teams.microsoft.com/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
+						
 					} else if (g_str_equal(partlisttype, "ended")) {
 						PurpleXmlNode *part;
 						gint duration_int = -1;
@@ -773,18 +776,19 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 							}
 						}
 						if (duration_int < 0) {
-							message = _("Call missed");
+							message = g_strdup(_("Call missed"));
 						} else {
-							//TODO report how long the call was
-							message = _("Call ended");
+							message = g_strdup_printf("%s %d:%d", _("Call ended"), duration_int / 60, duration_int % 60);
 						}
 					}
 				}
 				else {
-					message = _("Unsupported call received");
+					message = g_strdup(_("Unsupported call received"));
 				}
 
 				purple_serv_got_im(sa->pc, from, message, PURPLE_MESSAGE_RECV | PURPLE_MESSAGE_SYSTEM, composetimestamp);
+				
+				g_free(message);
 			}
 
 			purple_xmlnode_free(partlist);
