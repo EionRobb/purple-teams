@@ -249,8 +249,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		convname = g_strdup(chatname);
 	}
 	
-	if (chatname && !g_hash_table_lookup(sa->chat_to_buddy_lookup, chatname)) {
-	//if (chatname && !strstr(chatname, "unq.gbl.spaces")) {
+	if (chatname && !g_hash_table_lookup(sa->chat_to_buddy_lookup, chatname) && !strstr(chatname, "@unq.gbl.spaces")) {
 		// This is a Thread/Group chat message
 		const gchar *topic;
 		PurpleChatConversation *chatconv;
@@ -339,6 +338,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
 					
 					g_free(html);
+					html = NULL;
 					g_free(swift_data);
 					message_processed = TRUE;
 				}
@@ -571,7 +571,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			
 			from = teams_contact_url_to_name(from);
 			
-			if (strstr(content, "<ended/>")) {
+			if (content == NULL || strstr(content, "<ended/>")) {
 				message = g_strdup(_("Call ended"));
 			} else {
 				const gchar *count = purple_xmlnode_get_attrib(partlist, "count");
@@ -607,8 +607,29 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		if (convname && *convname) {
 			convbuddyname = g_strdup(g_hash_table_lookup(sa->chat_to_buddy_lookup, convname));
 		} else {
+			convname = g_strdup(teams_thread_url_to_name(conversationLink));
 			convbuddyname = g_strdup(teams_contact_url_to_name(conversationLink));
 			from = teams_contact_url_to_name(json_object_get_string_member(resource, "from"));
+		}
+		
+		if (convbuddyname == NULL && strstr(convname, "@unq.gbl.spaces")) {
+			if (teams_is_user_self(sa, from)) {
+				// Try to guess the other person from the chat id
+				gchar** split = g_strsplit_set(convname, ":_@", 4);
+				convbuddyname = g_strconcat("orgid:", split[1], NULL);
+				
+				if (teams_is_user_self(sa, convbuddyname)) {
+					g_free(convbuddyname);
+					convbuddyname = g_strconcat("orgid:", split[2], NULL);
+				}
+				g_strfreev(split);
+			
+			} else {
+				convbuddyname = g_strdup(from);
+			}
+			
+			g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(convbuddyname), g_strdup(convname));
+			g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(convname), g_strdup(convbuddyname));
 		}
 		
 		if (g_str_equal(messagetype_parts[0], "Control")) {
@@ -898,14 +919,41 @@ static void
 process_conversation_resource(TeamsAccount *sa, JsonObject *resource)
 {
 	const gchar *id = json_object_get_string_member(resource, "id");
-	(void) id;
-
-	JsonObject *threadProperties;
+	JsonObject *threadProperties = json_object_get_object_member(resource, "threadProperties");
+	JsonObject *lastMessage = json_object_get_object_member(resource, "lastMessage");
 	
-	if (json_object_has_member(resource, "threadProperties")) {
-		threadProperties = json_object_get_object_member(resource, "threadProperties");
+	if (threadProperties != NULL) {
+		const gchar *uniquerosterthread = json_object_get_string_member(threadProperties, "uniquerosterthread");
+		if (purple_strequal(uniquerosterthread, "true")) {
+			// This is a one-to-one chat
+			
+			if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
+				// ... and we dont know about it yet
+				gchar *buddyid = NULL;
+				if (lastMessage != NULL) {
+					const gchar *from = json_object_get_string_member(lastMessage, "from");
+					buddyid = g_strdup(teams_contact_url_to_name(from));
+				}
+				
+				if (buddyid == NULL || teams_is_user_self(sa, buddyid)) {
+					// Try to guess the other person from the chat id
+					gchar** split = g_strsplit_set(id, ":_@", 4);
+					g_free(buddyid);
+					buddyid = g_strconcat("orgid:", split[1], NULL);
+					if (teams_is_user_self(sa, buddyid)) {
+						g_free(buddyid);
+						buddyid = g_strconcat("orgid:", split[2], NULL);
+					}
+					g_strfreev(split);
+				}
+				
+				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+				g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+				
+				g_free(buddyid);
+			}
+		}
 	}
-	(void) threadProperties;
 }
 
 static void
@@ -1335,37 +1383,7 @@ teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			gint composetimestamp = (gint) purple_str_to_time(composetime, TRUE, NULL, NULL, NULL);
 			
 			// Check if it's a one-to-one before we fetch history
-			JsonObject *threadProperties = json_object_get_object_member(conversation, "threadProperties");
-			if (threadProperties != NULL) {
-				const gchar *uniquerosterthread = json_object_get_string_member(threadProperties, "uniquerosterthread");
-				if (purple_strequal(uniquerosterthread, "true")) {
-					// This is a one-to-one chat
-					
-					if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
-						// ... and we dont know about it yet
-						const gchar *from = json_object_get_string_member(lastMessage, "from");
-						gchar *buddyid = g_strdup(teams_contact_url_to_name(from));
-						gchar** split = NULL;
-						
-						if (buddyid == NULL || teams_is_user_self(sa, buddyid)) {
-							// Try to guess the other person from the chat id
-							split = g_strsplit_set(id, ":_@", 4);
-							g_free(buddyid);
-							buddyid = g_strconcat("orgid:", split[1], NULL);
-							if (teams_is_user_self(sa, buddyid)) {
-								g_free(buddyid);
-								buddyid = g_strconcat("orgid:", split[2], NULL);
-							}
-							g_strfreev(split);
-						}
-						
-						g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
-						g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
-						
-						g_free(buddyid);
-					}
-				}
-			}
+			process_conversation_resource(sa, conversation);
 			
 			if (composetimestamp > since) {
 				teams_get_conversation_history_since(sa, id, since);
