@@ -179,9 +179,13 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	const gchar *url_text;
 	gsize len;
 	PurpleImage *image;
+	PurpleMessageFlags flags = PURPLE_MESSAGE_NO_LOG | PURPLE_MESSAGE_IMAGES;
 	
 	SkypeImgMsgContext *ctx = user_data;
 	PurpleConversation *conv = ctx->conv;
+	PurpleConnection *pc = purple_conversation_get_connection(conv);
+	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
+	
 	time_t ts = ctx->composetimestamp;
 	gchar* ctx_from = ctx->from;
 	ctx->from = NULL;
@@ -203,7 +207,15 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	image = purple_image_new_from_data(g_memdup(url_text, len), len);
 	icon_id = purple_image_store_add(image);
 	msg_tmp = g_strdup_printf("<img id='%d'>", icon_id);
-	purple_conversation_write_img_message(conv, ctx_from, msg_tmp, PURPLE_MESSAGE_NO_LOG | PURPLE_MESSAGE_IMAGES, ts);
+	
+	if (sa && teams_is_user_self(sa, ctx_from)) {
+		flags |= PURPLE_MESSAGE_SEND;
+	} else {
+		flags |= PURPLE_MESSAGE_RECV;
+	}
+	
+	purple_conversation_write_img_message(conv, ctx_from, msg_tmp, flags, ts);
+	
 	g_free(msg_tmp);
 	g_free(ctx_from);
 }
@@ -213,6 +225,7 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 {
 	gchar *url, *text;
 	PurpleHttpRequest *request;
+	PurpleMessageFlags flags = 0;
 	
 	if (purple_strequal(purple_core_get_ui(), "BitlBee")) {
 		// Bitlbee doesn't support images, so just plop a url to the image instead
@@ -239,10 +252,16 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	ctx->from = g_strdup(from);
 	purple_http_request(sa->pc, request, teams_got_imagemessage, ctx);
 	purple_http_request_unref(request);
+	
+	if (teams_is_user_self(sa, from)) {
+		flags |= PURPLE_MESSAGE_SEND;
+	} else {
+		flags |= PURPLE_MESSAGE_RECV;
+	}
 
 	url = purple_strreplace(uri, "imgt1", "imgpsh_fullsize");
 	text = g_strdup_printf("<a href=\"%s\">Click here to view full version</a>", url);
-	purple_conversation_write_img_message(conv, from, text, 0, ts);
+	purple_conversation_write_img_message(conv, from, text, flags, ts);
 	
 	g_free(url);
 	g_free(text);
@@ -254,6 +273,7 @@ teams_download_moji_to_conv(TeamsAccount *sa, const gchar *text, const gchar *ur
 	gchar *cdn_url_thumbnail;
 	PurpleHttpURL *httpurl;
 	PurpleHttpRequest *request;
+	PurpleMessageFlags flags = 0;
 
 	httpurl = purple_http_url_parse(url_thumbnail);
 
@@ -270,7 +290,13 @@ teams_download_moji_to_conv(TeamsAccount *sa, const gchar *text, const gchar *ur
 	purple_http_request(sa->pc, request, teams_got_imagemessage, ctx);
 	purple_http_request_unref(request);
 	
-	purple_conversation_write_img_message(conv, from, text, 0, ts);
+	if (teams_is_user_self(sa, from)) {
+		flags |= PURPLE_MESSAGE_SEND;
+	} else {
+		flags |= PURPLE_MESSAGE_RECV;
+	}
+	
+	purple_conversation_write_img_message(conv, from, text, flags, ts);
 
 	g_free(cdn_url_thumbnail);
 	purple_http_url_free(httpurl);
