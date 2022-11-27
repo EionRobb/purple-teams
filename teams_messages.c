@@ -386,8 +386,6 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					g_free(html);
 					html = temp;
 				}
-				
-				teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
 			}
 				
 			if (properties != NULL) {
@@ -396,10 +394,43 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					html = g_strconcat("<b>", _("User deleted their message"), "</b>", NULL);
 				}
 				
-				html = teams_process_files_in_properties(properties, &html);
+				if (json_object_has_member(properties, "emotions")) {
+					JsonArray *emotions = json_object_get_array_member(properties, "emotions");
+					guint i, len = json_array_get_length(emotions);
+					GString *emotion_text = g_string_new("");
+					
+					for(i = 0; i < len; i++) {
+						JsonObject *emotion = json_array_get_object_element(emotions, i);
+						const gchar *emotion_name = json_object_get_string_member(emotion, "key");
+						JsonArray *emotion_users = json_object_get_array_member(emotion, "users");
+						guint emotion_users_count = json_array_get_length(emotion_users);
+						//TODO include a portion of the original string (in html)
+						//TODO list names of users   "users":[{"mri":"8:orgid:..."},{"mri":"..."}]
+						//for (j = 0; j < emotion_users_count; j++) {
+						g_string_append_printf(emotion_text, _("%u users reacted with a :%s:\n"), emotion_users_count, emotion_name);
+					}
+					
+					g_free(html);
+					if (emotion_text->str && *emotion_text->str) {
+						html = g_strconcat("<b>", emotion_text->str, "</b>", NULL);
+					} else {
+						html = NULL;
+					}
+					g_string_free(emotion_text, TRUE);
+					
+				} else {
+					html = teams_process_files_in_properties(properties, &html);
+					
+				}
 			}
 			
-			if (html != NULL) {
+			if (json_object_has_member(resource, "imdisplayname")) {
+				//TODO use this for an alias
+			}
+			
+			if (html != NULL && *html) {
+				teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
+				
 				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
 				
 				g_free(html);
@@ -669,14 +700,48 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					html = g_strconcat("<b>", _("User deleted their message"), "</b>", NULL);
 				}
 				
-				html = teams_process_files_in_properties(properties, &html);
+				if (json_object_has_member(properties, "emotions")) {
+					JsonArray *emotions = json_object_get_array_member(properties, "emotions");
+					guint i, len = json_array_get_length(emotions);
+					GString *emotion_text = g_string_new("");
+					
+					for(i = 0; i < len; i++) {
+						JsonObject *emotion = json_array_get_object_element(emotions, i);
+						const gchar *emotion_name = json_object_get_string_member(emotion, "key");
+						JsonArray *emotion_users = json_object_get_array_member(emotion, "users");
+						guint j, emotion_users_count = json_array_get_length(emotion_users);
+						
+						for (j = 0; j < emotion_users_count; j++) {
+							JsonObject *emotion_user = json_array_get_object_element(emotion_users, j);
+							const gchar *mri = json_object_get_string_member(emotion_user, "mri");
+							const gchar *buddyid = teams_strip_user_prefix(mri);
+							
+							if (!teams_is_user_self(sa, buddyid)) {
+								//TODO include a portion of the original string (in html)
+								g_string_append_printf(emotion_text, _("Reacted with a :%s:\n"), emotion_name);
+							}
+						}
+					}
+					
+					g_free(html);
+					if (emotion_text->str && *emotion_text->str) {
+						html = g_strconcat("<b>", emotion_text->str, "</b>", NULL);
+					} else {
+						html = NULL;
+					}
+					g_string_free(emotion_text, TRUE);
+				
+				} else {
+					html = teams_process_files_in_properties(properties, &html);
+					
+				}
 			}
 			
 			if (json_object_has_member(resource, "imdisplayname")) {
 				//TODO use this for an alias
 			}
 			
-			if (html != NULL) {
+			if (html != NULL && *html) {
 				imconv = purple_conversations_find_im_with_account(convbuddyname, sa->account);
 				if (imconv == NULL)
 				{
