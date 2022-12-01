@@ -178,6 +178,25 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 	return *html;
 }
 
+static gchar *
+teams_clean_chat_name(TeamsAccount *sa, gchar *chatname)
+{
+	PurpleAccount *account = sa->account;
+	gboolean should_collapse_threads = TRUE;
+	
+	should_collapse_threads = purple_account_get_bool(account, "should_collapse_threads", should_collapse_threads);
+	
+	//TODO allow a per-chat setting to not collapse
+	if (should_collapse_threads) {
+		gchar *qmark = strchr(chatname, ';');
+		if (qmark != NULL) {
+			*qmark = '\0';
+		}
+	}
+	
+	return chatname;
+}
+
 static void
 process_message_resource(TeamsAccount *sa, JsonObject *resource)
 {
@@ -253,6 +272,9 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		// This is a Thread/Group chat message
 		const gchar *topic;
 		PurpleChatConversation *chatconv;
+		
+		//Turn threaded group chats into unthreaded ones, as required
+		chatname = teams_clean_chat_name(sa, convname);
 		
 		chatconv = purple_conversations_find_chat_with_account(chatname, sa->account);
 		if (!chatconv) {

@@ -763,26 +763,32 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 {
 	PurpleProtocol *info = prpl_info;
 #endif
-	PurpleAccountOption *opt, *opt2;
+	PurpleAccountOption *opt;
 	PurpleBuddyIconSpec icon_spec = {"jpeg", 0, 0, 96, 96, 0, PURPLE_ICON_SCALE_DISPLAY};
 
 	//PurpleProtocol
 	info->id = TEAMS_PLUGIN_ID;
 	info->name = "Teams";
 	prpl_info->options = OPT_PROTO_NO_PASSWORD | OPT_PROTO_CHAT_TOPIC /*| OPT_PROTO_INVITE_MESSAGE*/ | OPT_PROTO_IM_IMAGE;
-	
-	opt = purple_account_option_string_new("Tenant", "tenant", "");
-	opt2 = purple_account_option_bool_new("Set global status", "set-global-status", TRUE);
 
 #if !PURPLE_VERSION_CHECK(3, 0, 0)
-	prpl_info->protocol_options = g_list_append(prpl_info->protocol_options, opt);
-	prpl_info->protocol_options = g_list_append(prpl_info->protocol_options, opt2);
+#	define TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt) prpl_info->protocol_options = g_list_append(prpl_info->protocol_options, (opt));
 	prpl_info->icon_spec = icon_spec;
 #else
-	prpl_info->account_options = g_list_append(prpl_info->account_options, opt);
-	prpl_info->account_options = g_list_append(prpl_info->account_options, opt2);
+#	define TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt) prpl_info->account_options = g_list_append(prpl_info->account_options, (opt));
 	prpl_info->icon_spec = &icon_spec;
 #endif
+	
+	opt = purple_account_option_string_new(_("Tenant"), "tenant", "");
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+	
+	opt = purple_account_option_bool_new(_("Set global status"), "set-global-status", TRUE);
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+	
+	opt = purple_account_option_bool_new(_("Collapse Teams threads into a single chat window"), "should_collapse_threads", TRUE);
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+
+#undef TEAMS_PRPL_APPEND_ACCOUNT_OPTION
 	
 #if PURPLE_VERSION_CHECK(3, 0, 0)
 }
