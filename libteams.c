@@ -556,6 +556,43 @@ teams_cmd_topic(PurpleConversation *conv, const gchar *cmd, gchar **args, gchar 
 	return PURPLE_CMD_RET_OK;
 }
 
+static PurpleCmdRet
+teams_cmd_call(PurpleConversation *conv, const gchar *cmd, gchar **args, gchar **error, void *data)
+{
+	PurpleConnection *pc = NULL;
+	TeamsAccount *sa;
+	const gchar *convname = NULL;
+	
+	pc = purple_conversation_get_connection(conv);
+	if (pc == NULL)
+		return PURPLE_CMD_RET_FAILED;
+	sa = purple_connection_get_protocol_data(pc);
+	
+	convname = purple_conversation_get_data(conv, "chatname");
+	if (!convname) {
+		convname = purple_conversation_get_name(conv);
+	
+		if (PURPLE_IS_IM_CONVERSATION(conv)) {
+			if (!TEAMS_BUDDY_IS_NOTIFICATIONS(convname)) {
+				convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, convname);
+			}
+		}
+	}
+	
+	if (!convname)
+		return PURPLE_CMD_RET_FAILED;
+	
+	gchar *message = g_strconcat("https://teams.microsoft.com/l/meetup-join/", purple_url_encode(convname), "/0", NULL);
+	
+	PurpleMessage *msg = purple_message_new_system(message, 0);
+	purple_conversation_write_message(conv, msg);
+	purple_message_destroy(msg);
+	
+	g_free(message);
+	
+	return PURPLE_CMD_RET_OK;
+}
+
 /******************************************************************************/
 /* Plugin functions */
 /******************************************************************************/
@@ -661,6 +698,12 @@ plugin_load(PurplePlugin *plugin
 						PURPLE_CMD_FLAG_PROTOCOL_ONLY | PURPLE_CMD_FLAG_IM,
 						TEAMS_PLUGIN_ID, teams_cmd_list,
 						_("list: Display a list of multi-chat group chats you are in."),
+						NULL);
+	
+	purple_cmd_register("call", "", PURPLE_CMD_P_PLUGIN, PURPLE_CMD_FLAG_CHAT |
+						PURPLE_CMD_FLAG_PROTOCOL_ONLY | PURPLE_CMD_FLAG_IM,
+						TEAMS_PLUGIN_ID, teams_cmd_call,
+						_("call: Create a URL link to start a voice/video call in the browser."),
 						NULL);
 	
 	purple_signal_connect(purple_get_core(), "uri-handler", plugin, PURPLE_CALLBACK(teams_uri_handler), NULL);
