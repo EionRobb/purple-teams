@@ -375,14 +375,77 @@ teams_logout(TeamsAccount *sa)
 }
 
 
+
+typedef struct {
+	gpointer unused1;
+	gpointer unused2;
+	gpointer unused3;
+	gpointer unused4;
+	gpointer unused5;
+	int unused6;
+	int unused7;
+	int unused8;
+	int unused9;
+	
+	gpointer set;
+} bitlbee_account_t;
+
+typedef struct {
+	bitlbee_account_t *acc;
+} bitlbee_im_connection;
+
+static gpointer bitlbee_module;
+static bitlbee_im_connection *(*bitlbee_purple_ic_by_pa)(PurpleAccount *);
+static int (*bitlbee_set_setstr)(gpointer *, const char *, const char *);
+static gboolean bitlbee_password_funcs_loaded = FALSE;
+
+#ifdef _WIN32
+#ifndef dlerror
+static gchar *last_dlopen_error = NULL;
+#	define dlerror()               (g_free(last_dlopen_error),last_dlopen_error=g_win32_error_message(GetLastError()))
+#endif
+#endif
+
+static void
+save_bitlbee_password(PurpleAccount *account, const gchar *password)
+{
+	bitlbee_account_t *acc;
+	bitlbee_im_connection *imconn;
+
+	gboolean result = GPOINTER_TO_INT(purple_signal_emit_return_1(purple_accounts_get_handle(), "bitlbee-set-account-password", account, password));
+
+	if (result) {
+		return;
+	}
+	
+	if (bitlbee_password_funcs_loaded == FALSE) {
+		bitlbee_module = dlopen(NULL, RTLD_LAZY);
+		if (bitlbee_module == NULL) {
+			purple_debug_error("googlechat", "Couldn't acquire address of bitlbee handle: %s\n", dlerror());
+			g_return_if_fail(bitlbee_module);
+		}
+		
+		bitlbee_purple_ic_by_pa = (gpointer) dlsym(bitlbee_module, "purple_ic_by_pa");
+		bitlbee_set_setstr = (gpointer) dlsym(bitlbee_module, "set_setstr");
+		
+		bitlbee_password_funcs_loaded = TRUE;
+	}
+	
+	imconn = bitlbee_purple_ic_by_pa(account);
+	acc = imconn->acc;
+	bitlbee_set_setstr(&acc->set, "password", password ? password : "");
+}
+
+
+
 static void
 teams_save_refresh_token_password(PurpleAccount *account, const gchar *password)
 {
 	purple_account_set_password(account, password, NULL, NULL);
 	
-	// if (g_strcmp0(purple_core_get_ui(), "BitlBee") == 0) {
-		// save_bitlbee_password(account, password);
-	// }
+	if (g_strcmp0(purple_core_get_ui(), "BitlBee") == 0) {
+		save_bitlbee_password(account, password);
+	}
 }
 
 void
@@ -909,3 +972,20 @@ teams_do_web_auth(TeamsAccount *sa)
 	g_free(tenant_host);
 	g_free(auth_url);
 }
+
+//alternate flow:
+//  POST to https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode
+//		with    client_id= TEAMS_OAUTH_CLIENT_ID  &scope= {https://api.spaces.skype.com/.default offline_access profile openid}
+//  comes back with device_code  and tells user to go to https://microsoft.com/devicelogin  with user_code ABCDEFGHI
+// {
+// 	"user_code": "ABCDEFGHI",
+// 	"device_code": "ABCDEFGHI--ABCDEFGHI-ABCDEFGHI",
+// 	"verification_uri": "https://microsoft.com/devicelogin",
+// 	"expires_in": 900,
+// 	"interval": 5,
+// 	"message": "To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ABCDEFGHI to authenticate."
+// }
+//  periodically (every interval seconds) poll with POST to https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+// with
+//    client_id= TEAMS_OAUTH_CLIENT_ID &client_info=1&scope={scope}&grant_type=device_code&device_code={device_code}
+//  and eventually it'll come back with client id's etc

@@ -61,10 +61,11 @@
 #include "glibcompat.h"
 
 #ifdef _WIN32
-#	define dlopen(a,b) LoadLibrary(a)
-#	define RTLD_LAZY
-#	define dlsym(a,b) GetProcAddress(a,b)
-#	define dlclose(a) FreeLibrary(a)
+#	include <windows.h>
+#	define dlopen(a,b)  GetModuleHandleA(a)
+#	define RTLD_LAZY    0x0001
+#	define dlsym(a,b)   GetProcAddress(a,b)
+#	define dlclose(a)   FreeLibrary(a)
 #else
 #	include <arpa/inet.h>
 #	include <dlfcn.h>
