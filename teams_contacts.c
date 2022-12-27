@@ -1194,7 +1194,9 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		
 		g_free(sbuddy->display_name); 
 		sbuddy->display_name = g_strdup(displayName);
-		purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
+		if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+			purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
+		}
 		
 		if (!purple_strequal(json_object_get_string_member(contact, "email"), givenName)) {
 			if (json_object_has_member(contact, "surname")) {
@@ -1473,14 +1475,19 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 			}
 			
 		} else {
+			const gchar *title = json_object_get_string_member(chat, "title");
+			PurpleChat *purple_chat = teams_find_chat(sa->account, id);
 			
-			if (!teams_find_chat(sa->account, id)) {
-				const gchar *title = json_object_get_string_member(chat, "title");
+			if (purple_chat == NULL) {
 				GHashTable *components = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 				g_hash_table_replace(components, g_strdup("chatname"), g_strdup(id));
 				
-				PurpleChat *chat = purple_chat_new(sa->account, title, components);
-				purple_blist_add_chat(chat, group, NULL);
+				purple_chat = purple_chat_new(sa->account, title, components);
+				purple_blist_add_chat(purple_chat, group, NULL);
+				
+			} else {
+				purple_chat_set_alias(purple_chat, title);
+				
 			}
 			
 			JsonArray *members = json_object_get_array_member(chat, "members");
@@ -1505,6 +1512,77 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 	// Users
 	users = json_object_get_array_member(obj, "users");
 	(void) users;
+	
+	if (users_to_fetch)
+	{
+		teams_get_friend_profiles(sa, users_to_fetch);
+		teams_subscribe_to_contact_status(sa, users_to_fetch);
+		g_slist_free_full(users_to_fetch, g_free);
+	}
+}
+
+static void
+teams_get_friend_suggestions_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonObject *obj, *firstgroup;
+	JsonArray *groups, *suggestions;
+	PurpleGroup *group = teams_get_blist_group(sa);
+	GSList *users_to_fetch = NULL;
+	guint index, length;
+	
+	obj = json_node_get_object(node);
+	groups = json_object_get_array_member(obj, "Groups");
+	firstgroup = json_array_get_object_element(groups, 0);
+	suggestions = json_object_get_array_member(firstgroup, "Suggestions");
+	length = json_array_get_length(suggestions);
+	
+	for(index = 0; index < length; index++)
+	{
+		JsonObject *contact = json_array_get_object_element(suggestions, index);
+		const gchar *mri = json_object_get_string_member(contact, "MRI");
+		const gchar *display_name = json_object_get_string_member(contact, "DisplayName");
+		const gchar *firstname = json_object_get_string_member(contact, "GivenName");
+		const gchar *surname = json_object_get_string_member(contact, "Surname");
+		
+		PurpleBuddy *buddy;
+		const gchar *id;
+		
+		id = teams_strip_user_prefix(mri);
+		
+		buddy = purple_blist_find_buddy(sa->account, id);
+		if (!buddy)
+		{
+			buddy = purple_buddy_new(sa->account, id, display_name);
+			purple_blist_add_buddy(buddy, NULL, group, NULL);
+		}
+
+		// try to free the sbuddy here. no-op if it's not set before, otherwise prevents a leak.
+		teams_buddy_free(buddy);
+		
+		TeamsBuddy *sbuddy = g_new0(TeamsBuddy, 1);
+		sbuddy->skypename = g_strdup(id);
+		sbuddy->sa = sa;
+		sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
+		sbuddy->display_name = g_strdup(display_name);
+		
+		sbuddy->buddy = buddy;
+		purple_buddy_set_protocol_data(buddy, sbuddy);
+		
+		if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+			purple_serv_got_alias(sa->pc, id, sbuddy->display_name);
+		}
+		if (!purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
+			purple_buddy_set_server_alias(buddy, sbuddy->fullname);
+		}
+		
+		teams_get_icon(buddy);
+		users_to_fetch = g_slist_prepend(users_to_fetch, sbuddy->skypename);
+		
+		if (purple_strequal(id, sa->primary_member_name)) {
+			g_free(sa->self_display_name);
+			sa->self_display_name = g_strdup(display_name);
+		}
+	}
 	
 	if (users_to_fetch)
 	{
@@ -1626,6 +1704,12 @@ teams_get_friend_list(TeamsAccount *sa)
 	// Fetch a list of teams and chats we're part of - doesn't include users for Guests
 	url = "/api/csa/api/v1/teams/users/me?isPrefetch=false&enableMembershipSummary=true";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_get_friend_list_teams_cb, NULL, TRUE);
+	
+	// Search all of office for suggestions
+	//TODO needs auth with scope of https://substrate.office.com
+	url = "/search/api/v1/suggestions?scenario=";
+	const gchar *postdata = "{\"EntityRequests\":[{\"EntityType\":\"People\",\"Fields\":[\"DisplayName\",\"MRI\",\"GivenName\",\"Surname\"],\"Query\":{\"QueryString\":\"\",\"DisplayQueryString\":\"\"},\"Provenances\":[\"Mailbox\",\"Directory\"],\"Filter\":{\"And\":[{\"Or\":[{\"Term\":{\"PeopleType\":\"Person\"}},{\"Term\":{\"PeopleType\":\"Other\"}}]},{\"Or\":[{\"Term\":{\"PeopleSubtype\":\"OrganizationUser\"}},{\"Term\":{\"PeopleSubtype\":\"Guest\"}}]}]},\"Size\":500,\"From\":0}],\"Cvid\":\"12345678-1234-4321-1234-123412341234\",\"AppName\":\"Microsoft Teams\",\"Scenario\":{\"Name\":\"peoplecache\"}}";
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "substrate.office.com", url, postdata, teams_get_friend_suggestions_cb, NULL, TRUE);
 }
 
 

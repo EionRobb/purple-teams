@@ -22,7 +22,7 @@
 
 #define purple_protocol_action_get_connection(action)  ((action)->connection)
 
-#define purple_chat_user_set_alias(cb, alias)  g_object_set((cb), "alias", (alias), NULL)
+#define purple_chat_user_set_alias(cb, alias)  g_object_set((cb), "alias", g_strdup(alias), NULL)
 #define purple_chat_get_alias(chat)  g_object_get_data(G_OBJECT(chat), "alias")
 
 //TODO remove this when dx adds this to the PurpleMessageFlags enum
@@ -182,7 +182,12 @@ purple_chat_conversation_find_user(PurpleChatConversation *chat, const char *nam
 }
 #define purple_chat_user_get_flags(cb)     purple_conv_chat_user_get_flags(g_dataset_get_data((cb), "chat"), (cb)->name)
 #define purple_chat_user_set_flags(cb, f)  purple_conv_chat_user_set_flags(g_dataset_get_data((cb), "chat"), (cb)->name, (f))
-#define purple_chat_user_set_alias(cb, a)  ((cb)->alias = (a))
+static inline void
+purple_chat_user_set_alias(PurpleChatUser *cb, const gchar *alias)
+{
+	g_free(cb->alias);
+	cb->alias = g_strdup(alias);
+}
 
 #define PurpleIMTypingState	PurpleTypingState
 #define PURPLE_IM_NOT_TYPING	PURPLE_NOT_TYPING

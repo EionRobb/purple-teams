@@ -392,6 +392,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				cbflags &= ~PURPLE_CHAT_USER_TYPING;
 				
 				purple_chat_user_set_flags(cb, cbflags);
+			
+			} else {
+				purple_chat_conversation_add_user(chatconv, from, NULL, PURPLE_CHAT_USER_NONE, FALSE);
+				cb = purple_chat_conversation_find_user(chatconv, from);
 			}
 			
 			if (content && *content) {
@@ -446,8 +450,15 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 			}
 			
-			if (json_object_has_member(resource, "imdisplayname")) {
-				//TODO use this for an alias
+			if (json_object_has_member(resource, "imdisplayname") || json_object_has_member(resource, "imDisplayName")) {
+				const gchar *displayname = json_object_get_string_member(resource, "imdisplayname");
+				if (displayname == NULL) {
+					displayname = json_object_get_string_member(resource, "imDisplayName");
+				}
+				
+				if (cb && displayname && *displayname) {
+					purple_chat_user_set_alias(cb, displayname);
+				}
 			}
 			
 			if (html != NULL && *html) {
@@ -759,8 +770,20 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 			}
 			
-			if (json_object_has_member(resource, "imdisplayname")) {
-				//TODO use this for an alias
+			if (json_object_has_member(resource, "imdisplayname") || json_object_has_member(resource, "imDisplayName")) {
+				const gchar *displayname = json_object_get_string_member(resource, "imdisplayname");
+				if (displayname == NULL) {
+					displayname = json_object_get_string_member(resource, "imDisplayName");
+				}
+				
+				if (displayname && *displayname) {
+					//Hopefully not too expensive to do a lookup?
+					PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, from);
+					//TODO add to buddy list if null?
+					if (buddy == NULL || !purple_strequal(purple_buddy_get_local_alias(buddy), displayname)) {
+						purple_serv_got_alias(sa->pc, from, displayname);
+					}
+				}
 			}
 			
 			if (html != NULL && *html) {
