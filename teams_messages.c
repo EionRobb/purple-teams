@@ -1999,10 +1999,6 @@ teams_set_statusid(TeamsAccount *sa, const gchar *status)
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/forceavailability/", post, NULL, NULL, TRUE);
 	g_free(post);
 	
-	return;
-	
-	//TODO whats this one?
-	
 	//https://presence.teams.microsoft.com/v1/me/endpoints/
 	post = g_strdup_printf("{\"id\":\"%s\",\"activity\":\"%s\",\"deviceType\":\"Desktop\"}", sa->endpoint, status);
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/endpoints/", post, NULL, NULL, TRUE);
@@ -2021,6 +2017,13 @@ teams_set_status(PurpleAccount *account, PurpleStatus *status)
 	
 	teams_set_statusid(sa, purple_status_get_id(status));
 	teams_set_mood_message(sa, purple_status_get_attr_string(status, "message"));
+}
+
+
+void
+teams_set_status_timeout_cb(TeamsAccount* sa)
+{
+    teams_set_status(sa->account, purple_account_get_active_status(sa->account));
 }
 
 void

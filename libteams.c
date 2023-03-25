@@ -48,6 +48,8 @@ teams_do_all_the_things(TeamsAccount *sa)
 		skype_web_get_offline_history(sa);
 
 		teams_set_status(sa->account, purple_account_get_active_status(sa->account));
+        sa->status_last_set_timeout = g_timeout_add_seconds(250, (GSourceFunc)teams_set_status_timeout_cb, sa);
+
 	} else {
 		//Too soon!
 		teams_subscribe(sa);
