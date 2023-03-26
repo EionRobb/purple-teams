@@ -39,7 +39,7 @@ const gchar *message, PurpleMessageFlags flags
 
 void teams_set_idle(PurpleConnection *pc, int time);
 void teams_set_status(PurpleAccount *account, PurpleStatus *status);
-void teams_set_status_timeout_cb(TeamsAccount *sa);
+gboolean teams_set_status_timeout_cb(TeamsAccount *sa);
 guint teams_conv_send_typing(PurpleConversation *conv, PurpleIMTypingState state);
 guint teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState state);
 void teams_poll(TeamsAccount *sa);

@@ -2020,10 +2020,16 @@ teams_set_status(PurpleAccount *account, PurpleStatus *status)
 }
 
 
-void
+gboolean
 teams_set_status_timeout_cb(TeamsAccount* sa)
 {
+    if(sa == NULL || sa->account == NULL) {
+        purple_debug_warning("teams", "Set status cb (sa == NULL || sa->account == NULL); cancel timer.");
+        return FALSE;
+    }
+
     teams_set_status(sa->account, purple_account_get_active_status(sa->account));
+    return TRUE;
 }
 
 void
