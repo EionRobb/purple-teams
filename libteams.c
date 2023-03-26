@@ -48,6 +48,10 @@ teams_do_all_the_things(TeamsAccount *sa)
 		skype_web_get_offline_history(sa);
 
 		teams_set_status(sa->account, purple_account_get_active_status(sa->account));
+        if(sa->status_last_set_timeout)
+            g_source_remove(sa->status_last_set_timeout);
+        sa->status_last_set_timeout = g_timeout_add_seconds(250, (GSourceFunc)teams_set_status_timeout_cb, sa);
+
 	} else {
 		//Too soon!
 		teams_subscribe(sa);
@@ -398,7 +402,8 @@ teams_close(PurpleConnection *pc)
 	
 	sa = purple_connection_get_protocol_data(pc);
 	g_return_if_fail(sa != NULL);
-	
+
+    g_source_remove(sa->status_last_set_timeout);
 	g_source_remove(sa->friend_list_poll_timeout);
 	g_source_remove(sa->authcheck_timeout);
 	g_source_remove(sa->poll_timeout);
