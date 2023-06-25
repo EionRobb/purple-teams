@@ -18,6 +18,7 @@
 
 #include "teams_login.h"
 #include "teams_util.h"
+#include "http.h"
 
 
 #define TEAMS_GUID_REGEX_PATTERN "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
@@ -959,7 +960,7 @@ teams_do_web_auth(TeamsAccount *sa)
 		tenant_host = g_strdup("Common");
 	}
 	
-	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/authorize?client_id=" TEAMS_OAUTH_CLIENT_ID "&response_type=code&display=popup&prompt=select_account&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient", NULL);
+	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/authorize?client_id=" TEAMS_OAUTH_CLIENT_ID "&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient", NULL);
 	
 	purple_notify_uri(pc, auth_url);
 	purple_request_input(pc, _("Authorization Code"), auth_url,
