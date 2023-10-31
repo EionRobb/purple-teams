@@ -151,10 +151,10 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 	if (json_object_has_member(properties, "files")) {
 		const gchar *files_str = json_object_get_string_member(properties, "files");
 		JsonArray *files = json_decode_array(files_str, -1);
-		GString *files_string = g_string_new(_("Files sent:"));
+		GString *files_string = g_string_new(_(""));
 		guint i, len = json_array_get_length(files);
-		
-		g_string_append(files_string, "<br>");
+
+		if (len > 0) g_string_append(files_string, "Files sent: <br>");
 		for(i = 0; i < len; i++) {
 			JsonObject *file = json_array_get_object_element(files, i);
 			g_string_append(files_string, "* <a href=\"");
