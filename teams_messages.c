@@ -151,26 +151,32 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 	if (json_object_has_member(properties, "files")) {
 		const gchar *files_str = json_object_get_string_member(properties, "files");
 		JsonArray *files = json_decode_array(files_str, -1);
-		GString *files_string = g_string_new(_(""));
+		GString *files_string = g_string_new(NULL);
 		guint i, len = json_array_get_length(files);
 
-		if (len > 0) g_string_append(files_string, "Files sent: <br>");
+		if (len > 0) {
+			g_string_append(files_string, "<br>");
+			g_string_append(files_string, _("Files sent"));
+			g_string_append(files_string, "</b>: <br>");
+		}
 		for(i = 0; i < len; i++) {
 			JsonObject *file = json_array_get_object_element(files, i);
 			g_string_append(files_string, "* <a href=\"");
 			g_string_append(files_string, json_object_get_string_member(file, "objectUrl"));
 			g_string_append(files_string, "\">");
 			g_string_append(files_string, json_object_get_string_member(file, "fileName"));
-			g_string_append(files_string, "<br>");
+			g_string_append(files_string, "</a><br>");
 			
 			//Potentially use the preview image in  file.filePreview.previewUrl
 		}
 		
 		json_array_unref(files);
 		
-		gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
-		g_free(*html);
-		*html = temp;
+		if (html != NULL) {
+			gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
+			g_free(*html);
+			*html = temp;
+		}
 		
 		g_string_free(files_string, TRUE);
 	}
