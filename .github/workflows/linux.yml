@@ -1,0 +1,27 @@
+name: Linux
+on:
+  - push
+  - pull_request
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install deps
+        run: |
+          sudo apt update
+          sudo apt install -y libglib2.0-dev libjson-glib-dev gettext
+          # We only need these to build, not to run.  Skip the dependency check.
+          sudo apt download libpurple0 libpurple-dev
+          sudo dpkg --force-depends -i libpurple0*.deb libpurple-dev*.deb
+      - name: make
+        run: make
+
+      - name: archive
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with: 
+            name: plugin 
+            path: lib*.so

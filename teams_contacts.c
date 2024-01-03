@@ -92,7 +92,7 @@ teams_get_icon_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response,
 		return;
 	}
 	
-	purple_buddy_icons_set_for_user(purple_buddy_get_account(buddy), purple_buddy_get_name(buddy), g_memdup(data, len), len, url);
+	purple_buddy_icons_set_for_user(purple_buddy_get_account(buddy), purple_buddy_get_name(buddy), g_memdup2(data, len), len, url);
 	
 }
 
@@ -204,7 +204,7 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	if (!purple_http_response_is_successful(response))
 		return;
 	
-	image = purple_image_new_from_data(g_memdup(url_text, len), len);
+	image = purple_image_new_from_data(g_memdup2(url_text, len), len);
 	icon_id = purple_image_store_add(image);
 	msg_tmp = g_strdup_printf("<img id='%d'>", icon_id);
 	

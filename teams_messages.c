@@ -350,7 +350,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				if (purple_strequal(purple_xmlnode_get_name(uriobject), "URIObject") && purple_strequal(uriobject_type, "SWIFT.1")) {
 					PurpleXmlNode *swift = purple_xmlnode_get_child(uriobject, "Swift");
 					const gchar *swift_b64 = purple_xmlnode_get_attrib(swift, "b64");
-					guint swift_b64_len;
+					gsize swift_b64_len;
 					guchar *swift_data = purple_base64_decode(swift_b64, &swift_b64_len);
 					
 					from = teams_contact_url_to_name(from);
