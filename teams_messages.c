@@ -2579,7 +2579,7 @@ teams_conversation_check_message_for_images(TeamsAccount *sa, const gchar *convn
 		}
 		
 		if (imgid && image != NULL && close != NULL) {
-			g_memmove(img, close, strlen(close) + 2);
+			memmove(img, close, strlen(close) + 2);
 		}
 	}
 }
