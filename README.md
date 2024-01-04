@@ -15,9 +15,11 @@ sudo make install
 ```
 to install.
 
+[![Latest Linux build](https://github.com/EionRobb/purple-teams/actions/workflows/linux.yml/badge.svg)](https://github.com/EionRobb/purple-teams/actions/workflows/linux.yml)
+
 Windows Users
 =============
-Download from [here](https://eion.robbmob.com/libteams.dll), copy to `C:\Program Files (x86)\Pidgin\plugins\`.  You may also need [libjson-glib](https://eion.robbmob.com/libjson-glib-1.0.dll) in your `C:\Program Files (x86)\Pidgin\` folder (not the plugins folder)
+Download from [GitHub Actions](https://nightly.link/EionRobb/purple-teams/workflows/cross/master/plugin.zip) (or from [my server](https://eion.robbmob.com/libteams.dll)), copy to `C:\Program Files (x86)\Pidgin\plugins\`.  You may also need [libjson-glib](https://eion.robbmob.com/libjson-glib-1.0.dll) in your `C:\Program Files (x86)\Pidgin\` folder (not the plugins folder)
 
 General Login
 =============
