@@ -1171,6 +1171,36 @@ teams_timeout(gpointer userdata)
 	return FALSE;
 }
 
+void
+teams_process_event_message(TeamsAccount *sa, JsonObject *message)
+{
+	const gchar *resourceType = json_object_get_string_member(message, "resourceType");
+	JsonObject *resource = json_object_get_object_member(message, "resource");
+	
+	if (purple_strequal(resourceType, "NewMessage"))
+	{
+		process_message_resource(sa, resource);
+	} else if (purple_strequal(resourceType, "UserPresence"))
+	{
+		process_userpresence_resource(sa, resource);
+	} else if (purple_strequal(resourceType, "EndpointPresence"))
+	{
+		process_endpointpresence_resource(sa, resource);
+	} else if (purple_strequal(resourceType, "ConversationUpdate"))
+	{
+		process_conversation_resource(sa, resource);
+	} else if (purple_strequal(resourceType, "ThreadUpdate"))
+	{
+		process_thread_resource(sa, resource);
+	} else if (purple_strequal(resourceType, "MessageUpdate"))
+	{
+		//Message edited
+		process_message_resource(sa, resource);
+	} else {
+		purple_debug_info("teams", "Unknown resourceType '%s'\n", resourceType);
+	}
+}
+
 static void
 teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
@@ -1216,29 +1246,7 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			for(index = 0; index < length; index++)
 			{
 				JsonObject *message = json_array_get_object_element(messages, index);
-				const gchar *resourceType = json_object_get_string_member(message, "resourceType");
-				JsonObject *resource = json_object_get_object_member(message, "resource");
-				
-				if (purple_strequal(resourceType, "NewMessage"))
-				{
-					process_message_resource(sa, resource);
-				} else if (purple_strequal(resourceType, "UserPresence"))
-				{
-					process_userpresence_resource(sa, resource);
-				} else if (purple_strequal(resourceType, "EndpointPresence"))
-				{
-					process_endpointpresence_resource(sa, resource);
-				} else if (purple_strequal(resourceType, "ConversationUpdate"))
-				{
-					process_conversation_resource(sa, resource);
-				} else if (purple_strequal(resourceType, "ThreadUpdate"))
-				{
-					process_thread_resource(sa, resource);
-				} else if (purple_strequal(resourceType, "MessageUpdate"))
-				{
-					//Message edited
-					process_message_resource(sa, resource);
-				}
+				teams_process_event_message(sa, message);
 			}
 		} else if (json_object_has_member(obj, "errorCode")) {
 			gint64 errorCode = json_object_get_int_member(obj, "errorCode");
@@ -1602,7 +1610,7 @@ teams_unsubscribe_from_contact_status(TeamsAccount *sa, const gchar *who)
 	g_free(url);
 }
 
-static void
+void
 teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
 	PurpleGroup *group = teams_get_blist_group(sa);
@@ -1718,111 +1726,94 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 void
 teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 {
-	teams_lookup_contact_statuses(sa, contacts);
+	if (contacts == NULL) {
+		return;
+	}
+
+	if (sa->trouter_surl == NULL) {
+		purple_debug_info("teams", "No trouter surl yet\n");
+		// Websocket not ready yet, try the old way
+		teams_lookup_contact_statuses(sa, contacts);
+		return;
+	}
 	
 	//TODO - switch to websocket for contact status reverse-webhooks
-	return;
-	
-	const gchar *contacts_url = "/v2/users/ME/contacts";
+
+	/* 
+	{
+		"trouterUri": "trouter.surl ... /TeamsUnifiedPresenceService",
+		"subscriptionsToAdd": [{
+			"mri": "8:orgid:abc1234a-5289-8372-8234-djfs8a78f987"
+		}, ...],
+		"subscriptionsToRemove": [],
+		"shouldPurgePreviousSubscriptions": false
+	}
+	*/
+	//POST to https://presence.teams.microsoft.com/v1/pubsub/subscriptions/{sa->endpoint}
+	//TODO how many in a batch?
+
+	JsonArray *subscriptionsToAdd = json_array_new();
+	JsonArray *subscriptionsToRemove = json_array_new();
+	gchar *trouterUri = g_strconcat(sa->trouter_surl, "/TeamsUnifiedPresenceService", NULL);
+	gchar *url = g_strdup_printf("/v1/pubsub/subscriptions/%s", purple_url_encode(sa->endpoint));
+
 	gchar *post;
 	GSList *cur = contacts;
-	JsonObject *obj, *sub;
-	JsonArray *contacts_array, *subscriptions;
 	guint count = 0;
-	
-	if (contacts == NULL)
-		return;
-	
-	obj = json_object_new();
-	contacts_array = json_array_new();
-	
-	JsonArray *interested = json_array_new();
-	json_array_add_string_element(interested, "/v1/users/ME/conversations/ALL/properties");
-	json_array_add_string_element(interested, "/v1/users/ME/conversations/ALL/messages");
-	json_array_add_string_element(interested, "/v1/users/ME/contacts/ALL");
-	json_array_add_string_element(interested, "/v1/threads/ALL");
-	
 	do {
 		JsonObject *contact;
 		gchar *id;
-		
-		if (TEAMS_BUDDY_IS_BOT(cur->data)) {
-			purple_protocol_got_user_status(sa->account, cur->data, "Available", NULL);
-			continue;
-		}
 
 		contact = json_object_new();
-		
+
 		id = g_strconcat(teams_user_url_prefix(cur->data), cur->data, NULL);
-		json_object_set_string_member(contact, "id", id);
-		json_array_add_object_element(contacts_array, contact);
-		
-		if (id && id[0] == '8') {
-			//gchar *contact_url = g_strconcat("/v1/users/ME/contacts/", id, NULL);
-			gchar *contact_url = g_strconcat("/v1/users/communications/presences/", id, NULL);
-			json_array_add_string_element(interested, contact_url);
-			g_free(contact_url);
-		}
-		
+		json_object_set_string_member(contact, "mri", id);
+		json_array_add_object_element(subscriptionsToAdd, contact);
 		g_free(id);
-		
+
 		if (++count >= 100) {
+			JsonObject *obj = json_object_new();
+
 			// Send off the current batch and continue
-			json_object_set_array_member(obj, "contacts", contacts_array);
+			json_object_set_string_member(obj, "trouterUri", trouterUri);
+			json_object_set_array_member(obj, "subscriptionsToAdd", subscriptionsToAdd);
+			json_object_set_array_member(obj, "subscriptionsToRemove", subscriptionsToRemove);
+			json_object_set_boolean_member(obj, "shouldPurgePreviousSubscriptions", FALSE);
 			post = teams_jsonobj_to_string(obj);
 
-			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, contacts_url, post, NULL, NULL, TRUE);
-			
+			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", url, post, NULL, NULL, TRUE);
+
 			g_free(post);
 			json_object_unref(obj);
-			
+
 			obj = json_object_new();
-			contacts_array = json_array_new();
+			subscriptionsToAdd = json_array_new();
+			subscriptionsToRemove = json_array_new();
 			count = 0;
 		}
 	} while((cur = g_slist_next(cur)));
-	
-	json_object_set_array_member(obj, "contacts", contacts_array);
-	post = teams_jsonobj_to_string(obj);
 
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, contacts_url, post, NULL, NULL, TRUE);
-	
-	g_free(post);
-	json_object_unref(obj);
-	
-	
-	gchar *url = g_strdup_printf("/v2/users/ME/endpoints/%s", purple_url_encode(sa->endpoint));
-	
-	obj = json_object_new();
-	json_object_set_string_member(obj, "endpointFeatures", "Agent,Presence2015,MessageProperties,CustomUserProperties,NotificationStream,SupportsSkipRosterFromThreads");
-	
-	sub = json_object_new();
-	json_object_set_array_member(sub, "interestedResources", interested);
-	json_object_set_string_member(sub, "channelType", "HttpLongPoll");
-	
-	subscriptions = json_array_new();
-	json_array_add_object_element(subscriptions, sub);
-	json_object_set_array_member(obj, "subscriptions", subscriptions);
-	
-	post = teams_jsonobj_to_string(obj);
+	if (json_array_get_length(subscriptionsToAdd)) {
+		JsonObject *obj = json_object_new();
 
-	//TODO url 
-	//https://apac.ng.msg.teams.microsoft.com/v2/users/ME/endpoints/%s sa->endpoint
-	// {
-		// "startingTimeSpan": 0,
-		// "endpointFeatures": "Agent,Presence2015,MessageProperties,CustomUserProperties,NotificationStream,SupportsSkipRosterFromThreads",
-		// "subscriptions": [{
-			// "channelType": "HttpLongPoll",
-			// "interestedResources": ["/v1/users/ME/conversations/ALL/properties", "/v1/users/ME/conversations/ALL/messages", "/v1/threads/ALL"]
-		// }]
-	// }
-	
-	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
-	
+		// Send off the current batch and continue
+		json_object_set_string_member(obj, "trouterUri", trouterUri);
+		json_object_set_array_member(obj, "subscriptionsToAdd", subscriptionsToAdd);
+		json_object_set_array_member(obj, "subscriptionsToRemove", subscriptionsToRemove);
+		json_object_set_boolean_member(obj, "shouldPurgePreviousSubscriptions", FALSE);
+		post = teams_jsonobj_to_string(obj);
+
+		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", url, post, NULL, NULL, TRUE);
+
+		g_free(post);
+		json_object_unref(obj);
+	}
+
+	json_array_unref(subscriptionsToAdd);
+	json_array_unref(subscriptionsToRemove);
+
 	g_free(url);
-	g_free(post);
-	json_object_unref(obj);
-	
+	g_free(trouterUri);
 }
 
 
@@ -2023,19 +2014,6 @@ teams_set_status(PurpleAccount *account, PurpleStatus *status)
 	
 	teams_set_statusid(sa, purple_status_get_id(status));
 	teams_set_mood_message(sa, purple_status_get_attr_string(status, "message"));
-}
-
-
-gboolean
-teams_set_status_timeout_cb(TeamsAccount* sa)
-{
-    if(sa == NULL || sa->account == NULL) {
-        purple_debug_warning("teams", "Set status cb (sa == NULL || sa->account == NULL); cancel timer.");
-        return FALSE;
-    }
-
-    teams_set_status(sa->account, purple_account_get_active_status(sa->account));
-    return TRUE;
 }
 
 void

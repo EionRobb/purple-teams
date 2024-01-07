@@ -416,3 +416,4 @@ teams_is_user_self(TeamsAccount *sa, const gchar *username) {
 	
 	return !g_ascii_strcasecmp(username, purple_account_get_username(sa->account));
 }
+

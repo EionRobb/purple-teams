@@ -143,6 +143,9 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 	} else if (g_str_equal(host, TEAMS_PRESENCE_HOST)) {
 		purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->presence_access_token);
 		purple_http_request_header_set(request, "Accept", "application/json");
+		purple_http_request_header_set(request, "x-ms-client-user-agent", "Teams-Desktop");
+		purple_http_request_header_set(request, "x-ms-correlation-id", "1");
+		purple_http_request_header_set(request, "x-ms-client-version", "27/1.0.0.2023052414");
 		
 	} else if (g_str_equal(host, "teams.microsoft.com")) {
 		if (strstr(url, "/api/csa/") == url) {

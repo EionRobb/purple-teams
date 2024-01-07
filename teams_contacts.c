@@ -1693,6 +1693,11 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 gboolean
 teams_get_friend_list(TeamsAccount *sa)
 {
+	PurpleConnection *pc = sa->pc;
+	if (!PURPLE_IS_CONNECTION(pc)) {
+		return FALSE;
+	}
+
 	const gchar *url = "/api/mt/apac/beta/users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
 	
 	//TODO

@@ -39,9 +39,9 @@ const gchar *message, PurpleMessageFlags flags
 
 void teams_set_idle(PurpleConnection *pc, int time);
 void teams_set_status(PurpleAccount *account, PurpleStatus *status);
-gboolean teams_set_status_timeout_cb(TeamsAccount *sa);
 guint teams_conv_send_typing(PurpleConversation *conv, PurpleIMTypingState state);
 guint teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState state);
+void teams_process_event_message(TeamsAccount *sa, JsonObject *message);
 void teams_poll(TeamsAccount *sa);
 void teams_get_registration_token(TeamsAccount *sa);
 void teams_subscribe(TeamsAccount *sa);
@@ -53,6 +53,7 @@ void teams_initiate_chat_from_node(PurpleBlistNode *node, gpointer userdata);
 PurpleRoomlist *teams_roomlist_get_list(PurpleConnection *pc);
 void teams_chat_set_topic(PurpleConnection *pc, int id, const char *topic);
 
+void teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data);
 void teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts);
 void teams_unsubscribe_from_contact_status(TeamsAccount *sa, const gchar *who);
 void teams_get_conversation_history_since(TeamsAccount *sa, const gchar *convname, gint since);

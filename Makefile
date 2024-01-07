@@ -80,6 +80,8 @@ C_FILES = \
 	teams_login.c \
 	teams_messages.c \
 	teams_util.c \
+	purple-websocket.c \
+	teams_trouter.c \
 	libteams.c 
 PURPLE_COMPAT_FILES := purple2compat/http.c purple2compat/purple-socket.c
 PURPLE_C_FILES := libteams.c $(C_FILES)
