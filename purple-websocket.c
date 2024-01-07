@@ -108,6 +108,7 @@ static const char *skip_lws(const char *s) {
 					s += 3;
 					break;
 				}
+				return NULL;
 			case '\n':
 			case '\0':
 				return NULL;

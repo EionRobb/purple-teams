@@ -45,7 +45,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 {
 	TeamsAccount *sa = user_data;
 
-	purple_debug_info("teams", "Trouter WS: %d %.*s\n", op, len, msg);
+	purple_debug_info("teams", "Trouter WS: %d %.*s\n", op, (int) len, msg);
 	if (op == PURPLE_WEBSOCKET_OPEN) {
 		purple_debug_info("teams", "Trouter WS: Opened\n");
 
@@ -280,7 +280,6 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_header_set(request, "Content-Type", "application/json");
-	purple_http_request_header_set(request, "Content-Length", g_strdup_printf("%d", strlen(reg_str)));
 	purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
 	purple_http_request_set_contents(request, reg_str, strlen(reg_str));
 	purple_http_request(sa->pc, request, NULL, NULL);
