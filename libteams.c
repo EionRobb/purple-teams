@@ -22,6 +22,8 @@
 #include "teams_login.h"
 #include "teams_messages.h"
 #include "teams_util.h"
+#include "purple-websocket.h"
+#include "teams_trouter.h"
 
 void
 teams_do_all_the_things(TeamsAccount *sa)
@@ -44,14 +46,11 @@ teams_do_all_the_things(TeamsAccount *sa)
 		//TODO remove me when switching to websocket
 		sa->friend_list_poll_timeout = g_timeout_add_seconds(300, (GSourceFunc)teams_get_friend_list, sa);
 		teams_poll(sa);
+		teams_trouter_begin(sa);
 		
 		skype_web_get_offline_history(sa);
 
 		teams_set_status(sa->account, purple_account_get_active_status(sa->account));
-        if(sa->status_last_set_timeout)
-            g_source_remove(sa->status_last_set_timeout);
-        sa->status_last_set_timeout = g_timeout_add_seconds(250, (GSourceFunc)teams_set_status_timeout_cb, sa);
-
 	} else {
 		//Too soon!
 		teams_subscribe(sa);
@@ -402,8 +401,7 @@ teams_close(PurpleConnection *pc)
 	
 	sa = purple_connection_get_protocol_data(pc);
 	g_return_if_fail(sa != NULL);
-
-    g_source_remove(sa->status_last_set_timeout);
+	
 	g_source_remove(sa->friend_list_poll_timeout);
 	g_source_remove(sa->authcheck_timeout);
 	g_source_remove(sa->poll_timeout);
@@ -419,6 +417,8 @@ teams_close(PurpleConnection *pc)
 	purple_http_conn_cancel_all(pc);
 	purple_http_keepalive_pool_unref(sa->keepalive_pool);
 	purple_http_cookie_jar_unref(sa->cookie_jar);
+
+	teams_trouter_stop(sa);
 
 	buddies = purple_blist_find_buddies(sa->account, NULL);
 	while (buddies != NULL) {

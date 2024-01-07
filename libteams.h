@@ -189,11 +189,15 @@ struct _TeamsAccount {
 	GHashTable *buddy_to_chat_lookup;
 	GHashTable *chat_to_buddy_lookup;
 	gint refresh_token_timeout;
-    guint status_last_set_timeout;
 	gchar *csa_access_token;
 	gchar *presence_access_token;
 	struct _TeamsConnection *poll_conn;
 	guint friend_list_poll_timeout;
+	
+	struct _PurpleWebsocket *trouter_socket;
+	gchar *trouter_surl;
+	guint trouter_ping_timeout;
+	guint trouter_command_count;
 };
 
 struct _TeamsBuddy {
