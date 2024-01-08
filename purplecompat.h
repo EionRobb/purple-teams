@@ -187,6 +187,22 @@ purple_chat_user_set_alias(PurpleChatUser *cb, const gchar *alias)
 {
 	g_free(cb->alias);
 	cb->alias = g_strdup(alias);
+
+	PurpleChatConversation *chat = g_dataset_get_data(cb, "chat");
+	if (chat != NULL) {
+		PurpleConversation *conv;
+		PurpleConversationUiOps *ops;
+
+		conv = purple_conv_chat_get_conversation(chat);
+		ops = purple_conversation_get_ui_ops(conv);
+
+		if (ops != NULL) {
+			if (ops->chat_update_user != NULL)
+				ops->chat_update_user(conv, cb->name);
+			else if (ops->chat_rename_user != NULL)
+				ops->chat_rename_user(conv, cb->name, cb->name, alias);
+		}
+	}
 }
 
 #define PurpleIMTypingState	PurpleTypingState

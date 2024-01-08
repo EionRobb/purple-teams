@@ -505,8 +505,12 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				if (!purple_chat_conversation_find_user(chatconv, username)) {
 					const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
 					const gchar *meetingMemberType = json_object_get_string_member(member, "meetingMemberType");
+
+					if (friendlyname == NULL) {
+						friendlyname = json_object_get_string_member(resource, "friendlyName");
+					}
 					
-					if (friendlyname && *friendlyname) {
+					if (friendlyname && *friendlyname && !g_str_has_prefix(friendlyname, "orgid:")) {
 						PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, username);
 						const gchar *local_alias;
 						
@@ -546,7 +550,11 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
 				const gchar *meetingMemberType = json_object_get_string_member(member, "meetingMemberType");
 				
-				if (friendlyname && *friendlyname) {
+				if (friendlyname == NULL) {
+					friendlyname = json_object_get_string_member(resource, "friendlyName");
+				}
+				
+				if (friendlyname && *friendlyname && !g_str_has_prefix(friendlyname, "orgid:")) {
 					PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, username);
 					const gchar *local_alias;
 					
@@ -782,7 +790,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					displayname = json_object_get_string_member(resource, "imDisplayName");
 				}
 				
-				if (displayname && *displayname) {
+				if (displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
 					//Hopefully not too expensive to do a lookup?
 					PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, from);
 					//TODO add to buddy list if null?
@@ -1399,8 +1407,12 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			const gchar *friendlyName = json_object_get_string_member(member, "friendlyName");
 			PurpleBuddy *buddy;
 			const gchar *local_alias;
+
+			if (friendlyName == NULL) {
+				friendlyName = json_object_get_string_member(member, "friendlyname");
+			}
 			
-			if (friendlyName && *friendlyName) {
+			if (friendlyName && *friendlyName && !g_str_has_prefix(friendlyName, "orgid:")) {
 				buddy = purple_blist_find_buddy(sa->account, username);
 				if (buddy == NULL) {
 					purple_buddy_new(sa->account, username, NULL);
@@ -2378,6 +2390,15 @@ teams_chat_set_topic(PurpleConnection *pc, int id, const char *topic)
 	g_free(post);
 	json_object_unref(obj);
 }
+
+// TODO
+// char *
+// teams_chat_get_cb_alias(PurpleConnection *gc, int id, const char *who)
+// {
+// 	// Find the friendlyname for the user
+// 	TeamsAccount *sa = purple_connection_get_protocol_data(gc);
+//	return g_strdup(friendlyname);
+// }
 
 void
 teams_get_thread_url(TeamsAccount *sa, const gchar *thread)
