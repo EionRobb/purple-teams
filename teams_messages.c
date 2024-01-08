@@ -801,10 +801,20 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			}
 			
 			if (html != NULL && *html) {
-				imconv = purple_conversations_find_im_with_account(convbuddyname, sa->account);
+				const gchar *modified_convbuddyname = convbuddyname;
+				//Handle self-send messages
+				if (purple_strequal(convbuddyname, "48:notes")) {
+					if (sa->primary_member_name) {
+						modified_convbuddyname = sa->primary_member_name;
+					} else if (sa->username) {
+						modified_convbuddyname = sa->username;
+					}
+				}
+				
+				imconv = purple_conversations_find_im_with_account(modified_convbuddyname, sa->account);
 				if (imconv == NULL)
 				{
-					imconv = purple_im_conversation_new(sa->account, convbuddyname);
+					imconv = purple_im_conversation_new(sa->account, modified_convbuddyname);
 				}
 				conv = PURPLE_CONVERSATION(imconv);
 				
@@ -814,7 +824,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					if (!g_str_has_prefix(html, "?OTR")) {
 						PurpleMessage *msg;
 						
-						msg = purple_message_new_outgoing(convbuddyname, html, PURPLE_MESSAGE_SEND);
+						msg = purple_message_new_outgoing(modified_convbuddyname, html, PURPLE_MESSAGE_SEND);
 						purple_message_set_time(msg, composetimestamp);
 						purple_conversation_write_message(conv, msg);
 						purple_message_destroy(msg);
@@ -2185,6 +2195,11 @@ const gchar *who, const gchar *message, PurpleMessageFlags flags)
 
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	const gchar *convname;
+
+	if (teams_is_user_self(sa, who)) {
+		// Fake internal app for self-messages
+		who = "48:notes";
+	}
 	
 	if (TEAMS_BUDDY_IS_NOTIFICATIONS(who)) {
 		convname = who;
