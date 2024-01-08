@@ -502,31 +502,18 @@ teams_got_file_info(PurpleHttpConnection *http_conn, PurpleHttpResponse *respons
 	PurpleXfer *xfer;
 	TeamsFileTransfer *swft = user_data;
 	TeamsAccount *sa = swft->sa;
-	JsonParser *parser;
-	JsonNode *node;
 	const gchar *data;
 	gsize len;
 	
 	data = purple_http_response_get_data(response, &len);
-	
-	parser = json_parser_new();
-	if (!json_parser_load_from_data(parser, data, len, NULL)) {
+	obj = json_decode_object(data, len);
+
+	if (obj == NULL) {
 		g_free(swft->url);
 		g_free(swft->from);
 		g_free(swft);
-		g_object_unref(parser);
 		return;
 	}
-	
-	node = json_parser_get_root(parser);
-	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT) {
-		g_free(swft->url);
-		g_free(swft->from);
-		g_free(swft);
-		g_object_unref(parser);
-		return;
-	}
-	obj = json_node_get_object(node);
 	
 	/* 
 	{
@@ -549,11 +536,10 @@ teams_got_file_info(PurpleHttpConnection *http_conn, PurpleHttpResponse *respons
 		g_free(swft->url);
 		g_free(swft->from);
 		g_free(swft);
-		g_object_unref(parser);
+		json_object_unref(obj);
 		return;
 	}
 	
-	json_object_ref(obj);
 	swft->info = obj;
 	
 	xfer = purple_xfer_new(sa->account, PURPLE_XFER_TYPE_RECEIVE, swft->from);
@@ -566,8 +552,6 @@ teams_got_file_info(PurpleHttpConnection *http_conn, PurpleHttpResponse *respons
 	purple_xfer_set_protocol_data(xfer, swft);
 	
 	purple_xfer_request(xfer);
-	
-	g_object_unref(parser);
 }
 
 void
@@ -598,27 +582,17 @@ got_file_send_progress(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	TeamsFileTransfer *swft = user_data;
 	PurpleXfer *xfer = swft->xfer;
 	TeamsAccount *sa = swft->sa;
-	JsonParser *parser;
-	JsonNode *node;
 	JsonObject *obj;
 	const gchar *data;
 	gsize len;
 	
 	data = purple_http_response_get_data(response, &len);
+	obj = json_decode_object(data, len);
+	if (obj == NULL) {
+		return;
+	}
 	
 	//{"content_length":0,"content_full_length":0,"view_length":0,"content_state":"no content","view_state":"none","view_location":"https://nus1-api.asm.skype.com/v1/objects/0-cus-d1-61121cfae8cf601944627a66afdb77ad/views/original","status_location":"https://nus1-api.asm.skype.com/v1/objects/0-cus-d1-61121cfae8cf601944627a66afdb77ad/views/original/status"}
-	parser = json_parser_new();
-	if (!json_parser_load_from_data(parser, data, len, NULL)) {
-		//probably bad
-		return;
-	}
-	node = json_parser_get_root(parser);
-	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT) {
-		//probably bad
-		return;
-	}
-	obj = json_node_get_object(node);
-	
 	
 	if (json_object_has_member(obj, "status_location")) {
 		g_free(swft->url);
@@ -673,12 +647,9 @@ got_file_send_progress(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 		purple_xfer_unref(xfer);
 		
 		purple_xmlnode_free(uriobject);
-		g_object_unref(parser);
-		return;
 	}
 	
-	
-	g_object_unref(parser);
+	json_object_unref(obj);
 	
 	// probably good
 }
@@ -764,36 +735,17 @@ teams_got_object_for_file(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 {
 	TeamsFileTransfer *swft = user_data;
 	PurpleXfer *xfer = swft->xfer;
-	JsonParser *parser;
-	JsonNode *node;
 	JsonObject *obj;
 	const gchar *data;
 	gsize len;
 	
 	data = purple_http_response_get_data(response, &len);
+	obj = json_decode_object(data, len);
 	
 	//Get back {"id": "0-cus-d3-deadbeefdeadbeef012345678"}
-	parser = json_parser_new();
-	if (!json_parser_load_from_data(parser, data, len, NULL)) {
+	if (obj == NULL || !json_object_has_member(obj, "id")) {
 		g_free(swft->from);
 		g_free(swft);
-		g_object_unref(parser);
-		return;
-	}
-	node = json_parser_get_root(parser);
-	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT) {
-		g_free(swft->from);
-		g_free(swft);
-		g_object_unref(parser);
-		purple_xfer_cancel_local(xfer);
-		return;
-	}
-	obj = json_node_get_object(node);
-	
-	if (!json_object_has_member(obj, "id")) {
-		g_free(swft->from);
-		g_free(swft);
-		g_object_unref(parser);
 		purple_xfer_cancel_local(xfer);
 		return;
 	}
@@ -801,7 +753,7 @@ teams_got_object_for_file(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 	swft->id = g_strdup(json_object_get_string_member(obj, "id"));
 	swft->url = g_strconcat("https://" TEAMS_XFER_HOST "/v1/objects/", purple_url_encode(swft->id), "/views/original/status", NULL);
 	
-	g_object_unref(parser);
+	json_object_unref(obj);
 	
 	//Send the data
 	
@@ -901,6 +853,24 @@ PurpleConnection *pc, const gchar *who, const gchar *filename)
 		purple_xfer_request(xfer);
 }
 
+
+void
+teams_chat_send_file(PurpleConnection *pc, int id, const char *filename)
+{
+	//TODO
+// 	PurpleConversation *conv = purple_find_chat(pc, id);
+// 	PurpleXfer *xfer = teams_new_xfer(
+// #if PURPLE_VERSION_CHECK(3, 0, 0)
+// 		prplxfer, 
+// #endif
+// 		pc, who);
+	
+// 	if (filename && *filename)
+// 		purple_xfer_request_accepted(xfer, filename);
+// 	else
+// 		purple_xfer_request(xfer);
+}
+
 gboolean
 teams_can_receive_file(
 #if PURPLE_VERSION_CHECK(3, 0, 0)
@@ -912,6 +882,15 @@ PurpleConnection *pc, const gchar *who)
 		return FALSE;
 	
 	return TRUE;
+}
+
+gboolean
+teams_chat_can_receive_file(PurpleConnection *pc, int id)
+{
+	// Probably?
+	//return TRUE;
+	// But not until we implement it!
+	return FALSE;
 }
 
 

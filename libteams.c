@@ -754,12 +754,25 @@ PurpleConnection *pc
 #	define OPT_PROTO_INVITE_MESSAGE 0x00000800
 #endif
 
+// Add forwards-compatibility for newer libpurple's when compiling on older ones
+typedef struct 
+{
+	PurplePluginProtocolInfo parent;
+
+	#if !PURPLE_VERSION_CHECK(2, 14, 0)
+		char *(*get_cb_alias)(PurpleConnection *gc, int id, const char *who);
+		gboolean (*chat_can_receive_file)(PurpleConnection *, int id);
+		void (*chat_send_file)(PurpleConnection *, int id, const char *filename);
+	#endif
+} PurplePluginProtocolInfoExt;
+
 #if !PURPLE_VERSION_CHECK(3, 0, 0)
 static void
 plugin_init(PurplePlugin *plugin)
 {
 	PurplePluginInfo *info = g_new0(PurplePluginInfo, 1);
-	PurplePluginProtocolInfo *prpl_info = g_new0(PurplePluginProtocolInfo, 1);
+	PurplePluginProtocolInfoExt *prpl_info_ext = g_new0(PurplePluginProtocolInfoExt, 1);
+	PurplePluginProtocolInfo *prpl_info = (PurplePluginProtocolInfo *) prpl_info_ext;
 #endif
 
 #if PURPLE_VERSION_CHECK(3, 0, 0)
@@ -883,6 +896,11 @@ teams_protocol_chat_iface_init(PurpleProtocolChatIface *prpl_info)
 	prpl_info->chat_leave =	NULL; //teams_chat_fake_leave;
 	prpl_info->chat_send = teams_chat_send;
 	prpl_info->set_chat_topic = teams_chat_set_topic;
+	#if PURPLE_VERSION_CHECK(2, 14, 0)
+		//prpl_info->get_cb_alias = teams_chat_get_cb_alias;
+	#else
+		//prpl_info_ext->get_cb_alias = teams_chat_get_cb_alias;
+	#endif
 #else
 	prpl_info->info = teams_chat_info;
 	prpl_info->info_defaults = teams_chat_info_defaults;
@@ -920,6 +938,13 @@ teams_protocol_xfer_iface_init(PurpleProtocolXferInterface *prpl_info)
 #else
 	prpl_info->can_receive = teams_can_receive_file;
 #endif
+	#if PURPLE_VERSION_CHECK(2, 14, 0)
+		// prpl_info->chat_send_file = teams_chat_send_file;
+		prpl_info->chat_can_receive_file = teams_chat_can_receive_file;
+	#else
+		// prpl_info_ext->chat_send_file = teams_chat_send_file;
+		prpl_info_ext->chat_can_receive_file = teams_chat_can_receive_file;
+	#endif
 	
 #if PURPLE_VERSION_CHECK(3, 0, 0)
 }
@@ -954,7 +979,7 @@ teams_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
 	
 	// Protocol info
 	#if PURPLE_MINOR_VERSION >= 5
-		prpl_info->struct_size = sizeof(PurplePluginProtocolInfo);
+		prpl_info->struct_size = sizeof(PurplePluginProtocolInfoExt);
 	#endif
 	#if PURPLE_MINOR_VERSION >= 8
 		prpl_info->add_buddy_with_invite = teams_add_buddy_with_invite;

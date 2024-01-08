@@ -38,12 +38,14 @@ void teams_send_file(
 PurpleProtocolXfer *prplxfer, 
 #endif
 PurpleConnection *pc, const gchar *who, const gchar *filename);
+void teams_chat_send_file(PurpleConnection *pc, int id, const char *filename);
 
 gboolean teams_can_receive_file(
 #if PURPLE_VERSION_CHECK(3, 0, 0)
 PurpleProtocolXfer *prplxfer, 
 #endif
 PurpleConnection *pc, const gchar *who);
+gboolean teams_chat_can_receive_file(PurpleConnection *pc, int id);
 
 void teams_search_users(PurpleProtocolAction *action);
 
