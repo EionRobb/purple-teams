@@ -1173,7 +1173,7 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		
 		g_free(sbuddy->display_name); 
 		sbuddy->display_name = g_strdup(displayName);
-		if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+		if (sbuddy->display_name && *sbuddy->display_name && !purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
 			purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
 		}
 		
@@ -1181,11 +1181,15 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			if (json_object_has_member(contact, "surname")) {
 				gchar *fullname = g_strconcat(givenName, " ", json_object_get_string_member(contact, "surname"), NULL);
 				
-				purple_buddy_set_server_alias(buddy, fullname);
+				if (fullname && *fullname) {
+					purple_buddy_set_server_alias(buddy, fullname);
+				}
 				
 				g_free(fullname);
 			} else {
-				purple_buddy_set_server_alias(buddy, givenName);
+				if (givenName && *givenName) {
+					purple_buddy_set_server_alias(buddy, givenName);
+				}
 			}
 		}
 		
@@ -1300,10 +1304,10 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			sbuddy->display_name = g_strdup(display_name);
 		}
 		
-		if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+		if (sbuddy->display_name && *sbuddy->display_name && !purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
 			purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
 		}
-		if (!purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
+		if (sbuddy->fullname && *sbuddy->fullname && !purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
 			purple_buddy_set_server_alias(buddy, sbuddy->fullname);
 		}
 	}
@@ -1547,10 +1551,10 @@ teams_get_friend_suggestions_cb(TeamsAccount *sa, JsonNode *node, gpointer user_
 		sbuddy->buddy = buddy;
 		purple_buddy_set_protocol_data(buddy, sbuddy);
 		
-		if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+		if (sbuddy->display_name && *sbuddy->display_name && !purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
 			purple_serv_got_alias(sa->pc, id, sbuddy->display_name);
 		}
-		if (!purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
+		if (sbuddy->fullname && *sbuddy->fullname && !purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
 			purple_buddy_set_server_alias(buddy, sbuddy->fullname);
 		}
 		
@@ -1632,10 +1636,10 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		sbuddy->buddy = buddy;
 		purple_buddy_set_protocol_data(buddy, sbuddy);
 		
-		if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+		if (sbuddy->display_name && *sbuddy->display_name && !purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
 			purple_serv_got_alias(sa->pc, id, sbuddy->display_name);
 		}
-		if (!purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
+		if (sbuddy->fullname && *sbuddy->fullname && !purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
 			purple_buddy_set_server_alias(buddy, sbuddy->fullname);
 		}
 		
