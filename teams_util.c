@@ -417,3 +417,79 @@ teams_is_user_self(TeamsAccount *sa, const gchar *username) {
 	return !g_ascii_strcasecmp(username, purple_account_get_username(sa->account));
 }
 
+#include <zlib.h>
+
+gchar *
+teams_gunzip(const guchar *gzip_data, gsize *len_ptr)
+{
+	gsize gzip_data_len	= *len_ptr;
+	z_stream zstr;
+	int gzip_err = 0;
+	gchar *data_buffer;
+	gulong gzip_len = G_MAXUINT16;
+	GString *output_string = NULL;
+
+	data_buffer = g_new0(gchar, gzip_len);
+
+	zstr.next_in = NULL;
+	zstr.avail_in = 0;
+	zstr.zalloc = Z_NULL;
+	zstr.zfree = Z_NULL;
+	zstr.opaque = 0;
+	gzip_err = inflateInit2(&zstr, MAX_WBITS+32);
+	if (gzip_err != Z_OK)
+	{
+		g_free(data_buffer);
+		purple_debug_error("teams", "no built-in gzip support in zlib\n");
+		return NULL;
+	}
+	
+	zstr.next_in = (Bytef *)gzip_data;
+	zstr.avail_in = gzip_data_len;
+	
+	zstr.next_out = (Bytef *)data_buffer;
+	zstr.avail_out = gzip_len;
+	
+	gzip_err = inflate(&zstr, Z_SYNC_FLUSH);
+
+	if (gzip_err == Z_DATA_ERROR)
+	{
+		inflateEnd(&zstr);
+		gzip_err = inflateInit2(&zstr, -MAX_WBITS);
+		if (gzip_err != Z_OK)
+		{
+			g_free(data_buffer);
+			purple_debug_error("teams", "Cannot decode gzip header\n");
+			return NULL;
+		}
+		zstr.next_in = (Bytef *)gzip_data;
+		zstr.avail_in = gzip_data_len;
+		zstr.next_out = (Bytef *)data_buffer;
+		zstr.avail_out = gzip_len;
+		gzip_err = inflate(&zstr, Z_SYNC_FLUSH);
+	}
+	output_string = g_string_new("");
+	while (gzip_err == Z_OK)
+	{
+		//append data to buffer
+		output_string = g_string_append_len(output_string, data_buffer, gzip_len - zstr.avail_out);
+		//reset buffer pointer
+		zstr.next_out = (Bytef *)data_buffer;
+		zstr.avail_out = gzip_len;
+		gzip_err = inflate(&zstr, Z_SYNC_FLUSH);
+	}
+	if (gzip_err == Z_STREAM_END)
+	{
+		output_string = g_string_append_len(output_string, data_buffer, gzip_len - zstr.avail_out);
+	} else {
+		purple_debug_error("teams", "gzip inflate error\n");
+	}
+	inflateEnd(&zstr);
+
+	g_free(data_buffer);	
+
+	if (len_ptr)
+		*len_ptr = output_string->len;
+
+	return g_string_free(output_string, FALSE);
+}

@@ -105,10 +105,21 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 			json_object_unref(response);
 			g_free(response_str);
 
+			JsonObject *headers = json_object_get_object_member(request, "headers");
+			gchar *body = g_strdup(json_object_get_string_member(request, "body"));
+			if (purple_strequal(json_object_get_string_member(headers, "X-Microsoft-Skype-Content-Encoding"), "gzip")) {
+				gsize body_len;
+				guchar *body_base64_decoded = g_base64_decode(body, &body_len);
+				gchar *body_unzipped = teams_gunzip(body_base64_decoded, &body_len);
+				g_free(body_base64_decoded);
+				g_free(body);
+				body = body_unzipped;
+			}
+
 			const gchar *request_url = json_object_get_string_member(request, "url");
 			// if request_url ends with /TeamsUnifiedPresenceService
-			if (g_str_has_suffix(request_url, "/TeamsUnifiedPresenceService")) {
-				const gchar *body = json_object_get_string_member(request, "body");
+			if (g_str_has_suffix(request_url, "/TeamsUnifiedPresenceService") ||
+					g_str_has_suffix(request_url, "/unifiedPresenceService")) {
 				JsonObject *body_obj = json_decode_object(body, strlen(body));
 				JsonArray *presences = json_object_get_array_member(body_obj, "presence");
 
@@ -120,8 +131,8 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				}
 
 				json_object_unref(body_obj);
+
 			} else if (g_str_has_suffix(request_url, "/messaging")) {
-				const gchar *body = json_object_get_string_member(request, "body");
 				JsonObject *body_obj = json_decode_object(body, strlen(body));
 				const gchar *type = json_object_get_string_member(body_obj, "type");
 
@@ -130,9 +141,26 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				}
 
 				json_object_unref(body_obj);
+
+			} else if (g_str_has_suffix(request_url, "NGCallManagerWin")) {
+				JsonObject *body_obj = json_decode_object(body, strlen(body));
+				if (json_object_has_member(body_obj, "cp")) {
+					const gchar *cp = json_object_get_string_member(body_obj, "cp");
+					gsize cp_len;
+					guchar *cp_base64_decoded = g_base64_decode(cp, &cp_len);
+					gchar *cp_unzipped = teams_gunzip(cp_base64_decoded, &cp_len);
+					json_object_unref(body_obj);
+					body_obj = json_decode_object(cp_unzipped, cp_len);
+					g_free(cp_unzipped);
+					g_free(cp_base64_decoded);
+				}
+
+			} else {
+				purple_debug_info("teams", "Trouter WS: Unknown request: %s\n", request_url);
 			}
 
 			json_object_unref(request);
+			g_free(body);
 		}
 	}
 }
@@ -241,6 +269,9 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	// 	}
 	// }
 
+	// TeamsCDLWebWorker for events and messaging
+	// NextGenCalling for call messages
+
 	if (sa->trouter_surl) {
 		g_free(sa->trouter_surl);
 	}
@@ -285,8 +316,29 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	purple_http_request(sa->pc, request, NULL, NULL);
 	purple_http_request_unref(request);
 
-	json_object_unref(reg_obj);
 	g_free(reg_str);
+
+	// Register again for calling
+	json_object_set_string_member(clientDescription, "appId", "NextGenCalling");
+	json_object_set_string_member(clientDescription, "templateKey", "DesktopNgc_2.3:SkypeNgc");
+	gchar *ngc_path = g_strconcat(sa->trouter_surl, "NGCallManagerWin", NULL);
+	json_object_set_string_member(trouter_obj, "path", ngc_path);
+	g_free(ngc_path);
+	
+	reg_str = teams_jsonobj_to_string(reg_obj);
+	purple_debug_info("teams", "Trouter call registration: %s\n", reg_str);
+
+	request = purple_http_request_new("https://teams.microsoft.com/registrar/prod/V2/registrations");
+	purple_http_request_set_method(request, "POST");
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
+	purple_http_request_header_set(request, "Content-Type", "application/json");
+	purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
+	purple_http_request_set_contents(request, reg_str, strlen(reg_str));
+	purple_http_request(sa->pc, request, NULL, NULL);
+	purple_http_request_unref(request);
+
+	g_free(reg_str);
+	json_object_unref(reg_obj);
 	json_object_unref(obj);
 	g_free(session_id);
 	g_string_free(url, TRUE);

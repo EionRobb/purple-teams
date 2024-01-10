@@ -39,3 +39,5 @@ const gchar *teams_strip_user_prefix(const gchar *who);
 
 PurpleGroup *teams_get_blist_group(TeamsAccount *sa);
 gboolean teams_is_user_self(TeamsAccount *sa, const gchar *username);
+
+gchar *teams_gunzip(const guchar *gzip_data, gsize *len_ptr);
