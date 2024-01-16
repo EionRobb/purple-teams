@@ -54,11 +54,17 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 		return;
 	} else if (op == PURPLE_WEBSOCKET_CLOSE) {
 		purple_debug_info("teams", "Trouter WS: Closed\n");
+		// _CLOSE calls abort internally, bypass to prevent double-free
+		sa->trouter_socket = NULL;
 		teams_trouter_stop(sa);
+		//TODO reopen?
 		return;
 	} else if (op == PURPLE_WEBSOCKET_ERROR) {
 		purple_debug_info("teams", "Trouter WS: Error\n");
+		// _ERROR calls abort internally, bypass to prevent double-free
+		sa->trouter_socket = NULL;
 		teams_trouter_stop(sa);
+		//TODO reopen?
 		return;
 	} else if (op == PURPLE_WEBSOCKET_PING) {
 		purple_debug_info("teams", "Trouter WS: Ping\n");
@@ -410,6 +416,8 @@ teams_trouter_begin(TeamsAccount *sa)
 	// https://go.trouter.teams.microsoft.com/v4/a?cor_id={sessionId}&con_num={clientId}_{incrementingCount}&epid={endpointId} 
 	GString *url = g_string_new("https://go.trouter.teams.microsoft.com/v4/a?");
 	PurpleHttpRequest *request;
+
+	teams_trouter_stop(sa);
 
 	// Doesn't seem to be needed
 	// g_string_append_printf(url, "cor_id=%s&", purple_url_encode(sa->session_id));
