@@ -800,7 +800,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 			}
 			
-			if (html != NULL && *html) {
+			if (html != NULL && *html && !purple_strequal(convbuddyname, "48:calllogs")) {
 				const gchar *modified_convbuddyname = convbuddyname;
 				//Handle self-send messages
 				if (purple_strequal(convbuddyname, "48:notes")) {
