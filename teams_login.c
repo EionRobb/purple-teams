@@ -790,6 +790,27 @@ teams_csa_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response
 	}
 }
 
+static void
+teams_substrate_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
+{
+	TeamsAccount *sa = user_data;
+	JsonObject *obj;
+	const gchar *raw_response;
+	gsize response_len;
+
+	raw_response = purple_http_response_get_data(response, &response_len);
+	obj = json_decode_object(raw_response, response_len);
+
+	if (purple_http_response_is_successful(response) && obj)
+	{
+		gchar *substrate_access_token = g_strdup(json_object_get_string_member(obj, "access_token"));
+		if (sa->substrate_access_token) {
+			g_free(sa->substrate_access_token);
+		}
+		sa->substrate_access_token = substrate_access_token;
+	}
+}
+
 void
 teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, PurpleHttpCallback callback) {
 
@@ -847,6 +868,7 @@ teams_oauth_refresh_token(TeamsAccount *sa)
 	teams_oauth_refresh_token_for_resource(sa, "https://api.spaces.skype.com", teams_oauth_with_code_cb);
 	teams_oauth_refresh_token_for_resource(sa, "https://presence.teams.microsoft.com", teams_presence_oauth_cb);
 	teams_oauth_refresh_token_for_resource(sa, "https://chatsvcagg.teams.microsoft.com", teams_csa_oauth_cb);
+	teams_oauth_refresh_token_for_resource(sa, "https://substrate.office.com", teams_substrate_oauth_cb);
 	
 	// For working with purple_timeout_add()
 	return FALSE;
