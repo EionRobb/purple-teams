@@ -227,10 +227,13 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	PurpleHttpRequest *request;
 	PurpleMessageFlags flags = 0;
 	
+	text = purple_strreplace(uri, "/imgt1", "/imgpsh_fullsize");
+	url = purple_strreplace(text, "/imgo", "/imgpsh_fullsize");
+	g_free(text);
+
 	if (purple_strequal(purple_core_get_ui(), "BitlBee")) {
 		// Bitlbee doesn't support images, so just plop a url to the image instead
 		
-		url = purple_strreplace(uri, "imgt1", "imgpsh_fullsize");
 		purple_conversation_write_system_message_ts(conv, url, PURPLE_MESSAGE_SYSTEM, ts);
 		g_free(url);
 		
@@ -240,8 +243,13 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	request = purple_http_request_new(uri);
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	
+	static GRegex *skype_token_uri_regex = NULL;
+	if (skype_token_uri_regex == NULL) {
+		skype_token_uri_regex = g_regex_new("^https://api\\.asm\\.skype\\.com/|^https://[^\\.]*\\.asyncgw\\.teams\\.microsoft\\.com/", G_REGEX_OPTIMIZE, 0, NULL);
+	}
+
 	//Only for skype domains
-	if (strncmp(uri, "https://as-api.asm.skype.com/", 29) == 0) {
+	if (skype_token_uri_regex != NULL && g_regex_match(skype_token_uri_regex, uri, 0, NULL)) {
 		purple_http_request_header_set_printf(request, "Cookie", "skypetoken_asm=%s", sa->skype_token);
 	}
 	
@@ -259,7 +267,6 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 		flags |= PURPLE_MESSAGE_RECV;
 	}
 
-	url = purple_strreplace(uri, "imgt1", "imgpsh_fullsize");
 	text = g_strdup_printf("<a href=\"%s\">Click here to view full version</a>", url);
 	purple_conversation_write_img_message(conv, from, text, flags, ts);
 	
