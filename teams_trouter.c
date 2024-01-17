@@ -122,11 +122,31 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				body = body_unzipped;
 			}
 
+			JsonObject *body_obj = json_decode_object(body, strlen(body));
+			JsonObject *orig_body = json_object_ref(body_obj);
+			
+			if (json_object_has_member(body_obj, "cp")) {
+				const gchar *cp = json_object_get_string_member(body_obj, "cp");
+				gsize cp_len;
+				guchar *cp_base64_decoded = g_base64_decode(cp, &cp_len);
+				gchar *cp_unzipped = teams_gunzip(cp_base64_decoded, &cp_len);
+				json_object_unref(body_obj);
+				body_obj = json_decode_object(cp_unzipped, cp_len);
+				g_free(cp_unzipped);
+				g_free(cp_base64_decoded);
+			} else if (json_object_has_member(body_obj, "gp")) {
+				const gchar *gp = json_object_get_string_member(body_obj, "gp");
+				gsize gp_len;
+				guchar *gp_base64_decoded = g_base64_decode(gp, &gp_len);
+				json_object_unref(body_obj);
+				body_obj = json_decode_object((gchar *) gp_base64_decoded, gp_len);
+				g_free(gp_base64_decoded);
+			}
+
 			const gchar *request_url = json_object_get_string_member(request, "url");
 			// if request_url ends with /TeamsUnifiedPresenceService
 			if (g_str_has_suffix(request_url, "/TeamsUnifiedPresenceService") ||
 					g_str_has_suffix(request_url, "/unifiedPresenceService")) {
-				JsonObject *body_obj = json_decode_object(body, strlen(body));
 				JsonArray *presences = json_object_get_array_member(body_obj, "presence");
 
 				if (presences != NULL) {
@@ -136,35 +156,133 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 					teams_got_contact_statuses(sa, presences_node, NULL);
 				}
 
-				json_object_unref(body_obj);
-
 			} else if (g_str_has_suffix(request_url, "/messaging")) {
-				JsonObject *body_obj = json_decode_object(body, strlen(body));
 				const gchar *type = json_object_get_string_member(body_obj, "type");
 
 				if (purple_strequal(type, "EventMessage")) {
 					teams_process_event_message(sa, body_obj);
 				}
 
-				json_object_unref(body_obj);
+			} else if (g_str_has_suffix(request_url, "/NGCallManagerWin") || strstr(request_url, "/SkypeSpacesWeb")) {
 
-			} else if (g_str_has_suffix(request_url, "NGCallManagerWin")) {
-				JsonObject *body_obj = json_decode_object(body, strlen(body));
-				if (json_object_has_member(body_obj, "cp")) {
-					const gchar *cp = json_object_get_string_member(body_obj, "cp");
-					gsize cp_len;
-					guchar *cp_base64_decoded = g_base64_decode(cp, &cp_len);
-					gchar *cp_unzipped = teams_gunzip(cp_base64_decoded, &cp_len);
-					json_object_unref(body_obj);
-					body_obj = json_decode_object(cp_unzipped, cp_len);
-					g_free(cp_unzipped);
-					g_free(cp_base64_decoded);
-				}
+				// Incoming call:
+				/// body: "{\"evt\":107,\"cp\":\"...\",\"callId\":\"... callid guid ...\",\"callerId\":\"orgid:...\"}"
+				// cp:
+				// {
+				// 	"callNotification":{
+				// 		"from":{
+				// 			"id":"8:orgid:...",
+				// 			"displayName":"Person Calling",
+				// 			"endpointId":"abcd1234-ffff-ffff-abcd-123456781234",
+				// 			"languageId":"en-us",
+				// 			"participantId":"... participant1 guid ...",
+				// 			"hidden":false,
+				// 			"tenantId":"... tenant1 guid ...",
+				// 			"region":"au",
+				// 			"propertyBag":null
+				// 		},
+				// 		"to":{
+				// 			"id":"8:orgid:...",
+				// 			"displayName":null,
+				// 			"endpointId":"00000000-0000-0000-0000-000000000000",
+				// 			"languageId":null,
+				// 			"participantId":"... participant2 guid ...",
+				// 			"hidden":false,
+				// 			"tenantId":"... tenant2 guid ...",
+				// 			"propertyBag":null
+				// 		},
+				// 		"links":{
+				// 			"attach":"https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-auea-05-prod-aks.cc.skype.com/cc/v1/forked/...forkedid.../27/i1/1006/attach?i=10-60-10-157",
+				// 			"mediaAnswer":"cc://ma",
+				// 			"progress":"https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-auea-05-prod-aks.cc.skype.com/cc/v1/forked/...forkedid.../27/i1/1006/progress?i=10-60-10-157",
+				// 			"reject":"https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-auea-05-prod-aks.cc.skype.com/cc/v1/forked/...forkedid.../27/i1/1006/reject?i=10-60-10-157",
+				// 			"udpTransport":"udp://52.123.160.45:3478/"
+				// 		},
+				// 		"mediaContent":null, //or
+				//		"mediaContent": {
+				//   		"contentType": "application/sdp-ngc-0.5",
+				//   		"blob": "v=0\r\no=- 0 0 IN IP4 52.115.99.55\r\ns=session\r\nc=IN IP4 52.115.99.55\r\nb=CT:4000\r\nt=0 0\r\n...",,
+				//   		"mediaLegId": "C88DBF5EExxxAFCA5",
+				//   		"escalationOccurring": false,
+				//   		"newOffer": false,
+				//   		"clientLocation": "NZ"
+				// 		},
+				// 		"udpKey":{
+				// 			"sessionKey":"7Ia+pXXXXjUjjRf2cQ==",
+				// 			"ticket":"RHQN4nbXXXXXKWnd1g1JA=="
+				// 		}
+				// 	},
+				// 	"conversationInvitation":{
+				// 		"conversationController":"https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-auea-05-prod-aks.conv.skype.com/conv/xyzabcDeyuiof?i=10-60-11-74&e=638407063083483437",
+				// 		"isMultiParty":false,
+				// 		"isBroadcast":false
+				// 	},
+				// 	"debugContent":{
+				// 		"causeId":"",
+				// 		"clientDebugContent":{
+							
+				// 		},
+				// 		"ecsEtag":"\"X1xx7IIMeKXXXanrv3I=\"",
+				// 		"callId":"... callid guid ...",
+				// 		"ProcessingCallControllerInstance":"https://cc-auea-05-prod-aks.cc.skype.com/",
+				// 		"potentialCallNotificationSent":false,
+				// 		"participantId":"... participant1 guid ..."
+				// 	},
+				// 	"groupContext":null
+				// }
+
+
+				// Call started?
+				// {
+				//     "correlationId": "... callid guid ...",
+				//     "conversationController": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-auea-05-prod-aks.conv.skype.com/conv/xyzabcDeyuiof?i=10-60-11-74&e=638407063083483437",
+				//     "userJoinTime": "2024-01-16T20:22:03.6438865Z",
+				//     "participants": [
+				//         "8:orgid:...",
+				//         "8:orgid:..."
+				//     ]
+				// }
+
+				// Call ended
+				// {
+				//   "callEnd": {
+				//     "reason": "clientError",
+				//     "sender": {
+				//       "id": "8:orgid:...",
+				//       "displayName": "Eion Robb",
+				//       "endpointId": "... endpoint id ...",
+				//       "languageId": "en-NZ",
+				//       "participantId": "... participant2 guid ...",
+				//       "hidden": false,
+				//       "tenantId": "... tenant2 guid ...",
+				//       "region": "au"
+				//     },
+				//     "code": 487,
+				//     "subCode": 10003,
+				//     "phrase": "Call cancelled as it was accepted by another fork.",
+				//     "resultCategories": [
+				//       "ExpectedError"
+				//     ],
+				//     "acceptedElsewhereBy": {
+				//       "id": "8:orgid:...",
+				//       "displayName": "Eion Robb",
+				//       "endpointId": "... endpoint id ...",
+				//       "languageId": "en-NZ",
+				//       "participantId": "... participant2 guid ...",
+				//       "hidden": false,
+				//       "tenantId": "... tenant2 guid ...",
+				//       "region": "au"
+				//     }
+				//   },
+				//   "debugContent": null
+				// }
 
 			} else {
 				purple_debug_info("teams", "Trouter WS: Unknown request: %s\n", request_url);
 			}
 
+			json_object_unref(orig_body);
+			json_object_unref(body_obj);
 			json_object_unref(request);
 			g_free(body);
 		}
@@ -277,6 +395,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 
 	// TeamsCDLWebWorker for events and messaging
 	// NextGenCalling for call messages
+	// SkypeSpacesWeb has additional call info
 
 	if (sa->trouter_surl) {
 		g_free(sa->trouter_surl);
@@ -330,6 +449,27 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	gchar *ngc_path = g_strconcat(sa->trouter_surl, "NGCallManagerWin", NULL);
 	json_object_set_string_member(trouter_obj, "path", ngc_path);
 	g_free(ngc_path);
+	
+	reg_str = teams_jsonobj_to_string(reg_obj);
+	purple_debug_info("teams", "Trouter call registration: %s\n", reg_str);
+
+	request = purple_http_request_new("https://teams.microsoft.com/registrar/prod/V2/registrations");
+	purple_http_request_set_method(request, "POST");
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
+	purple_http_request_header_set(request, "Content-Type", "application/json");
+	purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
+	purple_http_request_set_contents(request, reg_str, strlen(reg_str));
+	purple_http_request(sa->pc, request, NULL, NULL);
+	purple_http_request_unref(request);
+
+	g_free(reg_str);
+
+	// Third time, shame on the shamer
+	json_object_set_string_member(clientDescription, "appId", "SkypeSpacesWeb");
+	json_object_set_string_member(clientDescription, "templateKey", "SkypeSpacesWeb_2.3");
+	gchar *ssw_path = g_strconcat(sa->trouter_surl, "SkypeSpacesWeb", NULL);
+	json_object_set_string_member(trouter_obj, "path", ssw_path);
+	g_free(ssw_path);
 	
 	reg_str = teams_jsonobj_to_string(reg_obj);
 	purple_debug_info("teams", "Trouter call registration: %s\n", reg_str);
@@ -416,6 +556,8 @@ teams_trouter_begin(TeamsAccount *sa)
 	// https://go.trouter.teams.microsoft.com/v4/a?cor_id={sessionId}&con_num={clientId}_{incrementingCount}&epid={endpointId} 
 	GString *url = g_string_new("https://go.trouter.teams.microsoft.com/v4/a?");
 	PurpleHttpRequest *request;
+
+	//TODO we can bypass this if we already have the obj response from the previous connectparams
 
 	teams_trouter_stop(sa);
 
