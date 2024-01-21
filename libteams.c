@@ -51,6 +51,9 @@ teams_do_all_the_things(TeamsAccount *sa)
 		skype_web_get_offline_history(sa);
 
 		teams_set_status(sa->account, purple_account_get_active_status(sa->account));
+
+		teams_check_calendar(sa);
+		sa->calendar_poll_timeout = g_timeout_add_seconds(TEAMS_CALENDAR_REFRESH_MINUTES * 60, (GSourceFunc)teams_check_calendar, sa);
 	} else {
 		//Too soon!
 		teams_subscribe(sa);
@@ -402,6 +405,7 @@ teams_close(PurpleConnection *pc)
 	sa = purple_connection_get_protocol_data(pc);
 	g_return_if_fail(sa != NULL);
 	
+	g_source_remove(sa->calendar_poll_timeout);
 	g_source_remove(sa->friend_list_poll_timeout);
 	g_source_remove(sa->authcheck_timeout);
 	g_source_remove(sa->poll_timeout);
@@ -805,6 +809,9 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 	
 	opt = purple_account_option_bool_new(_("Collapse Teams threads into a single chat window"), "should_collapse_threads", TRUE);
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+	
+	opt = purple_account_option_int_new(_("Notify me before meeting begins (minutes)"), "calendar_notify_minutes", -1);
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 
 #undef TEAMS_PRPL_APPEND_ACCOUNT_OPTION

@@ -55,6 +55,7 @@ void teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts);
 void teams_get_friend_profile(TeamsAccount *sa, const gchar *who);
 
 gboolean teams_get_friend_list(TeamsAccount *sa);
+gboolean teams_check_calendar(TeamsAccount *sa);
 void teams_get_info(PurpleConnection *pc, const gchar *username);
 void teams_get_self_details(TeamsAccount *sa);
 

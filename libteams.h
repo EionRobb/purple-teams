@@ -112,7 +112,7 @@
 #	define atoll(a) g_ascii_strtoll(a, NULL, 0)
 #endif
 
-
+#define TEAMS_CALENDAR_REFRESH_MINUTES 15
 #define TEAMS_MAX_MSG_RETRY 2
 
 #define TEAMS_PLUGIN_ID "prpl-eionrobb-msteams"
@@ -194,6 +194,7 @@ struct _TeamsAccount {
 	gchar *presence_access_token;
 	struct _TeamsConnection *poll_conn;
 	guint friend_list_poll_timeout;
+	guint calendar_poll_timeout;
 	
 	struct _PurpleWebsocket *trouter_socket;
 	gchar *trouter_surl;

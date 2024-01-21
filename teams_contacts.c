@@ -116,6 +116,7 @@ teams_get_icon_now(PurpleBuddy *buddy)
 	} else {
 		const gchar *buddy_name = purple_buddy_get_name(buddy);
 		//https://teams.microsoft.com/api/mt/apac/beta/users/.../profilepicturev2?displayname=Eion%20Robb&size=HR96x96
+		//https://teams.microsoft.com/api/mt/part/au-01/beta/users/...myid.../profilepicturev2/8:orgid:userid?displayname=Eion%20Robb&size=HR196x196&ETag=1704940983743
 		url = g_strdup_printf("https://teams.microsoft.com/api/mt/apac/beta/users/%s%s/profilepicturev2?size=HR128x128", teams_user_url_prefix(buddy_name), purple_url_encode(buddy_name));
 	}
 
@@ -1706,6 +1707,128 @@ teams_get_friend_list(TeamsAccount *sa)
 	const gchar *postdata = "{\"EntityRequests\":[{\"EntityType\":\"People\",\"Fields\":[\"DisplayName\",\"MRI\",\"GivenName\",\"Surname\"],\"Query\":{\"QueryString\":\"\",\"DisplayQueryString\":\"\"},\"Provenances\":[\"Mailbox\",\"Directory\"],\"Filter\":{\"And\":[{\"Or\":[{\"Term\":{\"PeopleType\":\"Person\"}},{\"Term\":{\"PeopleType\":\"Other\"}}]},{\"Or\":[{\"Term\":{\"PeopleSubtype\":\"OrganizationUser\"}},{\"Term\":{\"PeopleSubtype\":\"Guest\"}}]}]},\"Size\":500,\"From\":0}],\"Cvid\":\"12345678-1234-4321-1234-123412341234\",\"AppName\":\"Microsoft Teams\",\"Scenario\":{\"Name\":\"peoplecache\"}}";
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "substrate.office.com", url, postdata, teams_get_friend_suggestions_cb, NULL, TRUE);
 
+	return TRUE;
+}
+
+typedef struct {
+	TeamsAccount *sa;
+	gchar *chatname;
+	gchar *teams_join_link;
+	gchar *subject;
+} TeamsCalendarNotificationData;
+
+gboolean
+teams_calendar_timer_cb(gpointer user_data)
+{
+	TeamsCalendarNotificationData *data = user_data;
+	TeamsAccount *sa = data->sa;
+	PurpleConnection *pc = sa->pc;
+
+	if (PURPLE_IS_CONNECTION(pc)) {
+		gchar *chatname = data->chatname;
+		PurpleChatConversation *chatconv = purple_conversations_find_chat_with_account(chatname, sa->account);
+		if (!chatconv) {
+			chatconv = purple_serv_got_joined_chat(pc, g_str_hash(chatname), chatname);
+			purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "chatname", g_strdup(chatname));
+
+			if (data->subject && *data->subject) {
+				purple_chat_conversation_set_topic(chatconv, NULL, data->subject);
+			}
+			
+			teams_get_conversation_history(sa, chatname);
+			teams_get_thread_users(sa, chatname);
+		}
+
+		gchar *html = g_strdup_printf("Reminder: You have a Teams meeting starting soon <a href=\"%s\">Join Teams Meeting</a>", data->teams_join_link);
+		purple_conversation_write_system_message(PURPLE_CONVERSATION(chatconv), html, PURPLE_MESSAGE_NO_LOG | PURPLE_MESSAGE_NOTIFY | PURPLE_MESSAGE_RECV);
+		g_free(html);
+	}
+	
+	g_free(data->subject);
+	g_free(data->chatname);
+	g_free(data->teams_join_link);
+	g_free(data);
+	return FALSE;
+}
+
+static void
+teams_got_calendar(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonObject *obj;
+	JsonArray *events;
+	guint index, length;
+	
+	if (node == NULL)
+		return;
+	obj = json_node_get_object(node);
+	events = json_object_get_array_member(obj, "value");
+	length = json_array_get_length(events);
+	
+	gint calendar_notify_minutes = purple_account_get_int(sa->account, "calendar_notify_minutes", 0);
+	gint calendar_notify_seconds = calendar_notify_minutes * 60;
+	
+	for(index = 0; index < length; index++)
+	{
+		JsonObject *event = json_array_get_object_element(events, index);
+		gboolean isOnlineMeeting = json_object_get_boolean_member(event, "isOnlineMeeting");
+
+		if (!isOnlineMeeting) {
+			continue;
+		}
+		
+		const gchar *skypeTeamsMeetingUrl = json_object_get_string_member(event, "skypeTeamsMeetingUrl");
+		JsonObject *skypeTeamsDataObject = json_object_get_object_member(event, "skypeTeamsDataObject");
+		const gchar *chatname = json_object_get_string_member(skypeTeamsDataObject, "cid");
+		const gchar *subject = json_object_get_string_member(event, "subject");
+		const gchar *startTime = json_object_get_string_member(event, "startTime");
+		time_t event_timestamp = purple_str_to_time(startTime, TRUE, NULL, NULL, NULL);
+		gint seconds_until_event = event_timestamp - time(NULL);
+
+		purple_debug_info("teams", "Teams meeting %s for chat %s starting at %s\n", subject && *subject ? subject : "", chatname, startTime);
+
+		if (seconds_until_event <= calendar_notify_seconds) {
+			continue;
+		}
+
+		TeamsCalendarNotificationData *data = g_new0(TeamsCalendarNotificationData, 1);
+		data->sa = sa;
+		data->chatname = g_strdup(chatname);
+		data->subject = g_strdup(subject);
+		data->teams_join_link = g_strdup(skypeTeamsMeetingUrl);
+		
+		// Set a timer to go off at X minutes before the start time to write a message to the conversation
+		purple_timeout_add_seconds(seconds_until_event - calendar_notify_seconds, teams_calendar_timer_cb, data);
+	}
+}
+
+
+gboolean
+teams_check_calendar(TeamsAccount *sa)
+{
+	PurpleConnection *pc = sa->pc;
+	if (!PURPLE_IS_CONNECTION(pc)) {
+		return FALSE;
+	}
+
+	gint calendar_notify_minutes = purple_account_get_int(sa->account, "calendar_notify_minutes", 0);
+	if (calendar_notify_minutes > 0) {
+		struct tm *tm;
+		time_t start_time = time(NULL);
+		tm = localtime(&start_time);
+		gchar *start_date = g_strdup(purple_url_encode(purple_utf8_strftime("%Y-%m-%dT%H:%M:%S%z", tm)));
+
+		time_t end_time = time(NULL) + TEAMS_CALENDAR_REFRESH_MINUTES * 60;
+		tm = localtime(&end_time);
+		gchar *end_date = g_strdup(purple_url_encode(purple_utf8_strftime("%Y-%m-%dT%H:%M:%S%z", tm)));
+		
+		gchar *url = g_strconcat("/api/mt/part/au-01/v2.0/me/calendars/default/calendarView?StartDate=", start_date, "&EndDate=", end_date, "&shouldDecryptData=true", NULL);
+
+		teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_got_calendar, NULL, TRUE);
+
+		g_free(start_date);
+		g_free(end_date);
+		g_free(url);
+	}
 	return TRUE;
 }
 
