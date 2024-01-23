@@ -2576,6 +2576,9 @@ teams_conversation_check_message_for_images(TeamsAccount *sa, const gchar *convn
 		const gchar *id, *src;
 		const gchar *close = strchr(img, '>');
 		imgid = 0;
+
+		if (close == NULL)
+			return;
 		
 		if (((id = strstr(img, "ID=\"")) || (id = strstr(img, "id=\""))) &&
 				id < close) {
@@ -2599,7 +2602,7 @@ teams_conversation_check_message_for_images(TeamsAccount *sa, const gchar *convn
 		}
 		
 		if (imgid && image != NULL && close != NULL) {
-			memmove(img, close, strlen(close) + 2);
+			memmove(img, close + 1, strlen(close) + 1);
 		}
 	}
 }
