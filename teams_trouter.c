@@ -332,7 +332,8 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	
 	data = purple_http_response_get_data(response, &len);
 
-	gchar *session_id = g_strndup(data, strchr(data, ':') - data);
+	gchar **node_parts = g_strsplit(data, ":", 2);
+	const gchar *session_id = node_parts[0];
 
 	if (sa->trouter_socket) {
 		purple_websocket_abort(sa->trouter_socket);
@@ -486,7 +487,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	g_free(reg_str);
 	json_object_unref(reg_obj);
 	json_object_unref(obj);
-	g_free(session_id);
+	g_strfreev(node_parts);
 	g_string_free(url, TRUE);
 }
 

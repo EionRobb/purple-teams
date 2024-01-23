@@ -194,6 +194,7 @@ struct _TeamsAccount {
 	gchar *presence_access_token;
 	struct _TeamsConnection *poll_conn;
 	guint friend_list_poll_timeout;
+	GHashTable *calendar_reminder_timeouts;
 	guint calendar_poll_timeout;
 	
 	struct _PurpleWebsocket *trouter_socket;

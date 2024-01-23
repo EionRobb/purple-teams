@@ -1775,6 +1775,11 @@ teams_got_calendar(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		if (!isOnlineMeeting) {
 			continue;
 		}
+
+		const gchar *iCalUID = json_object_get_string_member(event, "iCalUID");
+		if (g_hash_table_contains(sa->calendar_reminder_timeouts, iCalUID)) {
+			continue;
+		}
 		
 		const gchar *skypeTeamsMeetingUrl = json_object_get_string_member(event, "skypeTeamsMeetingUrl");
 		JsonObject *skypeTeamsDataObject = json_object_get_object_member(event, "skypeTeamsDataObject");
@@ -1797,7 +1802,8 @@ teams_got_calendar(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		data->teams_join_link = g_strdup(skypeTeamsMeetingUrl);
 		
 		// Set a timer to go off at X minutes before the start time to write a message to the conversation
-		purple_timeout_add_seconds(seconds_until_event - calendar_notify_seconds, teams_calendar_timer_cb, data);
+		guint timer = purple_timeout_add_seconds(seconds_until_event - calendar_notify_seconds, teams_calendar_timer_cb, data);
+		g_hash_table_insert(sa->calendar_reminder_timeouts, g_strdup(iCalUID), GUINT_TO_POINTER(timer));
 	}
 }
 
