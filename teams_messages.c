@@ -2008,18 +2008,39 @@ teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState s
 
 
 static void
-teams_set_statusid(TeamsAccount *sa, const gchar *status)
+teams_set_global_statusid(TeamsAccount *sa, const gchar *status)
 {
 	gchar *post;
 	
 	g_return_if_fail(status);
 	
+	// This sets our status everywhere, including on other clients
+
 	post = g_strdup_printf("{\"availability\":\"%s\"}", status);
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/forceavailability/", post, NULL, NULL, TRUE);
 	g_free(post);
 	
+
+}
+
+static void
+teams_set_endpoint_statusid(TeamsAccount *sa, const gchar *status)
+{
+	gchar *post;
+	
+	g_return_if_fail(status);
+
+	// This lets the 'reportmyactivity' idle/active endpoint work
+	// and sets our status only on this endpoint
 	//https://presence.teams.microsoft.com/v1/me/endpoints/
-	post = g_strdup_printf("{\"id\":\"%s\",\"activity\":\"%s\",\"deviceType\":\"Desktop\"}", sa->endpoint, status);
+	// {
+	// 	"id": "... endpoint id ...",
+	// 	"availability": "Available",
+	// 	"activity": "Available",
+	// 	"activityReporting": "Transport",
+	// 	"deviceType": "Desktop"
+	// }
+	post = g_strdup_printf("{\"id\":\"%s\",\"availability\":\"%s\",\"deviceType\":\"Desktop\"}", sa->endpoint, status);
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/endpoints/", post, NULL, NULL, TRUE);
 	g_free(post);
 }
@@ -2029,12 +2050,15 @@ teams_set_status(PurpleAccount *account, PurpleStatus *status)
 {
 	PurpleConnection *pc = purple_account_get_connection(account);
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
+	const gchar *statusid = purple_status_get_id(status);
+
+	teams_set_endpoint_statusid(sa, statusid);
 	
 	if (!purple_account_get_bool(account, "set-global-status", TRUE)) {
 		return;
 	}
 	
-	teams_set_statusid(sa, purple_status_get_id(status));
+	teams_set_global_statusid(sa, statusid);
 	teams_set_mood_message(sa, purple_status_get_attr_string(status, "message"));
 }
 
