@@ -302,6 +302,7 @@ teams_trouter_send_message(TeamsAccount *sa, const gchar *message)
 
 	gchar *msg_str = g_strdup_printf("5:%d+::%s", sa->trouter_command_count++, message);
 	purple_websocket_send(sa->trouter_socket, PURPLE_WEBSOCKET_TEXT, (guchar *) msg_str, strlen(msg_str));
+	g_free(msg_str);
 
 	return TRUE;
 }
@@ -353,6 +354,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 		const gchar *value = json_object_get_string_member(connectparams, key);
 		g_string_append_printf(url, "%s=%s&", key, purple_url_encode(value));
 	}
+	g_list_free(iter);
 	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"49/23111630013\"}"));
 	g_string_append_printf(url, "con_num=%" G_GINT64_FORMAT "_%d&", 1234567890123, 1); //TODO sa->trouter_count++
 	const gchar *ccid = json_object_get_string_member(obj, "ccid");
@@ -532,6 +534,7 @@ teams_trouter_info_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respo
 		const gchar *value = json_object_get_string_member(connectparams, key);
 		g_string_append_printf(url, "%s=%s&", key, purple_url_encode(value));
 	}
+	g_list_free(iter);
 	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"49/23111630013\"}"));
 	g_string_append_printf(url, "con_num=%" G_GINT64_FORMAT "_%d&", 1234567890123, 1);
 	const gchar *ccid = json_object_get_string_member(obj, "ccid");

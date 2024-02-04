@@ -44,6 +44,8 @@ teams_do_all_the_things(TeamsAccount *sa)
 
 		teams_get_friend_list(sa);
 		//TODO remove me when switching to websocket
+		if (sa->friend_list_poll_timeout) 
+			g_source_remove(sa->friend_list_poll_timeout);
 		sa->friend_list_poll_timeout = g_timeout_add_seconds(300, (GSourceFunc)teams_get_friend_list, sa);
 		teams_poll(sa);
 		teams_trouter_begin(sa);

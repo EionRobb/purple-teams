@@ -524,12 +524,14 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 
 	teams_do_all_the_things(sa);
 
+	json_object_unref(obj);
 	return;
 fail:
 	purple_connection_error(sa->pc, error_type,
 		error ? error : _("Failed getting Skype Token (alt)"));
 
 	g_free(error);
+	json_object_unref(obj);
 }
 
 static void
@@ -717,6 +719,9 @@ teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 		}
 		sa->id_token = id_token;
 		if (json_object_has_member(obj, "refresh_token")) {
+			if (sa->refresh_token != NULL) {
+				g_free(sa->refresh_token);
+			}
 			sa->refresh_token = g_strdup(json_object_get_string_member(obj, "refresh_token"));
 		
 			purple_account_set_remember_password(account, TRUE);
@@ -767,6 +772,8 @@ teams_presence_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *res
 		}
 		sa->presence_access_token = presence_access_token;
 	}
+
+	json_object_unref(obj);
 }
 
 static void
@@ -788,6 +795,8 @@ teams_csa_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response
 		}
 		sa->csa_access_token = csa_access_token;
 	}
+
+	json_object_unref(obj);
 }
 
 static void
@@ -809,6 +818,8 @@ teams_substrate_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 		}
 		sa->substrate_access_token = substrate_access_token;
 	}
+
+	json_object_unref(obj);
 }
 
 void
@@ -859,6 +870,7 @@ teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, 
 	g_string_free(postdata, TRUE);
 	
 	g_free(auth_url);
+	g_free(tenant_host);
 	return;
 }
 

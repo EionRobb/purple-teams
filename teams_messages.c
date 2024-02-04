@@ -131,6 +131,7 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 			}
 		}
 		
+		g_datalist_clear(&attributes);
 		// Continue from the end of the tag 
 		tmp = end + 1;
 	}
@@ -1808,7 +1809,6 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 			g_free(post);
 			json_object_unref(obj);
 
-			obj = json_object_new();
 			subscriptionsToAdd = json_array_new();
 			subscriptionsToRemove = json_array_new();
 			count = 0;
