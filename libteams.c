@@ -48,7 +48,7 @@ teams_do_all_the_things(TeamsAccount *sa)
 		teams_poll(sa);
 		teams_trouter_begin(sa);
 		
-		skype_web_get_offline_history(sa);
+		teams_get_offline_history(sa);
 
 		teams_set_status(sa->account, purple_account_get_active_status(sa->account));
 

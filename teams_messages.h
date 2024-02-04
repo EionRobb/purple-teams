@@ -60,7 +60,7 @@ void teams_get_conversation_history_since(TeamsAccount *sa, const gchar *convnam
 void teams_get_conversation_history(TeamsAccount *sa, const gchar *convname);
 void teams_get_thread_users(TeamsAccount *sa, const gchar *convname);
 void teams_get_all_conversations_since(TeamsAccount *sa, gint since);
-void skype_web_get_offline_history(TeamsAccount *sa);
+void teams_get_offline_history(TeamsAccount *sa);
 void teams_mark_conv_seen(PurpleConversation *conv, PurpleConversationUpdateType type);
 
 void teams_gather_self_properties(TeamsAccount *sa);

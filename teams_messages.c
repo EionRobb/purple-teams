@@ -1550,7 +1550,7 @@ teams_get_all_conversations_since(TeamsAccount *sa, gint since)
 }
 
 void
-skype_web_get_offline_history(TeamsAccount *sa)
+teams_get_offline_history(TeamsAccount *sa)
 {
 	teams_get_all_conversations_since(sa, purple_account_get_int(sa->account, "last_message_timestamp", ((gint) time(NULL))));
 }
