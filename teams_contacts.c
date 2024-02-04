@@ -1547,17 +1547,20 @@ teams_get_friend_suggestions_cb(TeamsAccount *sa, JsonNode *node, gpointer user_
 			purple_blist_add_buddy(buddy, NULL, group, NULL);
 		}
 
-		// try to free the sbuddy here. no-op if it's not set before, otherwise prevents a leak.
-		teams_buddy_free(buddy);
-		
-		TeamsBuddy *sbuddy = g_new0(TeamsBuddy, 1);
-		sbuddy->skypename = g_strdup(id);
-		sbuddy->sa = sa;
+		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
+		if (sbuddy == NULL) {
+			sbuddy = g_new0(TeamsBuddy, 1);
+			sbuddy->skypename = g_strdup(id);
+			sbuddy->sa = sa;
+			
+			sbuddy->buddy = buddy;
+			purple_buddy_set_protocol_data(buddy, sbuddy);
+		}
+
+		g_free(sbuddy->fullname);
 		sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
+		g_free(sbuddy->display_name);
 		sbuddy->display_name = g_strdup(display_name);
-		
-		sbuddy->buddy = buddy;
-		purple_buddy_set_protocol_data(buddy, sbuddy);
 		
 		if (sbuddy->display_name && *sbuddy->display_name && !purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
 			purple_serv_got_alias(sa->pc, id, sbuddy->display_name);
@@ -1581,6 +1584,69 @@ teams_get_friend_suggestions_cb(TeamsAccount *sa, JsonNode *node, gpointer user_
 		teams_subscribe_to_contact_status(sa, users_to_fetch);
 		g_slist_free(users_to_fetch);
 	}
+}
+
+static void
+teams_get_workingwith_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonObject *obj;
+	JsonArray *contacts;
+	PurpleGroup *group = teams_get_blist_group(sa);
+	GSList *users_to_fetch = NULL;
+	guint index, length;
+	
+	obj = json_node_get_object(node);
+	contacts = json_object_get_array_member(obj, "value");
+	length = json_array_get_length(contacts);
+	
+	for(index = 0; index < length; index++)
+	{
+		JsonObject *contact = json_array_get_object_element(contacts, index);
+		const gchar *aadObjectId = json_object_get_string_member(contact, "aadObjectId");
+		const gchar *full_name = json_object_get_string_member(contact, "fullName");
+		
+		PurpleBuddy *buddy;
+		gchar *id;
+		
+		id = g_strconcat("orgid:", aadObjectId, NULL);
+		
+		buddy = purple_blist_find_buddy(sa->account, id);
+		if (!buddy)
+		{
+			buddy = purple_buddy_new(sa->account, id, full_name);
+			purple_blist_add_buddy(buddy, NULL, group, NULL);
+		}
+		
+		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
+		if (sbuddy == NULL) {
+			sbuddy = g_new0(TeamsBuddy, 1);
+			sbuddy->skypename = g_strdup(id);
+			sbuddy->sa = sa;
+			
+			sbuddy->buddy = buddy;
+			purple_buddy_set_protocol_data(buddy, sbuddy);
+		}
+		
+		if(full_name && *full_name && !purple_strequal(sbuddy->fullname, full_name)) {
+			sbuddy->fullname = g_strdup(full_name);
+			if (!purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
+				purple_buddy_set_server_alias(buddy, sbuddy->fullname);
+			}
+		}
+
+		g_free(id);
+		
+		teams_get_icon(buddy);
+		users_to_fetch = g_slist_prepend(users_to_fetch, sbuddy->skypename);
+	}
+	
+	if (users_to_fetch)
+	{
+		teams_get_friend_profiles(sa, users_to_fetch);
+		teams_subscribe_to_contact_status(sa, users_to_fetch);
+		g_slist_free(users_to_fetch);
+	}
+
 }
 
 static void
@@ -1628,21 +1694,20 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			purple_blist_add_buddy(buddy, NULL, group, NULL);
 		}
 
-		// try to free the sbuddy here. no-op if it's not set before, otherwise prevents a leak.
-		teams_buddy_free(buddy);
+		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
+		if (sbuddy == NULL) {
+			sbuddy = g_new0(TeamsBuddy, 1);
+			sbuddy->skypename = g_strdup(id);
+			sbuddy->sa = sa;
+			
+			sbuddy->buddy = buddy;
+			purple_buddy_set_protocol_data(buddy, sbuddy);
+		}
 		
-		TeamsBuddy *sbuddy = g_new0(TeamsBuddy, 1);
-		sbuddy->skypename = g_strdup(id);
-		sbuddy->sa = sa;
+		g_free(sbuddy->fullname);
 		sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
+		g_free(sbuddy->display_name);
 		sbuddy->display_name = g_strdup(display_name);
-		// sbuddy->authorized = authorized;
-		// sbuddy->blocked = blocked;
-		// sbuddy->avatar_url = g_strdup(purple_buddy_icons_get_checksum_for_user(buddy));
-		// sbuddy->mood = g_strdup(mood);
-		
-		sbuddy->buddy = buddy;
-		purple_buddy_set_protocol_data(buddy, sbuddy);
 		
 		if (sbuddy->display_name && *sbuddy->display_name && !purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
 			purple_serv_got_alias(sa->pc, id, sbuddy->display_name);
@@ -1681,6 +1746,8 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	}
 }
 
+
+
 gboolean
 teams_get_friend_list(TeamsAccount *sa)
 {
@@ -1702,10 +1769,15 @@ teams_get_friend_list(TeamsAccount *sa)
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_get_friend_list_teams_cb, NULL, TRUE);
 	
 	// Search all of office for suggestions
-	//TODO needs auth with scope of https://substrate.office.com
+	// needs auth with scope of https://substrate.office.com
 	url = "/search/api/v1/suggestions?scenario=";
 	const gchar *postdata = "{\"EntityRequests\":[{\"EntityType\":\"People\",\"Fields\":[\"DisplayName\",\"MRI\",\"GivenName\",\"Surname\"],\"Query\":{\"QueryString\":\"\",\"DisplayQueryString\":\"\"},\"Provenances\":[\"Mailbox\",\"Directory\"],\"Filter\":{\"And\":[{\"Or\":[{\"Term\":{\"PeopleType\":\"Person\"}},{\"Term\":{\"PeopleType\":\"Other\"}}]},{\"Or\":[{\"Term\":{\"PeopleSubtype\":\"OrganizationUser\"}},{\"Term\":{\"PeopleSubtype\":\"Guest\"}}]}]},\"Size\":500,\"From\":0}],\"Cvid\":\"12345678-1234-4321-1234-123412341234\",\"AppName\":\"Microsoft Teams\",\"Scenario\":{\"Name\":\"peoplecache\"}}";
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "substrate.office.com", url, postdata, teams_get_friend_suggestions_cb, NULL, TRUE);
+
+	// Search org chart for people you work with
+	gchar *search_url = g_strconcat("/api/v1/workingwith?teamsMri=", purple_url_encode(sa->primary_member_name), "&personaType=User&limit=50", NULL);
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "aus.loki.delve.office.com", search_url, NULL, teams_get_workingwith_cb, NULL, TRUE);
+	g_free(search_url);
 
 	return TRUE;
 }

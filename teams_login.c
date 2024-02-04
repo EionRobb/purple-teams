@@ -1024,3 +1024,10 @@ teams_do_web_auth(TeamsAccount *sa)
 // with
 //    client_id= TEAMS_OAUTH_CLIENT_ID &client_info=1&scope={scope}&grant_type=device_code&device_code={device_code}
 //  and eventually it'll come back with client id's etc
+
+
+// Places to find tenant id's you can use:
+// https://portal.azure.com/#settings/directory
+// https://api.myaccount.microsoft.com/api/organizations triggered by https://myaccount.microsoft.com/organizations
+// https://graph.microsoft.com/beta/tenantRelationships/getResourceTenants?$select=tenantId,displayName
+// https://teams.microsoft.com/api/mt/apac/beta/users/tenants

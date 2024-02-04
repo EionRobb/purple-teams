@@ -463,7 +463,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					displayname = json_object_get_string_member(resource, "imDisplayName");
 				}
 				
-				if (cb && displayname && *displayname) {
+				if (cb && displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
 					purple_chat_user_set_alias(cb, displayname);
 				}
 			}
