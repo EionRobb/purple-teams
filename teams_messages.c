@@ -866,6 +866,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				from = convbuddyname;
 			}
 			purple_xmlnode_free(blob);
+		} else if (g_str_equal(messagetype, "RichText/Media_CallRecording")) {
+			//TODO
+			//"content": "<URIObject format_version=\"1.1\" type=\"Video.2/CallRecording.1\" url_thumbnail=\"https://au-prod.asyncgw.teams.microsoft.com/v1/objects/.../views/thumbnail\" uri=\"\" version=\"1.0\"><RecordingStatus status=\"Success\" code=\"200\"><amsErrorResult /></RecordingStatus><SessionEndReason value=\"CallEnded\" /><ChunkEndReason value=\"SessionEnded\" /><Title>...</Title><a href=\"https://...-my.sharepoint.com/:v:/g/personal/..._com/...\">Play</a><OriginalName v=\"...-20240114_232119-Meeting Recording.mp4\" /><MeetingOrganizerId value=\"8:orgid:...\" /><MeetingOrganizerTenantId value=\"...\" /><RecordingInitiatorId value=\"8:orgid:...\" /><ICalUid value=\"...\" /><Identifiers><Id type=\"callId\" value=\"...\" /><Id type=\"callLegId\" value=\"...\" /><Id type=\"chunkIndex\" value=\"0\" /><Id type=\"AMSDocumentID\" value=\"...\" /><Id type=\"StreamVideoId\" value=\"\" /><Id type=\"OriginatorParticipantId\" value=\"...\" /></Identifiers><RecordingContent contentTypes=\"Recording\" timestamp=\"2024-01-14T22:59:54.6362911Z\" duration=\"0:20:21.16\" canVideoExpire=\"True\"><item type=\"video\" uri=\"\" /><item type=\"amsVideo\" uri=\"https://au-prod.asyncgw.teams.microsoft.com/v1/objects/.../views/video\" /><item type=\"amsTranscript\" uri=\"https://au-prod.asyncgw.teams.microsoft.com/v1/objects/.../views/transcript\" /><item type=\"rosterevents\" uri=\"https://au-prod.asyncgw.teams.microsoft.com/v1/objects/.../views/rosterevents\" /><item type=\"onedriveForBusinessVideo\" uri=\"https://...-my.sharepoint.com/:v:/g/personal/..._com/...\" driveId=\"b!...\" driveItemId=\"...\" /></RecordingContent><RequestedExports><ExportResult type=\"ExportToOnedriveForBusiness\" /></RequestedExports></URIObject>",
+
 		} else if (g_str_equal(messagetype, "Event/SkypeVideoMessage")) {
 			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
 			const gchar *sid = purple_xmlnode_get_attrib(blob, "sid");
@@ -2469,7 +2473,7 @@ teams_conversation_send_image_part2_cb(PurpleHttpConnection *connection, PurpleH
 	image_id = g_dataset_get_data(connection, "image_id");
 	
 	image_url = g_strdup_printf("https://as-api.asm.skype.com/v1/objects/%s/views/imgo", purple_url_encode(image_id));
-	html = g_strdup_printf("<p><img itemscope=\"image\" style=\"vertical-align:bottom\" src=\"%s\" alt=\"image\" itemtype=\"http://schema.skype.com/AMSImage\" width=\"50%%\" height=\"250\" id=\"%s\" itemid=\"%s\" href=\"%s\" target-src=\"%s\"></p>", image_url, image_id, image_id, image_url, image_url);
+	html = g_strdup_printf("<p><img itemscope=\"image\" style=\"vertical-align:bottom\" src=\"%s\" alt=\"image\" itemtype=\"http://schema.skype.com/AMSImage\" height=\"250\" id=\"%s\" itemid=\"%s\" href=\"%s\" target-src=\"%s\"></p>", image_url, image_id, image_id, image_url, image_url);
 	
 	teams_send_message(sa, convname, html);
 	
