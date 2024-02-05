@@ -399,6 +399,7 @@ teams_close(PurpleConnection *pc)
 {
 	TeamsAccount *sa;
 	GSList *buddies;
+	GList *convs;
 	
 	g_return_if_fail(pc != NULL);
 #if !PURPLE_VERSION_CHECK(3, 0, 0)
@@ -433,6 +434,16 @@ teams_close(PurpleConnection *pc)
 		teams_buddy_free(buddy);
 		purple_buddy_set_protocol_data(buddy, NULL);
 		buddies = g_slist_delete_link(buddies, buddies);
+	}
+
+	convs = purple_get_conversations();
+	while (convs != NULL) {
+		PurpleConversation *conv = convs->data;
+		if(purple_conversation_get_account(conv) == sa->account) {
+			g_free(purple_conversation_get_data(conv, "last_teams_id"));
+			g_free(purple_conversation_get_data(conv, "chatname"));
+		}
+		convs = g_list_next(convs);
 	}
 	
 	g_hash_table_destroy(sa->sent_messages_hash);

@@ -1291,12 +1291,14 @@ teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		
 	} else {
 		// No data received, or timeout
-		sa->poll_conn = NULL;
 	}
 	
 	if (!purple_connection_is_disconnecting(sa->pc)) {
 		sa->poll_timeout = g_timeout_add_seconds(1, teams_timeout, sa);
 	}
+
+	// poll_conn is free'd by parent function
+	sa->poll_conn = NULL;
 }
 
 void
@@ -1391,6 +1393,8 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	GSList *users_to_fetch = NULL;
 	
 	chatconv = purple_conversations_find_chat_with_account(chatname, sa->account);
+	g_free(chatname);
+
 	if (chatconv == NULL)
 		return;
 	purple_chat_conversation_clear_users(chatconv);
@@ -1833,10 +1837,12 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 
 		g_free(post);
 		json_object_unref(obj);
-	}
 
-	json_array_unref(subscriptionsToAdd);
-	json_array_unref(subscriptionsToRemove);
+	} else {
+		// Would normally be unref'd when obj is unref'd
+		json_array_unref(subscriptionsToAdd);
+		json_array_unref(subscriptionsToRemove);
+	}
 
 	g_free(url);
 	g_free(trouterUri);
@@ -2512,6 +2518,9 @@ teams_conversation_send_image_cb(PurpleHttpConnection *connection, PurpleHttpRes
 	if (obj == NULL || !json_object_has_member(obj, "id")) {
 		purple_image_unref(image);
 		g_dataset_destroy(connection);
+		if (obj != NULL) {
+			json_object_unref(obj);
+		}
 		return;
 	}
 	
@@ -2539,6 +2548,7 @@ teams_conversation_send_image_cb(PurpleHttpConnection *connection, PurpleHttpRes
 	g_dataset_destroy(connection);
 	g_free(upload_url);
 	purple_image_unref(image);
+	json_object_unref(obj);
 }
 
 static void

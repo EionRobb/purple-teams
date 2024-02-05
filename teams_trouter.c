@@ -329,7 +329,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	JsonObject *connectparams;
 	const gchar *data;
 	gsize len;
-	GList *iter;
+	GList *iter, *list;
 	
 	data = purple_http_response_get_data(response, &len);
 
@@ -349,12 +349,13 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	g_string_append_printf(url, "%ssocket.io/1/websocket/%s?v=v4&", socketio, session_id);
 
 	connectparams = json_object_get_object_member(obj, "connectparams");
-	for (iter = json_object_get_members(connectparams); iter; iter = iter->next) {
+	list = json_object_get_members(connectparams);
+	for (iter = list; iter; iter = iter->next) {
 		const gchar *key = iter->data;
 		const gchar *value = json_object_get_string_member(connectparams, key);
 		g_string_append_printf(url, "%s=%s&", key, purple_url_encode(value));
 	}
-	g_list_free(iter);
+	g_list_free(list);
 	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"49/23111630013\"}"));
 	g_string_append_printf(url, "con_num=%" G_GINT64_FORMAT "_%d&", 1234567890123, 1); //TODO sa->trouter_count++
 	const gchar *ccid = json_object_get_string_member(obj, "ccid");
@@ -503,7 +504,7 @@ teams_trouter_info_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respo
 	gsize len;
 	PurpleHttpRequest *request;
 	JsonObject *connectparams;
-	GList *iter;
+	GList *iter, *list;
 	
 	data = purple_http_response_get_data(response, &len);
 	obj = json_decode_object(data, len);
@@ -529,12 +530,13 @@ teams_trouter_info_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respo
 	}
 	g_string_append_printf(url, "%ssocket.io/1/?v=v4&", socketio);
 	// Loop over each of the connect params to add to the url
-	for (iter = json_object_get_members(connectparams); iter; iter = iter->next) {
+	list = json_object_get_members(connectparams);
+	for (iter = list; iter; iter = iter->next) {
 		const gchar *key = iter->data;
 		const gchar *value = json_object_get_string_member(connectparams, key);
 		g_string_append_printf(url, "%s=%s&", key, purple_url_encode(value));
 	}
-	g_list_free(iter);
+	g_list_free(list);
 	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"49/23111630013\"}"));
 	g_string_append_printf(url, "con_num=%" G_GINT64_FORMAT "_%d&", 1234567890123, 1);
 	const gchar *ccid = json_object_get_string_member(obj, "ccid");

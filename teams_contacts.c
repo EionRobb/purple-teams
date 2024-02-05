@@ -121,6 +121,7 @@ teams_get_icon_now(PurpleBuddy *buddy)
 	}
 
 	if (purple_strequal(url, purple_buddy_icons_get_checksum_for_user(buddy))) {
+		g_free(url);
 		return;
 	}
 
@@ -194,16 +195,21 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	
 	// Conversation could have been closed before we retrieved the image
 	if (!purple_conversation_is_valid(conv)) {
+		g_free(ctx_from);
 		return;
 	}
 	
 	url_text = purple_http_response_get_data(response, &len);
 	
-	if (!url_text || !len || url_text[0] == '{' || url_text[0] == '<')
+	if (!url_text || !len || url_text[0] == '{' || url_text[0] == '<') {
+		g_free(ctx_from);
 		return;
+	}
 	
-	if (!purple_http_response_is_successful(response))
+	if (!purple_http_response_is_successful(response)) {
+		g_free(ctx_from);
 		return;
+	}
 	
 	image = purple_image_new_from_data(g_memdup2(url_text, len), len);
 	icon_id = purple_image_store_add(image);
@@ -755,6 +761,9 @@ teams_got_object_for_file(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		g_free(swft->from);
 		g_free(swft);
 		purple_xfer_cancel_local(xfer);
+		if (obj != NULL) {
+			json_object_unref(obj);
+		}
 		return;
 	}
 	
@@ -929,6 +938,8 @@ teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	
 		if (displayname)
 			purple_account_set_private_alias(sa->account, displayname);
+		
+		json_object_unref(userDetails);
 	}
 	
 	if (json_object_has_member(userobj, "primaryMemberName")) {
@@ -1351,6 +1362,20 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, postdata, teams_got_info, g_strdup(username), TRUE);
 	
 	g_free(postdata);
+
+	//TODO deleted users
+	//https://aus.loki.delve.office.com/api/v3/personacards?viewType=Card&personaType=User&ConvertGetPost=true&teamsMri=8%3Aorgid%3A...
+	// {
+	// 	"Card": {
+	// 		"headerInfo": {
+	// 		"attributedUserHeaderInfo": {
+	// 			"displayName": {
+	// 				"value": "... Deleted User Name ...",
+	// 				"source": "Directory"
+	// 			},
+	// 		}
+	// 	}
+	// }
 }
 
 void
