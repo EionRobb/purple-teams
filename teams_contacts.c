@@ -729,6 +729,7 @@ teams_xfer_send_begin(gpointer user_data)
 	PurpleHttpConnection *http_conn;
 
 	PurpleHttpRequest *request = purple_http_request_new("");
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_url_printf(request, "https://%s/v1/objects/%s/content/original", TEAMS_XFER_HOST, purple_url_encode(swft->id));
 	purple_http_request_set_method(request, "PUT");
 	purple_http_request_header_set(request, "Host", TEAMS_XFER_HOST);

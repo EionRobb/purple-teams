@@ -1623,7 +1623,7 @@ teams_roomlist_get_list(PurpleConnection *pc)
 	purple_roomlist_set_fields(roomlist, fields);
 	purple_roomlist_set_in_progress(roomlist, TRUE);
 
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_roomlist_threads, roomlist, FALSE);
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_roomlist_threads, roomlist, TRUE);
 	
 	return roomlist;
 }

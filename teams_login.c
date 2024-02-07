@@ -125,6 +125,7 @@ teams_login_got_pie(PurpleHttpConnection *http_conn, PurpleHttpResponse *respons
 	if (postdata->len > INT_MAX) tmplen = INT_MAX;
 	
 	request = purple_http_request_new(login_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
@@ -230,6 +231,7 @@ teams_login_got_t(PurpleHttpConnection *http_conn, PurpleHttpResponse *response,
 	// post the t to https://login.skype.com/login/oauth?client_id=578134&redirect_uri=https%3A%2F%2Fweb.skype.com
 	
 	request = purple_http_request_new(login_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
@@ -284,6 +286,7 @@ teams_login_got_opid(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 	if (postdata->len > INT_MAX) tmplen = INT_MAX;
 	
 	request = purple_http_request_new(live_login_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
@@ -338,6 +341,7 @@ teams_login_got_ppft(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 	// POST to https://login.live.com/ppsecure/post.srf?wa=wsignin1.0&wreply=https%3A%2F%2Fsecure.skype.com%2Flogin%2Foauth%2Fproxy%3Fclient_id%3D578134%26redirect_uri%3Dhttps%253A%252F%252Fweb.skype.com
 	
 	request = purple_http_request_new(live_login_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
@@ -361,6 +365,7 @@ teams_begin_oauth_login(TeamsAccount *sa)
 	PurpleHttpRequest *request;
 	
 	request = purple_http_request_new(login_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request(sa->pc, request, teams_login_got_ppft, sa);
 	purple_http_request_unref(request);
@@ -546,6 +551,7 @@ teams_login_get_api_skypetoken(TeamsAccount *sa, const gchar *url, const gchar *
 	}
 	
 	request = purple_http_request_new(url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_method(request, "POST");
 
 	obj = json_object_new();
@@ -682,6 +688,7 @@ teams_begin_soapy_login(TeamsAccount *sa)
 	);
 
 	request = purple_http_request_new(login_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_contents(request, postdata, -1);
 	purple_http_request_header_set(request, "Accept", "*/*");
@@ -859,6 +866,7 @@ teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, 
 	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/token", NULL);
 	
 	request = purple_http_request_new(auth_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
@@ -942,6 +950,7 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/token", NULL);
 
 	request = purple_http_request_new(auth_url);
+	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
