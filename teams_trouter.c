@@ -40,6 +40,21 @@ teams_trouter_stop(TeamsAccount *sa)
 
 }
 
+void
+teams_trouter_send_active(TeamsAccount *sa, gboolean active)
+{
+	gchar *message;
+	gchar *cv;
+
+	cv = purple_uuid_random();
+	message = g_strdup_printf("{\"name\":\"user.activity\",\"args\":[{\"state\":\"%s\",\"cv\":\"%s\"}]}", active ? "active" : "inactive", cv);
+	
+	teams_trouter_send_message(sa, message);
+	
+	g_free(cv);
+	g_free(message);
+}
+
 static void
 teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsocketOp op, const guchar *msg, size_t len)
 {
@@ -49,7 +64,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 	if (op == PURPLE_WEBSOCKET_OPEN) {
 		purple_debug_info("teams", "Trouter WS: Opened\n");
 
-		teams_trouter_send_message(sa, "{\"name\":\"user.activity\",\"args\":[{\"state\":\"active\"}]}");
+		teams_trouter_send_active(sa, TRUE);
 
 		return;
 	} else if (op == PURPLE_WEBSOCKET_CLOSE) {

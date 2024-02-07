@@ -21,6 +21,7 @@
 #include "teams_connection.h"
 #include "teams_contacts.h"
 #include "teams_login.h"
+#include "teams_trouter.h"
 
 static GString* make_last_timestamp_setting(const gchar *convname) {
 	GString *rv = g_string_new(NULL);
@@ -63,19 +64,11 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 		
 		purple_blist_add_buddy(purple_buddy_new(sa->account, from, NULL), NULL, group, NULL);
 	}
-	
-	// if (g_str_equal(capabilities, "IsMobile")) {  //"Seamless | IsMobile"
-		// purple_protocol_got_user_status(sa->account, from, "mobile", NULL);
-	// }
-	
-	// is_idle = purple_strequal(status, TEAMS_STATUS_IDLE);
-	// if (!is_idle) {
-		purple_protocol_got_user_status(sa->account, from, status, NULL);
-	// } else {
-		// purple_protocol_got_user_status(sa->account, from, "Available", NULL);
-	// }
-	
-	// purple_protocol_got_user_idle(sa->account, from, is_idle, 0);
+
+	purple_protocol_got_user_status(sa->account, from, status, NULL);
+
+	gboolean is_idle = purple_strequal(status, "AvailableIdle");
+	purple_prpl_got_user_idle(sa->account, from, is_idle, 0);
 }
 
 // static gboolean
@@ -1698,6 +1691,9 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			*/
 			
 			purple_protocol_got_user_status(sa->account, from, availability, NULL);
+
+			gboolean is_idle = purple_strequal(availability, "AvailableIdle");
+			purple_prpl_got_user_idle(sa->account, from, is_idle, 0);
 		}
 	}
 }
@@ -1902,6 +1898,13 @@ teams_subscribe(TeamsAccount *sa)
 	subscriptions = json_array_new();
 	json_array_add_object_element(subscriptions, sub);
 	json_object_set_array_member(obj, "subscriptions", subscriptions);
+
+	if (sa->trouter_surl != NULL) {
+		JsonObject *trouter_sub = json_object_new();
+		json_object_set_string_member(trouter_sub, "channelType", "TrouterPush");
+		json_object_set_array_member(trouter_sub, "interestedResources", json_array_ref(interested));
+		json_array_add_object_element(subscriptions, trouter_sub);
+	}
 	
 	post = teams_jsonobj_to_string(obj);
 
@@ -2086,6 +2089,9 @@ teams_set_idle(PurpleConnection *pc, int time)
 	post = g_strdup_printf("{\"endpointId\":\"%s\",\"isActive\":%s}", sa->endpoint, is_active ? "true" : "false");
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/reportmyactivity/", post, NULL, NULL, TRUE);
 	g_free(post);
+
+	// send isactive on trouter if it's connected
+	teams_trouter_send_active(sa, is_active);
 }
 
 
