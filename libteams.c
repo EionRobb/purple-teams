@@ -82,9 +82,17 @@ teams_list_icon(PurpleAccount *account, PurpleBuddy *buddy)
 			}
 		}
 	}
-	
+
 	return "teams";
 }
+
+#ifdef ENABLE_TEAMS_PERSONAL
+static const char *
+teams_personal_list_icon(PurpleAccount *account, PurpleBuddy *buddy)
+{
+	return "teams_personal";
+}
+#endif /* ENABLE_TEAMS_PERSONAL */
 
 static gchar *
 teams_status_text(PurpleBuddy *buddy)
@@ -815,7 +823,7 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 
 	//PurpleProtocol
 	info->id = TEAMS_PLUGIN_ID;
-	info->name = "Teams";
+	info->name = "Teams (Work and School)";
 	prpl_info->options = OPT_PROTO_NO_PASSWORD | OPT_PROTO_CHAT_TOPIC /*| OPT_PROTO_INVITE_MESSAGE*/ | OPT_PROTO_IM_IMAGE;
 
 #if !PURPLE_VERSION_CHECK(3, 0, 0)
@@ -1018,6 +1026,22 @@ teams_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
 	#endif
 	
 	plugin->info = info;
+
+#ifdef ENABLE_TEAMS_PERSONAL
+	// Jam the Teams for Personal in there too
+	PurplePlugin *plugin2 = purple_plugin_new(TRUE, NULL);
+	plugin2->info = g_memdup2(info, sizeof(PurplePluginInfo));
+	plugin2->info->id = TEAMS_PERSONAL_PLUGIN_ID;
+	plugin2->info->name = "Teams (Personal)";
+	plugin2->info->load = NULL;
+	plugin2->info->unload = NULL;
+	PurplePluginProtocolInfoExt *prpl_info2 = g_memdup2(prpl_info, sizeof(PurplePluginProtocolInfoExt));
+	prpl_info2->parent.protocol_options = NULL;
+	prpl_info2->parent.list_icon = teams_personal_list_icon;
+	plugin2->info->extra_info = prpl_info2;
+	purple_plugin_register(plugin2);
+#endif /* ENABLE_TEAMS_PERSONAL */
+
 #endif
 	
 }

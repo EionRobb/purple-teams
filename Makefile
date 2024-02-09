@@ -108,13 +108,16 @@ install: $(TEAMS_TARGET) install-icons
 	mkdir -m $(DIR_PERM) -p $(TEAMS_DEST)
 	install -m $(LIB_PERM) -p $(TEAMS_TARGET) $(TEAMS_DEST)
 
-install-icons: icons/16/teams.png icons/22/teams.png icons/48/teams.png
+install-icons: icons/16/teams.png icons/22/teams.png icons/48/teams.png icons/16/teams_personal.png icons/22/teams_personal.png icons/48/teams_personal.png
 	mkdir -m $(DIR_PERM) -p $(TEAMS_ICONS_DEST)/16
 	mkdir -m $(DIR_PERM) -p $(TEAMS_ICONS_DEST)/22
 	mkdir -m $(DIR_PERM) -p $(TEAMS_ICONS_DEST)/48
 	install -m $(FILE_PERM) -p icons/16/teams.png $(TEAMS_ICONS_DEST)/16/teams.png
 	install -m $(FILE_PERM) -p icons/22/teams.png $(TEAMS_ICONS_DEST)/22/teams.png
 	install -m $(FILE_PERM) -p icons/48/teams.png $(TEAMS_ICONS_DEST)/48/teams.png
+	install -m $(FILE_PERM) -p icons/16/teams_personal.png $(TEAMS_ICONS_DEST)/16/teams_personal.png
+	install -m $(FILE_PERM) -p icons/22/teams_personal.png $(TEAMS_ICONS_DEST)/22/teams_personal.png
+	install -m $(FILE_PERM) -p icons/48/teams_personal.png $(TEAMS_ICONS_DEST)/48/teams_personal.png
 
 installer: pidgin-teams.nsi libteams.dll
 	$(MAKENSIS) "/DPIDGIN_VARIANT"="Pidgin" "/DPRODUCT_NAME"="pidgin-teams" "/DINSTALLER_NAME"="pidgin-teams-installer" "/DJSON_GLIB_DLL"="libjson-glib-1.0.dll" pidgin-teams.nsi

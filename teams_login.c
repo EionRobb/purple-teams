@@ -236,27 +236,12 @@ teams_login_get_api_skypetoken(TeamsAccount *sa, const gchar *url, const gchar *
 #define TEAMS_OAUTH_REDIRECT_URI "https://login.microsoftonline.com/common/oauth2/nativeclient"
 
 // Personal client id maybe: 4b3e8f46-56d3-427f-b1e2-d239b2ea6bca
-// https://login.live.com/oauth20_authorize.srf?client_id=4b3e8f46-56d3-427f-b1e2-d239b2ea6bca&scope=openid+profile&redirect_uri=https%3a%2f%2fteams.live.com%2fgo&response_type=id_token&state=&response_mode=fragment&nonce=afbc78ea-a6a5-442f-90f2-fde6407f285e&login_hint=eion%40robbmob.com&x-client-SKU=MSAL.JS&x-client-Ver=1.3.4&uaid=a93bc38c8ebe4ba5aab05dc0f0b85b0b&msproxy=1&issuer=mso&tenant=common&ui_locales=en-NZ&client_info=1&epct=&jshs=0&nopa=2
 // Personal tenant id: 9188040d-6c67-4c5b-b112-36a304b66dad
 // Old personal client id: 8ec6bc83-69c8-4392-8f08-b3c986009232
 // redirect_uri  msauth.com.microsoft.teams://auth (mac)  x-msauth-ms-st://com.microsoft.skype.teams (iphone)
 // scope=service%3a%3aapi.fl.teams.microsoft.com%3a%3aMBI_SSL+openid+profile+offline_access    service::api.fl.teams.microsoft.com::MBI_SSL
 // scope	https://converged.signin.teams.microsoft.com/User.Read openid profile offline_access
 
-// https://login.live.com/oauth20_authorize.srf?client_id=8c59ead7-d703-4a27-9e55-c96a0054c8d2&scope=openid+profile+offline_access+email&redirect_uri=https%3a%2f%2fmyaccount.microsoft.com%2f&response_type=code&state=eyJpZCI6IjJiYzgxYWIzLWRlYTAtNDQwOC05OTkzLWJlMWE0OThhZGZiMCIsIm1ldGEiOnsiaW50ZXJhY3Rpb25UeXBlIjoicmVkaXJlY3QifX0%3d&response_mode=fragment&nonce=f8275e4c-58c3-493a-9894-5a3c4a634522&code_challenge=o57Kq_1yB1TGy06J3tq3vIAqf5wFJSaIEbLtqC99LDY&code_challenge_method=S256&x-client-SKU=msal.js.browser&x-client-Ver=2.37.1&uaid=d0153e26987e4cc8976707a7803bf1de&msproxy=1&issuer=mso&tenant=9188040d-6c67-4c5b-b112-36a304b66dad&ui_locales=en-NZ&client_info=1&epct=PAQABAAEAAAAmoFfGtYxvRrNriQdPKIZ-rIEWaFgb_xlDIjGzga74Jp91IfdPOSpF4DT7rpeIYUScZu7NJO-uGweIIl37hiK0IfrGQn9btiP7xbEHrA2shP9B7m4Xq_W6vBlQdK0bYmVplljJauVFve3u2PhPdXuziSuTpZPvwCpcFJvHkuyddVRuNpS_p1Tz8wpjpcEn_6CxfXys2M5If23clo3oXMGMmF2M8BlJBspC3LNhIXzk0CAA&jshs=0#
-
-// https://login.microsoftonline.com/consumers/oauth2/authorize?client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient
-// https://login.live.com/oauth20_authorize.srf?client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient
-
-	//https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=4b3e8f46-56d3-427f-b1e2-d239b2ea6bca&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&amr_values=mfa
-	//https://login.microsoftonline.com/Common/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&amr_values=mfa
-
-// https://login.microsoft.com/9188040d-6c67-4c5b-b112-36a304b66dad/oauth2/v2.0/authorize?prompt=select_account&response_type=code&client_id=8ec6bc83-69c8-4392-8f08-b3c986009232&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&scope=openid+profile+offline_access+email&display=popup&amr_values=mfa
-// https://login.microsoft.com/9188040d-6c67-4c5b-b112-36a304b66dad/oauth2/v2.0/authorize?prompt=select_account&response_type=code&client_id=8ec6bc83-69c8-4392-8f08-b3c986009232&redirect_uri=msauth.com.microsoft.teams%3a%2f%2fauth&scope=openid+profile+offline_access+email&display=popup
-
-// https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/oauth2/v2.0/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&amr_values=mfa
-// https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/oauth2/v2.0/authorize?client_id=8ec6bc83-69c8-4392-8f08-b3c986009232&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&scope=openid+profile
-// https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/oauth2/v2.0/authorize?client_id=4b3e8f46-56d3-427f-b1e2-d239b2ea6bca&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&scope=openid+profile
 
 static void
 teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)

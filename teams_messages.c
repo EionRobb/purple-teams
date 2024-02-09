@@ -1913,7 +1913,7 @@ teams_subscribe(TeamsAccount *sa)
 	}
 
 	gchar *url = g_strdup_printf("/v2/users/ME/endpoints/%s", purple_url_encode(sa->endpoint));
-	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, teams_subscribe_cb, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, teams_subscribe_cb, NULL, TRUE); // Personal: msgapi.teams.live.com
 	g_free(url);
 	
 	g_free(post);

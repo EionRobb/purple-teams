@@ -451,7 +451,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	gchar *reg_str = teams_jsonobj_to_string(reg_obj);
 	purple_debug_info("teams", "Trouter registration: %s\n", reg_str);
 
-	PurpleHttpRequest *request = purple_http_request_new("https://teams.microsoft.com/registrar/prod/V2/registrations");
+	PurpleHttpRequest *request = purple_http_request_new("https://teams.microsoft.com/registrar/prod/V2/registrations"); //Personal: edge.skype.com
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_header_set(request, "Content-Type", "application/json");
@@ -472,7 +472,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	reg_str = teams_jsonobj_to_string(reg_obj);
 	purple_debug_info("teams", "Trouter call registration: %s\n", reg_str);
 
-	request = purple_http_request_new("https://teams.microsoft.com/registrar/prod/V2/registrations");
+	request = purple_http_request_new("https://teams.microsoft.com/registrar/prod/V2/registrations"); //Personal: edge.skype.com
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_header_set(request, "Content-Type", "application/json");
@@ -493,7 +493,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	reg_str = teams_jsonobj_to_string(reg_obj);
 	purple_debug_info("teams", "Trouter call registration: %s\n", reg_str);
 
-	request = purple_http_request_new("https://teams.microsoft.com/registrar/prod/V2/registrations");
+	request = purple_http_request_new("https://teams.microsoft.com/registrar/prod/V2/registrations"); //Personal: edge.skype.com
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_header_set(request, "Content-Type", "application/json");

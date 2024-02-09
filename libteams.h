@@ -118,6 +118,8 @@
 #define TEAMS_PLUGIN_ID "prpl-eionrobb-msteams"
 #define TEAMS_PLUGIN_VERSION "1.0"
 
+#define TEAMS_PERSONAL_PLUGIN_ID "prpl-eionrobb-msteams-personal"
+
 #define TEAMS_LOCKANDKEY_APPID "msmsgs@msnmsgr.com"
 #define TEAMS_LOCKANDKEY_SECRET "Q1P7W2E4J9R8U3S5"
 
