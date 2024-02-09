@@ -181,6 +181,8 @@ teams_status_types(PurpleAccount *account)
 
 	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AVAILABLE, "AvailableIdle", _("Available (Idle)"), FALSE, FALSE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "BusyIdle", _("Busy (Idle)"), FALSE, FALSE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	types = g_list_append(types, status);
 	status = purple_status_type_new_with_attrs(PURPLE_STATUS_OFFLINE, "PresenceUnknown", _("Unknown"), FALSE, FALSE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
 

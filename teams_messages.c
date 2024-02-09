@@ -67,7 +67,7 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 
 	purple_protocol_got_user_status(sa->account, from, status, NULL);
 
-	gboolean is_idle = purple_strequal(status, "AvailableIdle");
+	gboolean is_idle = strstr(status, "Idle") != NULL;
 	purple_prpl_got_user_idle(sa->account, from, is_idle, 0);
 }
 
@@ -1021,7 +1021,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		
 		g_free(purple_conversation_get_data(conv, "last_teams_id"));
 		
-		if (purple_conversation_has_focus(conv)) {
+		if (purple_conversation_has_focus(conv) && convname && *convname) {
 			// Mark message as seen straight away
 			gchar *post, *url;
 			
@@ -1692,7 +1692,7 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			
 			purple_protocol_got_user_status(sa->account, from, availability, NULL);
 
-			gboolean is_idle = purple_strequal(availability, "AvailableIdle");
+			gboolean is_idle = strstr(availability, "Idle") != NULL;
 			purple_prpl_got_user_idle(sa->account, from, is_idle, 0);
 		}
 	}

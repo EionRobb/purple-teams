@@ -432,9 +432,9 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	json_object_set_string_member(clientDescription, "appId", "TeamsCDLWebWorker");
 	json_object_set_string_member(clientDescription, "aesKey", "");
 	json_object_set_string_member(clientDescription, "languageId", "en-US");
-	json_object_set_string_member(clientDescription, "platform", "electron");
-	json_object_set_string_member(clientDescription, "templateKey", "TeamsCDLWebWorker_1.6");
-	json_object_set_string_member(clientDescription, "platformUIVersion", "27/1.0.0.2023052414");
+	json_object_set_string_member(clientDescription, "platform", "edge");
+	json_object_set_string_member(clientDescription, "templateKey", "TeamsCDLWebWorker_1.8");
+	json_object_set_string_member(clientDescription, "platformUIVersion", "49/24010419121");
 
 	json_object_set_string_member(trouter_obj, "context", "");
 	json_object_set_string_member(trouter_obj, "path", sa->trouter_surl);
