@@ -201,6 +201,11 @@ struct _TeamsAccount {
 	gchar *trouter_surl;
 	guint trouter_ping_timeout;
 	guint trouter_command_count;
+
+	//devicecode login
+	gchar *login_device_code;
+	guint login_device_code_timeout;
+	guint login_device_code_expires_timeout;
 };
 
 struct _TeamsBuddy {

@@ -25,12 +25,9 @@
 #include <util.h>
 
 void teams_logout(TeamsAccount *sa);
-void teams_begin_web_login(TeamsAccount *sa);
-void teams_begin_oauth_login(TeamsAccount *sa);
-void teams_refresh_token_login(TeamsAccount *sa);
-void teams_begin_soapy_login(TeamsAccount *sa);
 
 gboolean teams_oauth_refresh_token(TeamsAccount *sa);
 void teams_do_web_auth(TeamsAccount *sa);
+void teams_do_devicecode_login(TeamsAccount *sa);
 
 #endif /* TEAMS_LOGIN_H */

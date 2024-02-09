@@ -381,15 +381,13 @@ teams_login(PurpleAccount *account)
 	if (tenant != NULL) {
 		sa->tenant = g_strdup(tenant);
 	}
-
-	//teams_begin_soapy_login(sa);
 	
 	if (password && *password) {
 		sa->refresh_token = g_strdup(password);
 		purple_connection_update_progress(pc, _("Authenticating"), 1, 3);
 		teams_oauth_refresh_token(sa);
 	} else {
-		teams_do_web_auth(sa);
+		teams_do_devicecode_login(sa);
 	}
 	
 	if (!conversation_updated_signal) {
@@ -421,6 +419,8 @@ teams_close(PurpleConnection *pc)
 	g_source_remove(sa->poll_timeout);
 	g_source_remove(sa->watchdog_timeout);
 	g_source_remove(sa->refresh_token_timeout);
+	g_source_remove(sa->login_device_code_expires_timeout);
+	g_source_remove(sa->login_device_code_timeout);
 
 	teams_logout(sa);
 	
@@ -457,6 +457,7 @@ teams_close(PurpleConnection *pc)
 	g_hash_table_destroy(sa->chat_to_buddy_lookup);
 	g_hash_table_destroy(sa->calendar_reminder_timeouts);
 	
+	g_free(sa->login_device_code);
 	g_free(sa->substrate_access_token);
 	g_free(sa->csa_access_token);
 	g_free(sa->presence_access_token);
