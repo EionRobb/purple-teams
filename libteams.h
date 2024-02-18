@@ -123,10 +123,17 @@
 #define TEAMS_LOCKANDKEY_APPID "msmsgs@msnmsgr.com"
 #define TEAMS_LOCKANDKEY_SECRET "Q1P7W2E4J9R8U3S5"
 
-#define TEAMS_DEFAULT_MESSAGES_HOST "apac.notifications.teams.microsoft.com"
-#define TEAMS_PRESENCE_HOST "presence.teams.microsoft.com"
+#ifdef ENABLE_TEAMS_PERSONAL
+#	define TEAMS_BASE_ORIGIN_HOST "teams.live.com"
+#	define TEAMS_CONTACTS_HOST "msgapi.teams.live.com"
+#else
+#	define TEAMS_BASE_ORIGIN_HOST "teams.microsoft.com"
+#	define TEAMS_CONTACTS_HOST "apac.ng.msg.teams.microsoft.com"
+#endif
 
-#define TEAMS_CONTACTS_HOST "apac.ng.msg.teams.microsoft.com"
+#define TEAMS_DEFAULT_MESSAGES_HOST "apac.notifications.teams.microsoft.com"
+#define TEAMS_PRESENCE_HOST "presence." TEAMS_BASE_ORIGIN_HOST
+
 #define TEAMS_NEW_CONTACTS_HOST "contacts.skype.com"
 #define TEAMS_LOGIN_HOST "login.skype.com"
 #define TEAMS_VIDEOMAIL_HOST "vm.skype.com"
@@ -136,10 +143,16 @@
 #define TEAMS_STATIC_CDN_HOST "static-asm.secure.skypeassets.com"
 #define TEAMS_DEFAULT_CONTACT_SUGGESTIONS_HOST "peoplerecommendations.skype.com"
 
+#ifdef ENABLE_TEAMS_PERSONAL
+#	define TEAMS_PROFILES_PREFIX "/api/mt/beta/"
+#else
+#	define TEAMS_PROFILES_PREFIX "/api/mt/apac/beta/"
+#endif
+
 #define TEAMS_VDMS_TTL 300
 
 #define TEAMS_CLIENTINFO_NAME "skypeteams"
-#define TEAMS_CLIENTINFO_VERSION "1415/1.0.0.2021062127"
+#define TEAMS_CLIENTINFO_VERSION "1417/5.23.77.2023235003"
 
 
 #define TEAMS_BUDDY_IS_MSN(a) G_UNLIKELY((a) != NULL && strchr((a), '@') != NULL)

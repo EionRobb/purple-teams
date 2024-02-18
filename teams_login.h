@@ -24,6 +24,8 @@
 
 #include <util.h>
 
+#define TEAMS_PERSONAL_TENANT_ID "9188040d-6c67-4c5b-b112-36a304b66dad"
+
 void teams_logout(TeamsAccount *sa);
 
 gboolean teams_oauth_refresh_token(TeamsAccount *sa);

@@ -117,7 +117,7 @@ teams_get_icon_now(PurpleBuddy *buddy)
 		const gchar *buddy_name = purple_buddy_get_name(buddy);
 		//https://teams.microsoft.com/api/mt/apac/beta/users/.../profilepicturev2?displayname=Eion%20Robb&size=HR96x96
 		//https://teams.microsoft.com/api/mt/part/au-01/beta/users/...myid.../profilepicturev2/8:orgid:userid?displayname=Eion%20Robb&size=HR196x196&ETag=1704940983743
-		url = g_strdup_printf("https://teams.microsoft.com/api/mt/apac/beta/users/%s%s/profilepicturev2?size=HR128x128", teams_user_url_prefix(buddy_name), purple_url_encode(buddy_name));
+		url = g_strdup_printf("https://" TEAMS_BASE_ORIGIN_HOST TEAMS_PROFILES_PREFIX "users/%s%s/profilepicturev2?size=HR128x128", teams_user_url_prefix(buddy_name), purple_url_encode(buddy_name));
 	}
 
 	if (purple_strequal(url, purple_buddy_icons_get_checksum_for_user(buddy))) {
@@ -133,9 +133,9 @@ teams_get_icon_now(PurpleBuddy *buddy)
 	purple_http_request_set_timeout(request, 120);
 	
 	// Weirdly uses a cookie instead of the Authorization header
-	if (strstr(url, "https://teams.microsoft.com/api/mt/") == url && strstr(url, "/profilepicturev2")) {
-		purple_http_request_header_set(request, "Referer", "https://teams.microsoft.com/");
-		purple_http_request_header_set_printf(request, "Cookie", "authtoken=Bearer%%3D%s%%26Origin%%3Dhttps%%3A%%2F%%2Fteams.microsoft.com", purple_url_encode(sa->id_token));
+	if (strstr(url, "https://" TEAMS_BASE_ORIGIN_HOST "/api/mt/") == url && strstr(url, "/profilepicturev2")) {
+		purple_http_request_header_set(request, "Referer", "https://" TEAMS_BASE_ORIGIN_HOST "/");
+		purple_http_request_header_set_printf(request, "Cookie", "authtoken=Bearer%%3D%s%%26Origin%%3Dhttps%%3A%%2F%%2F" TEAMS_BASE_ORIGIN_HOST, purple_url_encode(sa->id_token));
 	}
 	
 	purple_http_request(sa->pc, request, teams_get_icon_cb, buddy);
@@ -1127,9 +1127,9 @@ void
 teams_search_users_text(gpointer user_data, const gchar *text)
 {
 	TeamsAccount *sa = user_data;
-	const gchar *url = "/api/mt/apac/beta/users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
+	const gchar *url = TEAMS_PROFILES_PREFIX "users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, text, teams_search_users_text_cb, g_strdup(text), TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, text, teams_search_users_text_cb, g_strdup(text), TRUE);
 	
 }
 
@@ -1226,8 +1226,8 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 void
 teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 {
-	const gchar *profiles_url = "/api/mt/apac/beta/users/fetchShortProfile?isMailAddress=false&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true";
-	const gchar *federated_profiles_url = "/api/mt/apac/beta/users/fetchFederated";
+	const gchar *profiles_url = TEAMS_PROFILES_PREFIX "users/fetchShortProfile?isMailAddress=false&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true";
+	const gchar *federated_profiles_url = TEAMS_PROFILES_PREFIX "users/fetchFederated";
 	GString *postdata;
 	GSList *cur = contacts;
 	const gchar *user_prefix;
@@ -1245,8 +1245,8 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 	
 	g_string_append(postdata, "]");
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 	
 	g_string_free(postdata, TRUE);
 }
@@ -1344,9 +1344,9 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 	gchar *url = NULL;
 	gchar *postdata;
 	
-	url = g_strconcat("/api/mt/apac/beta/users/", teams_user_url_prefix(username), purple_url_encode(username), "/?throwIfNotFound=false&isMailAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true", NULL);
+	url = g_strconcat(TEAMS_PROFILES_PREFIX, "users/", teams_user_url_prefix(username), purple_url_encode(username), "/?throwIfNotFound=false&isMailAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true", NULL);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_got_info, g_strdup(username), TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_got_info, g_strdup(username), TRUE);
 	
 	g_free(url);
 	
@@ -1356,11 +1356,11 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 		return;
 	}
 	
-	url = "/api/mt/apac/beta/users/fetchFederated";
+	url = TEAMS_PROFILES_PREFIX "users/fetchFederated";
 	
 	postdata = g_strconcat("[\"", teams_user_url_prefix(username), username, "\"]", NULL);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, postdata, teams_got_info, g_strdup(username), TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, teams_got_info, g_strdup(username), TRUE);
 	
 	g_free(postdata);
 
@@ -1772,6 +1772,86 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	}
 }
 
+static void
+teams_get_buddylist_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonObject *obj;
+	JsonArray *values;
+	PurpleGroup *group = teams_get_blist_group(sa);
+	GSList *users_to_fetch = NULL;
+	guint index, length;
+	
+	obj = json_node_get_object(node);
+	values = json_object_get_array_member(obj, "value");
+	length = json_array_get_length(values);
+	
+	for(index = 0; index < length; index++)
+	{
+		JsonObject *buddygroup = json_array_get_object_element(values, index);
+		//TODO  groupType, displayName
+		JsonArray *buddies = json_object_get_array_member(buddygroup, "buddies");
+		guint buddy_index, buddy_length = json_array_get_length(buddies);
+
+		for(buddy_index = 0; buddy_index < buddy_length; buddy_index++)
+		{
+			JsonObject *contact = json_array_get_object_element(buddies, buddy_index);
+			const gchar *mri = json_object_get_string_member(contact, "mri");
+			const gchar *display_name = json_object_get_string_member(contact, "displayName");
+		
+			PurpleBuddy *buddy;
+			const gchar *id;
+		
+			id = teams_strip_user_prefix(mri);
+			
+			buddy = purple_blist_find_buddy(sa->account, id);
+			if (!buddy)
+			{
+				buddy = purple_buddy_new(sa->account, id, display_name);
+				purple_blist_add_buddy(buddy, NULL, group, NULL);
+			}
+
+			TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
+			if (sbuddy == NULL) {
+				sbuddy = g_new0(TeamsBuddy, 1);
+				sbuddy->skypename = g_strdup(id);
+				sbuddy->sa = sa;
+				
+				sbuddy->buddy = buddy;
+				purple_buddy_set_protocol_data(buddy, sbuddy);
+			}
+		
+			if (display_name && *display_name) {
+				g_free(sbuddy->display_name);
+				sbuddy->display_name = g_strdup(display_name);
+				
+				if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
+					purple_serv_got_alias(sa->pc, id, sbuddy->display_name);
+				}
+			}
+
+			teams_get_icon(buddy);
+			
+			// if (blocked == TRUE) {
+				// purple_account_privacy_deny_add(sa->account, id, TRUE);
+			// } else {
+				users_to_fetch = g_slist_prepend(users_to_fetch, sbuddy->skypename);
+			// }
+			
+			if (purple_strequal(id, sa->primary_member_name)) {
+				g_free(sa->self_display_name);
+				sa->self_display_name = g_strdup(display_name);
+			}
+		}
+	}
+		
+	if (users_to_fetch)
+	{
+		teams_get_friend_profiles(sa, users_to_fetch);
+		teams_subscribe_to_contact_status(sa, users_to_fetch);
+		g_slist_free(users_to_fetch);
+	}
+}
+
 
 
 gboolean
@@ -1782,17 +1862,17 @@ teams_get_friend_list(TeamsAccount *sa)
 		return FALSE;
 	}
 
-	const gchar *url = "/api/mt/apac/beta/users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
+	const gchar *url = TEAMS_PROFILES_PREFIX "users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
 	
 	//TODO
 	// get tenants: https://teams.microsoft.com/api/mt/apac/beta/users/tenants
 	
 	// Do a search for all users with . in their email addresses - doesn't work for Guests
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "teams.microsoft.com", url, ".", teams_get_friend_list_cb, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, ".", teams_get_friend_list_cb, NULL, TRUE);
 	
 	// Fetch a list of teams and chats we're part of - doesn't include users for Guests
 	url = "/api/csa/api/v1/teams/users/me?isPrefetch=false&enableMembershipSummary=true";
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_get_friend_list_teams_cb, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_friend_list_teams_cb, NULL, TRUE);
 	
 	// Search all of office for suggestions
 	// needs auth with scope of https://substrate.office.com
@@ -1804,6 +1884,10 @@ teams_get_friend_list(TeamsAccount *sa)
 	gchar *search_url = g_strconcat("/api/v1/workingwith?teamsMri=", purple_url_encode(sa->primary_member_name), "&personaType=User&limit=50", NULL);
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "aus.loki.delve.office.com", search_url, NULL, teams_get_workingwith_cb, NULL, TRUE);
 	g_free(search_url);
+
+	// Teams personal has a buddy list?!@
+	url = "/api/mt/beta/contacts/buddylist?migrationRequested=true&federatedContactsSupported=true";
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_buddylist_cb, NULL, TRUE);
 
 	return TRUE;
 }
@@ -1927,7 +2011,7 @@ teams_check_calendar(TeamsAccount *sa)
 		
 		gchar *url = g_strconcat("/api/mt/part/au-01/v2.0/me/calendars/default/calendarView?StartDate=", start_date, "&EndDate=", end_date, "&shouldDecryptData=true", NULL);
 
-		teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "teams.microsoft.com", url, NULL, teams_got_calendar, NULL, TRUE);
+		teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_got_calendar, NULL, TRUE);
 
 		g_free(start_date);
 		g_free(end_date);

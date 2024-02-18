@@ -649,7 +649,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				const gchar *count = purple_xmlnode_get_attrib(partlist, "count");
 				if (!count) {
 					// Add join link:  https://teams.microsoft.com/l/meetup-join/{convID}/0
-					message = g_strconcat(_("Call started"), " - https://teams.microsoft.com/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
+					message = g_strconcat(_("Call started"), " - https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
 				} else {
 					// someone left
 				}
@@ -907,7 +907,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					
 					conv = PURPLE_CONVERSATION(imconv);
 					if (g_str_equal(partlisttype, "started")) {
-						message = g_strconcat(_("Call started"), " - https://teams.microsoft.com/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
+						message = g_strconcat(_("Call started"), " - https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
 						
 					} else if (g_str_equal(partlisttype, "ended")) {
 						PurpleXmlNode *part;
@@ -1027,6 +1027,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			
 			//TODO
 			url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
+			// Should be [messageId];[timestampInMillis];[clientMessageId]
 			post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", id ? id : "", teams_get_js_time(), id ? id : "");
 			
 			teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
@@ -1056,7 +1057,8 @@ process_conversation_resource(TeamsAccount *sa, JsonObject *resource)
 	
 	if (threadProperties != NULL) {
 		const gchar *uniquerosterthread = json_object_get_string_member(threadProperties, "uniquerosterthread");
-		if (purple_strequal(uniquerosterthread, "true")) {
+		const gchar *productThreadType = json_object_get_string_member(threadProperties, "productThreadType");
+		if (purple_strequal(uniquerosterthread, "true") || purple_strequal(productThreadType, "OneToOneChat")) {
 			// This is a one-to-one chat
 			
 			if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
@@ -1359,6 +1361,7 @@ teams_mark_conv_seen(PurpleConversation *conv, PurpleConversationUpdateType type
 			
 			if (convname && *convname) {
 				url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
+				// Should be [messageId];[timestampInMillis];[clientMessageId]
 				post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", last_teams_id, teams_get_js_time(), last_teams_id);
 				
 				teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
@@ -1730,7 +1733,7 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 			// Send off the current batch and continue
 			post = teams_jsonarr_to_string(contacts_array);
 
-			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", presence_path, post, teams_got_contact_statuses, NULL, TRUE);
+			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, presence_path, post, teams_got_contact_statuses, NULL, TRUE);
 			
 			g_free(post);
 			
@@ -1743,7 +1746,7 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 	if (json_array_get_length(contacts_array) > 0) {
 		post = teams_jsonarr_to_string(contacts_array);
 
-		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", presence_path, post, teams_got_contact_statuses, NULL, TRUE);
+		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, presence_path, post, teams_got_contact_statuses, NULL, TRUE);
 		
 		g_free(post);
 	}
@@ -1808,7 +1811,7 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 			json_object_set_boolean_member(obj, "shouldPurgePreviousSubscriptions", FALSE);
 			post = teams_jsonobj_to_string(obj);
 
-			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", url, post, NULL, NULL, TRUE);
+			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, url, post, NULL, NULL, TRUE);
 
 			g_free(post);
 			json_object_unref(obj);
@@ -1829,7 +1832,7 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		json_object_set_boolean_member(obj, "shouldPurgePreviousSubscriptions", FALSE);
 		post = teams_jsonobj_to_string(obj);
 
-		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, "presence.teams.microsoft.com", url, post, NULL, NULL, TRUE);
+		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, url, post, NULL, NULL, TRUE);
 
 		g_free(post);
 		json_object_unref(obj);
@@ -1854,6 +1857,7 @@ teams_subscribe_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	if (subscriptions != NULL) {
 		JsonObject *sub = json_array_get_object_element(subscriptions, 0);
 		if (sub != NULL) {
+			// TODO check channelType is HttpLongPoll
 			const gchar *longpollurl = json_object_get_string_member(sub, "longPollUrl");
 			gchar *next_server = teams_string_get_chunk(longpollurl, -1, "https://", "/users");
 			
@@ -1874,7 +1878,7 @@ teams_subscribe_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 }
 
 void
-teams_subscribe(TeamsAccount *sa)
+teams_subscribe_with_callback(TeamsAccount *sa, TeamsProxyCallbackFunc callback)
 {
 	JsonObject *obj, *sub;
 	JsonArray *interested;
@@ -1913,11 +1917,17 @@ teams_subscribe(TeamsAccount *sa)
 	}
 
 	gchar *url = g_strdup_printf("/v2/users/ME/endpoints/%s", purple_url_encode(sa->endpoint));
-	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, teams_subscribe_cb, NULL, TRUE); // Personal: msgapi.teams.live.com
+	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, callback, NULL, TRUE); // Personal: msgapi.teams.live.com
 	g_free(url);
 	
 	g_free(post);
 	json_object_unref(obj);
+}
+
+void
+teams_subscribe(TeamsAccount *sa)
+{
+	teams_subscribe_with_callback(sa, teams_subscribe_cb);
 }
 
 
@@ -2532,13 +2542,13 @@ teams_conversation_send_image_cb(PurpleHttpConnection *connection, PurpleHttpRes
 	
 	id = json_object_get_string_member(obj, "id");
 	
-	upload_url = g_strdup_printf("https://as-prod.asyncgw.teams.microsoft.com/v1/objects/%s/content/imgpsh", purple_url_encode(id));
+	upload_url = g_strdup_printf("https://as-prod.asyncgw." TEAMS_BASE_ORIGIN_HOST "/v1/objects/%s/content/imgpsh", purple_url_encode(id));
 	
 	request = purple_http_request_new(upload_url);
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_header_set(request, "Content-Type", "application/octet-stream");
 	purple_http_request_header_set_printf(request, "Authorization", "skype_token %s", sa->skype_token);
-	purple_http_request_header_set(request, "Referer", "https://teams.microsoft.com/");
+	purple_http_request_header_set(request, "Referer", "https://" TEAMS_BASE_ORIGIN_HOST "/");
 	purple_http_request_header_set(request, "Accept", "*/*");
 	purple_http_request_set_method(request, "PUT");
 	purple_http_request_set_contents(request, purple_image_get_data(image), purple_image_get_data_size(image));
@@ -2587,7 +2597,7 @@ teams_conversation_send_image(TeamsAccount *sa, const gchar *convname, PurpleIma
 	json_object_set_string_member(obj, "sharingMode", "Inline");
 	postdata = teams_jsonobj_to_string(obj);
 	
-	request = purple_http_request_new("https://as-prod.asyncgw.teams.microsoft.com/v1/objects/");
+	request = purple_http_request_new("https://as-prod.asyncgw." TEAMS_BASE_ORIGIN_HOST "/v1/objects/");
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_header_set(request, "content-type", "application/json");
 	purple_http_request_header_set_printf(request, "Authorization", "skype_token %s", sa->skype_token);

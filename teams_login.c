@@ -139,6 +139,7 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 	JsonObject *obj, *tokens;
 	gchar *error = NULL;
 	PurpleConnectionError error_type = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
+	const gchar *skypeToken;
 
 	data = purple_http_response_get_data(response, &len);
 	
@@ -146,7 +147,7 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 	
 	obj = json_decode_object(data, len);
 
-	if (!json_object_has_member(obj, "tokens")) {
+	if (!json_object_has_member(obj, "tokens") && !json_object_has_member(obj, "skypeToken")) {
 		JsonObject *status = json_object_get_object_member(obj, "status");
 		
 		if (status) {
@@ -169,10 +170,16 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 		goto fail;
 	}
 
-	tokens = json_object_get_object_member(obj, "tokens");
+	if (json_object_has_member(obj, "tokens")) {
+		tokens = json_object_get_object_member(obj, "tokens");
+		skypeToken = json_object_get_string_member(tokens, "skypeToken");
+	} else {
+		tokens = json_object_get_object_member(obj, "skypeToken");
+		skypeToken = json_object_get_string_member(tokens, "skypetoken");
+	}
 
 	if (sa->skype_token) g_free(sa->skype_token);
-	sa->skype_token = g_strdup(json_object_get_string_member(tokens, "skypeToken"));
+	sa->skype_token = g_strdup(skypeToken);
 	
 	gint64 expiresIn = json_object_get_int_member(tokens, "expiresIn");
 	if (sa->refresh_token_timeout) 
@@ -181,7 +188,11 @@ teams_login_did_got_api_skypetoken(PurpleHttpConnection *http_conn, PurpleHttpRe
 	//set_timeout
 	
 	if (sa->region) g_free(sa->region);
-	sa->region = g_strdup(json_object_get_string_member(obj, "region"));
+	if (json_object_has_member(obj, "region")) {
+		sa->region = g_strdup(json_object_get_string_member(obj, "region"));
+	} else {
+		sa->region = NULL;
+	}
 
 	teams_do_all_the_things(sa);
 
@@ -203,7 +214,11 @@ teams_login_get_api_skypetoken(TeamsAccount *sa, const gchar *url, const gchar *
 	gchar *postdata = NULL;
 	
 	if (url == NULL) {
+#ifdef ENABLE_TEAMS_PERSONAL
+		url = "https://teams.live.com/api/auth/v1.0/authz/consumer";
+#else
 		url = "https://teams.microsoft.com/api/authsvc/v1.0/authz";
+#endif // ENABLE_TEAMS_PERSONAL
 	}
 	
 	request = purple_http_request_new(url);
@@ -231,8 +246,19 @@ teams_login_get_api_skypetoken(TeamsAccount *sa, const gchar *url, const gchar *
 	json_object_unref(obj);
 }
 
-#define TEAMS_OAUTH_CLIENT_ID "1fec8e78-bce4-4aaf-ab1b-5451cc387264"
+#define TEAMS_WORK_OAUTH_CLIENT_ID "1fec8e78-bce4-4aaf-ab1b-5451cc387264"
+#define TEAMS_PERSONAL_OAUTH_CLIENT_ID "8ec6bc83-69c8-4392-8f08-b3c986009232"
 #define TEAMS_OAUTH_RESOURCE "https://api.spaces.skype.com"
+#ifdef ENABLE_TEAMS_PERSONAL
+#	define TEAMS_OAUTH_CLIENT_ID TEAMS_PERSONAL_OAUTH_CLIENT_ID
+#	define TEAMS_OAUTH_SERVICE "service::api.fl.teams.microsoft.com::MBI_SSL"
+#	define TEAMS_SKYPETOKEN_SERVICE "service::api.fl.spaces.skype.com::MBI_SSL"
+#else
+#	define TEAMS_OAUTH_CLIENT_ID TEAMS_WORK_OAUTH_CLIENT_ID
+#	define TEAMS_OAUTH_SERVICE TEAMS_OAUTH_RESOURCE "/.default"
+#	define TEAMS_SKYPETOKEN_SERVICE TEAMS_OAUTH_SERVICE
+#endif // ENABLE_TEAMS_PERSONAL
+#	define TEAMS_OAUTH_SCOPE TEAMS_OAUTH_SERVICE " openid profile offline_access"
 #define TEAMS_OAUTH_REDIRECT_URI "https://login.microsoftonline.com/common/oauth2/nativeclient"
 
 // Personal client id maybe: 4b3e8f46-56d3-427f-b1e2-d239b2ea6bca
@@ -240,8 +266,27 @@ teams_login_get_api_skypetoken(TeamsAccount *sa, const gchar *url, const gchar *
 // Old personal client id: 8ec6bc83-69c8-4392-8f08-b3c986009232
 // redirect_uri  msauth.com.microsoft.teams://auth (mac)  x-msauth-ms-st://com.microsoft.skype.teams (iphone)
 // scope=service%3a%3aapi.fl.teams.microsoft.com%3a%3aMBI_SSL+openid+profile+offline_access    service::api.fl.teams.microsoft.com::MBI_SSL
+// scope = service::api.fl.spaces.skype.com::MBI_SSL
 // scope	https://converged.signin.teams.microsoft.com/User.Read openid profile offline_access
 
+static void
+teams_oauth_refreshed_skypetoken_access(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
+{
+	TeamsAccount *sa = user_data;
+	JsonObject *obj;
+	const gchar *raw_response;
+	gsize response_len;
+
+	raw_response = purple_http_response_get_data(response, &response_len);
+	obj = json_decode_object(raw_response, response_len);
+
+	if (purple_http_response_is_successful(response) && obj)
+	{
+		const gchar *id_token = json_object_get_string_member(obj, "access_token");
+		
+		teams_login_get_api_skypetoken(sa, NULL, NULL, id_token);
+	}
+}
 
 static void
 teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
@@ -257,11 +302,12 @@ teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 
 	if (purple_http_response_is_successful(response) && obj)
 	{
-		gchar *id_token = g_strdup(json_object_get_string_member(obj, "access_token"));
+		const gchar *id_token = json_object_get_string_member(obj, "access_token");
+
 		if (sa->id_token) {
 			g_free(sa->id_token);
 		}
-		sa->id_token = id_token;
+		sa->id_token = g_strdup(id_token);
 		if (json_object_has_member(obj, "refresh_token")) {
 			if (sa->refresh_token != NULL) {
 				g_free(sa->refresh_token);
@@ -271,8 +317,6 @@ teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 			purple_account_set_remember_password(account, TRUE);
 			teams_save_refresh_token_password(account, sa->refresh_token);
 		}
-		
-		teams_login_get_api_skypetoken(sa, NULL, NULL, sa->id_token);
 	} else {
 		if (obj != NULL) {
 			if (json_object_has_member(obj, "error")) {
@@ -366,10 +410,9 @@ teams_substrate_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 	json_object_unref(obj);
 }
 
-void
-teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, PurpleHttpCallback callback) 
+static void
+teams_oauth_refresh_token_for_scope(TeamsAccount *sa, const gchar *scope, PurpleHttpCallback callback) 
 {
-
 	PurpleHttpRequest *request;
 	PurpleConnection *pc;
 	GString *postdata;
@@ -382,13 +425,13 @@ teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, 
 	}
 
 	postdata = g_string_new(NULL);
-	g_string_append_printf(postdata, "resource=%s&", purple_url_encode(resource));
+	g_string_append_printf(postdata, "scope=%s&", purple_url_encode(scope));
 	g_string_append_printf(postdata, "client_id=%s&", purple_url_encode(TEAMS_OAUTH_CLIENT_ID));
 	g_string_append(postdata, "grant_type=refresh_token&");
 	g_string_append_printf(postdata, "refresh_token=%s&", purple_url_encode(sa->refresh_token));
 	
 	tenant_host = teams_get_tenant_host(sa->tenant);
-	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/token", NULL);
+	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/v2.0/token", NULL);
 	
 	request = purple_http_request_new(auth_url);
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
@@ -406,14 +449,40 @@ teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, 
 	return;
 }
 
+void
+teams_oauth_refresh_token_for_resource(TeamsAccount *sa, const gchar *resource, PurpleHttpCallback callback)
+{
+	gchar *scope = g_strdup_printf("%s/.default openid profile offline_access", resource);
+	teams_oauth_refresh_token_for_scope(sa, scope, callback);
+	g_free(scope);
+}
+
+static void
+teams_oauth_refresh_services(TeamsAccount *sa)
+{
+
+#ifdef ENABLE_TEAMS_PERSONAL
+	teams_oauth_refresh_token_for_scope(sa, "service::api.fl.spaces.skype.com::MBI_SSL openid profile offline_access", teams_oauth_refreshed_skypetoken_access);
+	teams_oauth_refresh_token_for_scope(sa, "https://substrate.office.com/M365.Access openid profile offline_access", teams_substrate_oauth_cb);
+
+	// TODO do we need to register these?
+	(void) teams_presence_oauth_cb;
+	(void) teams_csa_oauth_cb;
+#else
+	teams_oauth_refresh_token_for_resource(sa, TEAMS_OAUTH_RESOURCE, teams_oauth_refreshed_skypetoken_access);
+	teams_oauth_refresh_token_for_resource(sa, "https://substrate.office.com", teams_substrate_oauth_cb);
+	teams_oauth_refresh_token_for_resource(sa, "https://" TEAMS_PRESENCE_HOST, teams_presence_oauth_cb);
+	teams_oauth_refresh_token_for_resource(sa, "https://chatsvcagg.teams.microsoft.com", teams_csa_oauth_cb);
+#endif // ENABLE_TEAMS_PERSONAL
+	
+}
+
 gboolean
 teams_oauth_refresh_token(TeamsAccount *sa)
 {
-	teams_oauth_refresh_token_for_resource(sa, "https://api.spaces.skype.com", teams_oauth_with_code_cb);
-	teams_oauth_refresh_token_for_resource(sa, "https://presence.teams.microsoft.com", teams_presence_oauth_cb);
-	teams_oauth_refresh_token_for_resource(sa, "https://chatsvcagg.teams.microsoft.com", teams_csa_oauth_cb);
-	teams_oauth_refresh_token_for_resource(sa, "https://substrate.office.com", teams_substrate_oauth_cb);
-	
+	teams_oauth_refresh_token_for_scope(sa, TEAMS_OAUTH_SCOPE, teams_oauth_with_code_cb);
+	teams_oauth_refresh_services(sa);
+
 	// For working with purple_timeout_add()
 	return FALSE;
 }
@@ -451,14 +520,15 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 	}
 
 	postdata = g_string_new(NULL);
-	g_string_append(postdata, "resource=https%3A%2F%2Fapi.spaces.skype.com&");
+	//g_string_append(postdata, "resource=" TEAMS_OAUTH_RESOURCE "&");
+	g_string_append_printf(postdata, "scope=%s&", purple_url_encode(TEAMS_OAUTH_SCOPE));
 	g_string_append_printf(postdata, "client_id=%s&", purple_url_encode(TEAMS_OAUTH_CLIENT_ID));
 	g_string_append(postdata, "grant_type=authorization_code&");
 	g_string_append_printf(postdata, "code=%s&", purple_url_encode(auth_code));
 	g_string_append_printf(postdata, "redirect_uri=%s&", purple_url_encode(TEAMS_OAUTH_REDIRECT_URI));
 
 	tenant_host = teams_get_tenant_host(sa->tenant);
-	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/token", NULL);
+	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/v2.0/token", NULL);
 
 	request = purple_http_request_new(auth_url);
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
@@ -501,7 +571,7 @@ teams_do_web_auth(TeamsAccount *sa)
 	//https://login.microsoftonline.com/Common/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&amr_values=mfa
 	
 	tenant_host = teams_get_tenant_host(sa->tenant);
-	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/authorize?client_id=" TEAMS_OAUTH_CLIENT_ID "&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient", NULL);
+	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/authorize?client_id=", TEAMS_OAUTH_CLIENT_ID, "&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient", NULL);
 	
 	purple_notify_uri(pc, auth_url);
 	purple_request_input(pc, _("Authorization Code"), auth_url,
@@ -550,7 +620,7 @@ teams_devicecode_login_poll_cb(PurpleHttpConnection *http_conn, PurpleHttpRespon
 			teams_save_refresh_token_password(sa->account, sa->refresh_token);
 		}
 		
-		teams_login_get_api_skypetoken(sa, NULL, NULL, sa->id_token);
+		teams_oauth_refresh_services(sa);
 
 		g_free(sa->login_device_code);
 		sa->login_device_code = NULL;
@@ -592,8 +662,12 @@ teams_devicecode_login_poll(gpointer user_data)
 	gchar *auth_url;
 	GString *postdata;
 	PurpleHttpRequest *request;
-	
+
+#ifdef ENABLE_TEAMS_PERSONAL
+	tenant_host = "common";
+#else
 	tenant_host = teams_get_tenant_host(sa->tenant);
+#endif // ENABLE_TEAMS_PERSONAL
 	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/token", NULL);
 
 	postdata = g_string_new(NULL);
@@ -642,6 +716,9 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		}
 		if (expires_in == 0) {
 			expires_in = atoi(json_object_get_string_member(obj, "expires_in"));
+		}
+		if (verification_url == NULL) {
+			verification_url = json_object_get_string_member(obj, "verification_uri");
 		}
 		
 		if (json_object_has_member(obj, "message")) {
@@ -697,13 +774,20 @@ teams_do_devicecode_login(TeamsAccount *sa)
 	gchar *auth_url;
 	GString *postdata;
 	PurpleHttpRequest *request;
-	
+
+#ifdef ENABLE_TEAMS_PERSONAL
+	tenant_host = "common";
+#else	
 	tenant_host = teams_get_tenant_host(sa->tenant);
+#endif // ENABLE_TEAMS_PERSONAL
+
 	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/devicecode", NULL);
+	//auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/v2.0/devicecode", NULL);
 
 	postdata = g_string_new(NULL);
 	g_string_append_printf(postdata, "client_id=%s&", TEAMS_OAUTH_CLIENT_ID);
 	g_string_append(postdata, "resource=" TEAMS_OAUTH_RESOURCE "&");
+	//g_string_append_printf(postdata, "scope=%s&", purple_url_encode(TEAMS_OAUTH_SCOPE));
 
 	request = purple_http_request_new(auth_url);
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);

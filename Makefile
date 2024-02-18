@@ -22,10 +22,9 @@ ifeq ($(OS),Windows_NT)
   ifndef PROGFILES32
     PROGFILES32 = $(PROGRAMFILES)
   endif
-  TEAMS_TARGET = libteams.dll
+  TEAMS_TARGET = libteams.dll libteams-personal.dll
   TEAMS_DEST = "$(PROGFILES32)/Pidgin/plugins"
   TEAMS_ICONS_DEST = "$(PROGFILES32)/Pidgin/pixmaps/pidgin/protocols"
-  TEAMS_THEME_DEST = "$(PROGFILES32)/Pidgin/pixmaps/pidgin/emotes/teams"
   MAKENSIS = "$(PROGFILES32)/NSIS/makensis.exe"
 else
 
@@ -52,18 +51,15 @@ else
       TEAMS_TARGET = FAILNOPURPLE
       TEAMS_DEST =
 	  TEAMS_ICONS_DEST =
-	  TEAMS_THEME_DEST =
     else
-      TEAMS_TARGET = libteams.so
+      TEAMS_TARGET = libteams.so libteams-personal.so
       TEAMS_DEST = $(DESTDIR)`$(PKG_CONFIG) --variable=plugindir purple`
 	  TEAMS_ICONS_DEST = $(DESTDIR)`$(PKG_CONFIG) --variable=datadir purple`/pixmaps/pidgin/protocols
-	  TEAMS_THEME_DEST = $(DESTDIR)`$(PKG_CONFIG) --variable=datadir purple`/pixmaps/pidgin/emotes/skype
     endif
   else
     TEAMS_TARGET = libteams3.so
     TEAMS_DEST = $(DESTDIR)`$(PKG_CONFIG) --variable=plugindir purple-3`
 	TEAMS_ICONS_DEST = $(DESTDIR)`$(PKG_CONFIG) --variable=datadir purple-3`/pixmaps/pidgin/protocols
-	TEAMS_THEME_DEST = $(DESTDIR)`$(PKG_CONFIG) --variable=datadir purple-3`/pixmaps/pidgin/emotes/skype
   endif
 endif
 
@@ -94,15 +90,23 @@ all: $(TEAMS_TARGET)
 
 libteams.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
 	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PROTOBUF_OPTS) `$(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --libs --cflags`  $(INCLUDES) -Ipurple2compat -g -ggdb
+libteams-personal.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
+	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(LDFLAGS) $(PROTOBUF_OPTS) `$(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --libs --cflags`  $(INCLUDES) -Ipurple2compat -g -ggdb
 
 libteams3.so: $(PURPLE_C_FILES)
 	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PROTOBUF_OPTS) `$(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --libs --cflags` $(INCLUDES)  -g -ggdb
+libteams3-personal.so: $(PURPLE_C_FILES)
+	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(LDFLAGS) $(PROTOBUF_OPTS) `$(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --libs --cflags` $(INCLUDES)  -g -ggdb
 
 libteams.dll: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
 	$(WIN32_CC) -shared -o $@ $^ $(WIN32_PIDGIN2_CFLAGS) $(WIN32_PIDGIN2_LDFLAGS) -Ipurple2compat
+libteams-personal.dll: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
+	$(WIN32_CC) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(WIN32_PIDGIN2_CFLAGS) $(WIN32_PIDGIN2_LDFLAGS) -Ipurple2compat
 
 libteams3.dll: $(PURPLE_C_FILES)
 	$(WIN32_CC) -shared -o $@ $^ $(WIN32_PIDGIN3_CFLAGS) $(WIN32_PIDGIN3_LDFLAGS)
+libteams3-personal.dll: $(PURPLE_C_FILES)
+	$(WIN32_CC) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(WIN32_PIDGIN3_CFLAGS) $(WIN32_PIDGIN3_LDFLAGS)
 
 install: $(TEAMS_TARGET) install-icons
 	mkdir -m $(DIR_PERM) -p $(TEAMS_DEST)

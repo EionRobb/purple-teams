@@ -20,6 +20,7 @@
 #define TEAMS_MESSAGES_H
 
 #include "libteams.h"
+#include "teams_connection.h"
 
 gint teams_send_im(PurpleConnection *pc, 
 #if PURPLE_VERSION_CHECK(3, 0, 0)
@@ -45,6 +46,7 @@ void teams_process_event_message(TeamsAccount *sa, JsonObject *message);
 void teams_poll(TeamsAccount *sa);
 void teams_get_registration_token(TeamsAccount *sa);
 void teams_subscribe(TeamsAccount *sa);
+void teams_subscribe_with_callback(TeamsAccount *sa, TeamsProxyCallbackFunc callback);
 void teams_get_vdms_token(TeamsAccount *sa);
 void teams_chat_kick(PurpleConnection *pc, int id, const char *who);
 void teams_chat_invite(PurpleConnection *pc, int id, const char *message, const char *who);

@@ -364,6 +364,7 @@ teams_login(PurpleAccount *account)
 	PurpleConnection *pc = purple_account_get_connection(account);
 	TeamsAccount *sa = g_new0(TeamsAccount, 1);
 	PurpleConnectionFlags flags;
+	const gchar *tenant;
 	const gchar *password = purple_connection_get_password(pc);
 	
 	purple_connection_set_protocol_data(pc, sa);
@@ -387,7 +388,11 @@ teams_login(PurpleAccount *account)
 	purple_http_keepalive_pool_set_limit_per_host(sa->keepalive_pool, TEAMS_MAX_CONNECTIONS);
 	sa->conns = purple_http_connection_set_new();
 	
-	const gchar *tenant = purple_account_get_string(account, "tenant", NULL);
+#ifdef ENABLE_TEAMS_PERSONAL
+	tenant = TEAMS_PERSONAL_TENANT_ID;
+#else
+	tenant = purple_account_get_string(account, "tenant", NULL);
+#endif // ENABLE_TEAMS_PERSONAL
 	if (tenant != NULL) {
 		sa->tenant = g_strdup(tenant);
 	}
@@ -624,7 +629,7 @@ teams_cmd_call(PurpleConversation *conv, const gchar *cmd, gchar **args, gchar *
 	if (!convname)
 		return PURPLE_CMD_RET_FAILED;
 	
-	gchar *message = g_strconcat("https://teams.microsoft.com/l/meetup-join/", purple_url_encode(convname), "/0", NULL);
+	gchar *message = g_strconcat("https://" TEAMS_BASE_ORIGIN_HOST "/l/meetup-join/", purple_url_encode(convname), "/0", NULL);
 	
 	PurpleMessage *msg = purple_message_new_system(message, 0);
 	purple_conversation_write_message(conv, msg);
@@ -834,8 +839,10 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	prpl_info->icon_spec = &icon_spec;
 #endif
 	
+#ifndef ENABLE_TEAMS_PERSONAL
 	opt = purple_account_option_string_new(_("Tenant"), "tenant", "");
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+#endif
 	
 	opt = purple_account_option_bool_new(_("Set global status"), "set-global-status", TRUE);
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
@@ -1028,19 +1035,10 @@ teams_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
 	plugin->info = info;
 
 #ifdef ENABLE_TEAMS_PERSONAL
-	// Jam the Teams for Personal in there too
-	PurplePlugin *plugin2 = purple_plugin_new(TRUE, NULL);
-	plugin2->info = g_memdup2(info, sizeof(PurplePluginInfo));
-	plugin2->info->id = TEAMS_PERSONAL_PLUGIN_ID;
-	plugin2->info->name = "Teams (Personal)";
-	plugin2->info->load = NULL;
-	plugin2->info->unload = NULL;
-	PurplePluginProtocolInfoExt *prpl_info2 = g_memdup2(prpl_info, sizeof(PurplePluginProtocolInfoExt));
-	prpl_info2->parent.protocol_options = NULL;
-	prpl_info2->parent.list_icon = teams_personal_list_icon;
-	plugin2->info->extra_info = prpl_info2;
-	purple_plugin_register(plugin2);
-#endif /* ENABLE_TEAMS_PERSONAL */
+	plugin->info->id = TEAMS_PERSONAL_PLUGIN_ID;
+	plugin->info->name = "Teams (Personal)";
+	prpl_info->list_icon = teams_personal_list_icon;
+#endif // ENABLE_TEAMS_PERSONAL
 
 #endif
 	
