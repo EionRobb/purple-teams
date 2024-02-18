@@ -63,6 +63,7 @@ jobs:
           export WIN32_DEV_TOP=win32-dev
           export PIDGIN_TREE_TOP=pidgin
           make libteams.dll
+          make libteams-personal.dll
 
       - name: archive
         if: ${{ !env.ACT }}
