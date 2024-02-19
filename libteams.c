@@ -53,8 +53,14 @@ teams_do_all_the_things(TeamsAccount *sa)
 		teams_get_offline_history(sa);
 
 		teams_set_status(sa->account, purple_account_get_active_status(sa->account));
+		teams_idle_update(sa);
+		if (sa->idle_timeout) 
+			g_source_remove(sa->idle_timeout);
+		sa->idle_timeout = g_timeout_add_seconds(120, (GSourceFunc)teams_idle_update, sa);
 
 		teams_check_calendar(sa);
+		if (sa->calendar_poll_timeout) 
+			g_source_remove(sa->calendar_poll_timeout);
 		sa->calendar_poll_timeout = g_timeout_add_seconds(TEAMS_CALENDAR_REFRESH_MINUTES * 60, (GSourceFunc)teams_check_calendar, sa);
 	} else {
 		//Too soon!
@@ -434,6 +440,7 @@ teams_close(PurpleConnection *pc)
 	g_source_remove(sa->poll_timeout);
 	g_source_remove(sa->watchdog_timeout);
 	g_source_remove(sa->refresh_token_timeout);
+	g_source_remove(sa->idle_timeout);
 	g_source_remove(sa->login_device_code_expires_timeout);
 	g_source_remove(sa->login_device_code_timeout);
 

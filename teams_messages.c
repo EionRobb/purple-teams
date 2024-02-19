@@ -2061,6 +2061,7 @@ teams_set_endpoint_statusid(TeamsAccount *sa, const gchar *status)
 	// 	"availability": "Available",
 	// 	"activity": "Available",
 	// 	"activityReporting": "Transport",
+	//	"capabilities": ["Audio", "Video"],
 	// 	"deviceType": "Desktop"
 	// }
 	post = g_strdup_printf("{\"id\":\"%s\",\"availability\":\"%s\",\"deviceType\":\"Desktop\"}", sa->endpoint, status);
@@ -2097,11 +2098,33 @@ teams_set_idle(PurpleConnection *pc, int time)
 	}
 	
 	post = g_strdup_printf("{\"endpointId\":\"%s\",\"isActive\":%s}", sa->endpoint, is_active ? "true" : "false");
+	//TODO check if it's a 404 response and recreate the endpoint (by resetting the availability) if it's gone
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/reportmyactivity/", post, NULL, NULL, TRUE);
 	g_free(post);
 
 	// send isactive on trouter if it's connected
 	teams_trouter_send_active(sa, is_active);
+}
+
+gboolean
+teams_idle_update(TeamsAccount *sa)
+{
+	PurplePresence *presence;
+	gboolean is_idle;
+
+	if (sa == NULL) {
+		return FALSE;
+	}
+
+	if (!PURPLE_IS_CONNECTION(sa->pc) || purple_connection_get_state(sa->pc) != PURPLE_CONNECTED) {
+		return FALSE;
+	}
+
+	presence = purple_account_get_presence(sa->account);
+	is_idle = purple_presence_is_idle(presence);
+	teams_set_idle(sa->pc, is_idle ? 30 : 0);
+
+	return TRUE;
 }
 
 

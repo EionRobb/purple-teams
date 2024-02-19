@@ -186,6 +186,7 @@ struct _TeamsAccount {
 	
 	guint authcheck_timeout;
 	time_t last_authrequest;
+	guint idle_timeout;
 	
 	//old skypeweb
 	gchar *skype_token;

@@ -39,6 +39,8 @@ const gchar *message, PurpleMessageFlags flags
 );
 
 void teams_set_idle(PurpleConnection *pc, int time);
+gboolean teams_idle_update(TeamsAccount *sa);
+
 void teams_set_status(PurpleAccount *account, PurpleStatus *status);
 guint teams_conv_send_typing(PurpleConversation *conv, PurpleIMTypingState state);
 guint teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState state);
