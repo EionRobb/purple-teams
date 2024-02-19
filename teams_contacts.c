@@ -1226,6 +1226,7 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 void
 teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 {
+	//TODO users/fetch?isMailAddress=false&skypeTeamsInfo=true&includeIBBarredUsers=true
 	const gchar *profiles_url = TEAMS_PROFILES_PREFIX "users/fetchShortProfile?isMailAddress=false&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true";
 	const gchar *federated_profiles_url = TEAMS_PROFILES_PREFIX "users/fetchFederated";
 	GString *postdata;
@@ -1362,6 +1363,8 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 	
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, teams_got_info, g_strdup(username), TRUE);
 	
+	//TODO users/fetch?isMailAddress=false&skypeTeamsInfo=true&includeIBBarredUsers=true
+
 	g_free(postdata);
 
 	//TODO deleted users
@@ -2189,6 +2192,7 @@ teams_buddy_block(PurpleConnection *pc, const char *name)
 	gchar *url;
 	const gchar *postdata;
 	
+	//TODO /api/mt/beta/usersettings/blocklist
 	url = g_strdup_printf("/contacts/v2/users/SELF/contacts/blocklist/%s%s", teams_user_url_prefix(name), purple_url_encode(name));
 	postdata = "{\"report_abuse\":\"false\",\"ui_version\":\"skype.com\"}";
 	
@@ -2203,6 +2207,7 @@ teams_buddy_unblock(PurpleConnection *pc, const char *name)
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *url;
 	
+	//TODO /api/mt/beta/usersettings/blocklist
 	url = g_strdup_printf("/contacts/v2/users/SELF/contacts/blocklist/%s%s", teams_user_url_prefix(name), purple_url_encode(name));
 	
 	teams_post_or_get(sa, TEAMS_METHOD_DELETE | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST, url, NULL, NULL, NULL, TRUE);
