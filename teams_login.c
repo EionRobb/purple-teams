@@ -280,14 +280,14 @@ teams_oauth_refreshed_skypetoken_access(PurpleHttpConnection *http_conn, PurpleH
 	raw_response = purple_http_response_get_data(response, &response_len);
 	obj = json_decode_object(raw_response, response_len);
 
-	if (purple_http_response_is_successful(response) && obj)
-	{
-		const gchar *id_token = json_object_get_string_member(obj, "access_token");
-		
-		teams_login_get_api_skypetoken(sa, NULL, NULL, id_token);
-	}
 	if (obj)
 	{
+		if (purple_http_response_is_successful(response))
+		{
+			const gchar *id_token = json_object_get_string_member(obj, "access_token");
+			
+			teams_login_get_api_skypetoken(sa, NULL, NULL, id_token);
+		}
 		json_object_unref(obj);
 	}
 }
