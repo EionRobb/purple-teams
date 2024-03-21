@@ -169,6 +169,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 					
 					json_node_set_array(presences_node, presences);
 					teams_got_contact_statuses(sa, presences_node, NULL);
+					json_node_free(presences_node);
 				}
 
 			} else if (g_str_has_suffix(request_url, "/messaging")) {

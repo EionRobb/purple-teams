@@ -286,6 +286,10 @@ teams_oauth_refreshed_skypetoken_access(PurpleHttpConnection *http_conn, PurpleH
 		
 		teams_login_get_api_skypetoken(sa, NULL, NULL, id_token);
 	}
+	if (obj)
+	{
+		json_object_unref(obj);
+	}
 }
 
 static void
