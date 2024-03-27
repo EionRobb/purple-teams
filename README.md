@@ -35,14 +35,17 @@ Download from [GitHub Actions](https://nightly.link/EionRobb/purple-teams/workfl
 
 Compiling
 =========
-You'll need libjson-glib-dev, libpurple-dev and glib-2.0-dev packages from your distro, then simply
+Using debian bookworm (xfce4)
 ```
+sudo apt install pidgin
+sudo apt install libjson-glib-dev libpurple-dev libglib2.0-dev
 git clone https://github.com/EionRobb/purple-teams
 cd purple-teams
 make
 sudo make install
+cp libteams.so libteams-personal.so ~/.purple/plugins
 ```
-to install.
+Now you can launch pidgin and enable the plugin!
 
 [![Latest Linux build](https://github.com/EionRobb/purple-teams/actions/workflows/linux.yml/badge.svg)](https://github.com/EionRobb/purple-teams/actions/workflows/linux.yml)
 
