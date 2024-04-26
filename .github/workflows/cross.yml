@@ -16,7 +16,7 @@ jobs:
 
       - name: Load Pidgin from cache
         id: pidgin-cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: pidgin
           key: pidgin-2.14.1
@@ -33,7 +33,7 @@ jobs:
       
       - name: Load Win32 deps from cache
         id: win32-cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: win32-dev
           key: win32-dev
