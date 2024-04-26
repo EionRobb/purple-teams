@@ -2050,8 +2050,13 @@ static void
 teams_set_endpoint_statusid(TeamsAccount *sa, const gchar *status)
 {
 	gchar *post;
+	PurplePresence *presence;
+	const gchar *activity;
 	
 	g_return_if_fail(status);
+
+	presence = purple_account_get_presence(sa->account);
+	activity = purple_presence_is_idle(presence) ? "Away" : "Available";
 
 	// This lets the 'reportmyactivity' idle/active endpoint work
 	// and sets our status only on this endpoint
@@ -2064,7 +2069,7 @@ teams_set_endpoint_statusid(TeamsAccount *sa, const gchar *status)
 	//	"capabilities": ["Audio", "Video"],
 	// 	"deviceType": "Desktop"
 	// }
-	post = g_strdup_printf("{\"id\":\"%s\",\"availability\":\"%s\",\"deviceType\":\"Desktop\"}", sa->endpoint, status);
+	post = g_strdup_printf("{\"id\":\"%s\",\"availability\":\"%s\",\"activity\":\"%s\",\"activityReporting\":\"Transport\",\"deviceType\":\"Desktop\"}", sa->endpoint, status, activity);
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/endpoints/", post, NULL, NULL, TRUE);
 	g_free(post);
 }
