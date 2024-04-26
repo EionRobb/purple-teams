@@ -433,7 +433,10 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 	json_object_set_string_member(clientDescription, "languageId", "en-US");
 	json_object_set_string_member(clientDescription, "platform", "edge");
 	json_object_set_string_member(clientDescription, "templateKey", templateKey);
-	json_object_set_string_member(clientDescription, "platformUIVersion", "49/24033101817");
+	json_object_set_string_member(clientDescription, "platformUIVersion", TEAMS_CLIENTINFO_VERSION);
+#ifdef ENABLE_TEAMS_PERSONAL
+	json_object_set_string_member(clientDescription, "productContext", "TFL");
+#endif
 
 	json_object_set_string_member(trouter_obj, "context", "");
 	json_object_set_string_member(trouter_obj, "path", path);
@@ -507,7 +510,7 @@ teams_trouter_register(gpointer user_data)
 	teams_subscribe_with_callback(sa, NULL);
 
 	gchar *ngc_path = g_strconcat(sa->trouter_surl, "NGCallManagerWin", NULL);
-	teams_trouter_register_one(sa, "NextGenCalling", "DesktopNgc_2.3:SkypeNgc", sa->trouter_surl);
+	teams_trouter_register_one(sa, "NextGenCalling", "DesktopNgc_2.3:SkypeNgc", ngc_path);
 	g_free(ngc_path);
 
 	gchar *ssw_path = g_strconcat(sa->trouter_surl, "SkypeSpacesWeb", NULL);
@@ -563,7 +566,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 		g_string_append_printf(url, "%s=%s&", key, purple_url_encode(value));
 	}
 	g_list_free(list);
-	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"49/23111630013\"}"));
+	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"" TEAMS_CLIENTINFO_VERSION "\"}"));
 	g_string_append_printf(url, "con_num=%" G_GINT64_FORMAT "_%d&", 1234567890123, 1); //TODO sa->trouter_count++
 	const gchar *ccid = json_object_get_string_member(obj, "ccid");
 	if (ccid != NULL) {
