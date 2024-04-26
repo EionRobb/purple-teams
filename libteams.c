@@ -793,7 +793,7 @@ PurpleConnection *pc
 	GList *m = NULL;
 	PurpleProtocolAction *act;
 
-	act = purple_protocol_action_new(_("Search for friends..."), teams_search_users);
+	act = purple_protocol_action_new(_("Search for Teams Contacts"), teams_search_users);
 	m = g_list_append(m, act);
 
 	return m;

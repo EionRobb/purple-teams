@@ -1113,7 +1113,7 @@ teams_search_users_text_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	
 	if (results == NULL || length == 0)
 	{
-		gchar *primary_text = g_strdup_printf("Your search for the user \"%s\" returned no results", search_term);
+		gchar *primary_text = g_strdup_printf(_("Your search for the user \"%s\" returned no results"), search_term);
 		purple_notify_warning(sa->pc, _("No users found"), primary_text, "", purple_request_cpar_from_connection(sa->pc));
 		g_free(primary_text);
 		g_free(search_term);
@@ -1128,6 +1128,11 @@ teams_search_users_text(gpointer user_data, const gchar *text)
 {
 	TeamsAccount *sa = user_data;
 	const gchar *url = TEAMS_PROFILES_PREFIX "users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
+	//https://teams.microsoft.com/api/mt/part/au-01/beta/users/emailaddressgoeshere@example.com/externalsearchv3?includeTFLUsers=true
+	//https://substrate.office.com/search/api/v1/suggestions?scenario=peoplepicker.addToChat&setflight=ServeEdContactsFromEdShards
+
+	//https://teams.live.com/api/mt/beta/users/searchUsers
+	// {"emails":["emailaddressgoeshere@example.com"],"phones":[]}
 	
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, text, teams_search_users_text_cb, g_strdup(text), TRUE);
 	
@@ -1139,8 +1144,8 @@ teams_search_users(PurpleProtocolAction *action)
 	PurpleConnection *pc = purple_protocol_action_get_connection(action);
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	
-	purple_request_input(pc, "Search for Teams Contacts",
-					   "Search for Teams Contacts",
+	purple_request_input(pc, _("Search for Teams Contacts"),
+					   _("Search for Teams Contacts"),
 					   NULL,
 					   NULL, FALSE, FALSE, NULL,
 					   _("_Search"), G_CALLBACK(teams_search_users_text),
@@ -1868,7 +1873,8 @@ teams_get_friend_list(TeamsAccount *sa)
 	const gchar *url = TEAMS_PROFILES_PREFIX "users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
 	
 	//TODO
-	// get tenants: https://teams.microsoft.com/api/mt/apac/beta/users/tenants
+	// get tenants: https://teams.microsoft.com/api/mt/apac/beta/users/tenants or https://teams.microsoft.com/api/mt/part/au-01/beta/users/tenantsv2
+	// https://teams.microsoft.com/api/mt/part/au-01/beta/contactsv3/?pageSize=500
 	
 	// Do a search for all users with . in their email addresses - doesn't work for Guests
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, ".", teams_get_friend_list_cb, NULL, TRUE);
