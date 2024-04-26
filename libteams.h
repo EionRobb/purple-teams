@@ -217,6 +217,8 @@ struct _TeamsAccount {
 	gchar *trouter_surl;
 	guint trouter_ping_timeout;
 	guint trouter_command_count;
+	guint trouter_registration_timeout;
+	JsonObject *trouter_socket_obj;
 
 	//devicecode login
 	gchar *login_device_code;

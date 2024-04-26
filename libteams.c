@@ -443,6 +443,7 @@ teams_close(PurpleConnection *pc)
 	g_source_remove(sa->idle_timeout);
 	g_source_remove(sa->login_device_code_expires_timeout);
 	g_source_remove(sa->login_device_code_timeout);
+	// Trouter timeouts handled in teams_trouter_stop()
 
 	teams_logout(sa);
 	
