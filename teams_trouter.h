@@ -25,6 +25,7 @@
 void teams_trouter_begin(TeamsAccount *sa);
 void teams_trouter_stop(TeamsAccount *sa);
 gboolean teams_trouter_send_message(TeamsAccount *sa, const gchar *message);
+gboolean teams_trouter_send_ephemeral_message(TeamsAccount *sa, const gchar *message);
 void teams_trouter_send_active(TeamsAccount *sa, gboolean active);
 
 #endif /*TEAMS_TROUTER_H*/

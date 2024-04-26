@@ -1853,23 +1853,29 @@ teams_subscribe_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
 	JsonObject *obj = json_node_get_object(node);
 	JsonArray *subscriptions = json_object_get_array_member(obj, "subscriptions");
+	guint i, len;
 	
 	if (subscriptions != NULL) {
-		JsonObject *sub = json_array_get_object_element(subscriptions, 0);
-		if (sub != NULL) {
-			// TODO check channelType is HttpLongPoll
-			const gchar *longpollurl = json_object_get_string_member(sub, "longPollUrl");
-			gchar *next_server = teams_string_get_chunk(longpollurl, -1, "https://", "/users");
-			
-			if (next_server != NULL) {
-				g_free(sa->messages_host);
-				sa->messages_host = next_server;
-			}
-			
-			gchar *cursor = teams_string_get_chunk(longpollurl, -1, "?cursor=", NULL);
-			if (cursor != NULL) {
-				g_free(sa->messages_cursor);
-				sa->messages_cursor = cursor;
+		len = json_array_get_length(subscriptions);
+		for(i = 0; i < len; i++) {
+			JsonObject *sub = json_array_get_object_element(subscriptions, i);
+
+			const gchar * channelType = json_object_get_string_member(sub, "channelType");
+			if (purple_strequal(channelType, "HttpLongPoll")) {
+				// We have a longpoll url
+				const gchar *longpollurl = json_object_get_string_member(sub, "longPollUrl");
+				gchar *next_server = teams_string_get_chunk(longpollurl, -1, "https://", "/users");
+				
+				if (next_server != NULL) {
+					g_free(sa->messages_host);
+					sa->messages_host = next_server;
+				}
+				
+				gchar *cursor = teams_string_get_chunk(longpollurl, -1, "?cursor=", NULL);
+				if (cursor != NULL) {
+					g_free(sa->messages_cursor);
+					sa->messages_cursor = cursor;
+				}
 			}
 		}
 	}
@@ -1906,6 +1912,7 @@ teams_subscribe_with_callback(TeamsAccount *sa, TeamsProxyCallbackFunc callback)
 	if (sa->trouter_surl != NULL) {
 		JsonObject *trouter_sub = json_object_new();
 		json_object_set_string_member(trouter_sub, "channelType", "TrouterPush");
+		json_object_set_string_member(trouter_sub, "longPollUrl", sa->trouter_surl);
 		json_object_set_array_member(trouter_sub, "interestedResources", json_array_ref(interested));
 		json_array_add_object_element(subscriptions, trouter_sub);
 	}
@@ -1913,7 +1920,14 @@ teams_subscribe_with_callback(TeamsAccount *sa, TeamsProxyCallbackFunc callback)
 	post = teams_jsonobj_to_string(obj);
 
 	if (!sa->endpoint) {
-		sa->endpoint = purple_uuid_random();
+		// Prevent running out of endpoints aka "Endpoint limit exceeded"
+		const gchar *endpoint = purple_account_get_string(sa->account, "endpoint", NULL);
+		if (!endpoint || !*endpoint) {
+			sa->endpoint = purple_uuid_random();
+			purple_account_set_string(sa->account, "endpoint", sa->endpoint);
+		} else {
+			sa->endpoint = g_strdup(endpoint);
+		}
 	}
 
 	gchar *url = g_strdup_printf("/v2/users/ME/endpoints/%s", purple_url_encode(sa->endpoint));
