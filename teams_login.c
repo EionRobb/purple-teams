@@ -734,6 +734,10 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		purple_notify_uri(sa->pc, verification_url);
 		purple_notify_message(sa->pc, PURPLE_NOTIFY_MSG_INFO, _("Authorization Code"),
 			message, NULL, NULL, NULL);
+
+		if (g_strcmp0(purple_core_get_ui(), "spectrum") == 0) {
+			purple_serv_got_im(sa->pc, "TeamsLogin", message, PURPLE_MESSAGE_RECV, time(NULL));
+		}
 		
 		g_free(message);
 		
