@@ -114,6 +114,7 @@
 
 #define TEAMS_CALENDAR_REFRESH_MINUTES 15
 #define TEAMS_MAX_MSG_RETRY 2
+#define TEAMS_MAX_PROCESSED_EVENT_BUFFER 10
 
 #define TEAMS_PLUGIN_ID "prpl-eionrobb-msteams"
 #define TEAMS_PLUGIN_VERSION "1.0"
@@ -216,6 +217,7 @@ struct _TeamsAccount {
 	guint friend_list_poll_timeout;
 	GHashTable *calendar_reminder_timeouts;
 	guint calendar_poll_timeout;
+	GQueue *processed_event_messages;
 	
 	struct _PurpleWebsocket *trouter_socket;
 	gchar *trouter_surl;

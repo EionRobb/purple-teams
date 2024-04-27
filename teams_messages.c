@@ -1193,7 +1193,20 @@ void
 teams_process_event_message(TeamsAccount *sa, JsonObject *message)
 {
 	const gchar *resourceType = json_object_get_string_member(message, "resourceType");
+	const gchar *time = json_object_get_string_member(message, "time");
 	JsonObject *resource = json_object_get_object_member(message, "resource");
+
+	if (time != NULL) {
+		if (g_queue_find_custom(sa->processed_event_messages, time, (GCompareFunc) g_strcmp0)) {
+			// Already processed this message
+			return;
+		}
+		g_queue_push_head(sa->processed_event_messages, g_strdup(time));
+		if (g_queue_get_length(sa->processed_event_messages) > TEAMS_MAX_PROCESSED_EVENT_BUFFER) {
+			// Remove oldest message
+			g_queue_pop_tail(sa->processed_event_messages);
+		}
+	}
 	
 	if (purple_strequal(resourceType, "NewMessage"))
 	{

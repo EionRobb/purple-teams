@@ -393,6 +393,7 @@ teams_login(PurpleAccount *account)
 	sa->keepalive_pool = purple_http_keepalive_pool_new();
 	purple_http_keepalive_pool_set_limit_per_host(sa->keepalive_pool, TEAMS_MAX_CONNECTIONS);
 	sa->conns = purple_http_connection_set_new();
+	sa->processed_event_messages = g_queue_new();
 	
 #ifdef ENABLE_TEAMS_PERSONAL
 	tenant = TEAMS_PERSONAL_TENANT_ID;
@@ -474,6 +475,13 @@ teams_close(PurpleConnection *pc)
 		}
 		convs = g_list_next(convs);
 	}
+
+	// Don't use g_queue_free_full() since that's too-new for Windows
+	while (!g_queue_is_empty(sa->processed_event_messages)) {
+		gpointer event_message = g_queue_pop_head(sa->processed_event_messages);
+		g_free(event_message);
+	}
+	g_queue_free(sa->processed_event_messages);
 	
 	g_hash_table_destroy(sa->sent_messages_hash);
 	g_hash_table_destroy(sa->buddy_to_chat_lookup);
