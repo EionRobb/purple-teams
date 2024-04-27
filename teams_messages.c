@@ -1020,15 +1020,15 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		const gchar *id = json_object_get_string_member(resource, "id");
 		
 		g_free(purple_conversation_get_data(conv, "last_teams_id"));
+		g_free(purple_conversation_get_data(conv, "last_teams_clientmessageid"));
 		
 		if (purple_conversation_has_focus(conv) && convname && *convname) {
 			// Mark message as seen straight away
 			gchar *post, *url;
 			
-			//TODO
 			url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
 			// Should be [messageId];[timestampInMillis];[clientMessageId]
-			post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", id ? id : "", teams_get_js_time(), id ? id : "");
+			post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", id ? id : "", teams_get_js_time(), clientmessageid ? clientmessageid : "");
 			
 			teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
 			
@@ -1036,8 +1036,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			g_free(url);
 			
 			purple_conversation_set_data(conv, "last_teams_id", NULL);
+			purple_conversation_set_data(conv, "last_teams_clientmessageid", NULL);
 		} else {
 			purple_conversation_set_data(conv, "last_teams_id", g_strdup(id));
+			purple_conversation_set_data(conv, "last_teams_clientmessageid", g_strdup(clientmessageid));
 		}
 	}
 	
@@ -1360,6 +1362,7 @@ teams_mark_conv_seen(PurpleConversation *conv, PurpleConversationUpdateType type
 	
 	if (type == PURPLE_CONVERSATION_UPDATE_UNSEEN) {
 		gchar *last_teams_id = purple_conversation_get_data(conv, "last_teams_id");
+		gchar *last_teams_clientmessageid = purple_conversation_get_data(conv, "last_teams_clientmessageid");
 		
 		if (last_teams_id && *last_teams_id) {
 			TeamsAccount *sa = purple_connection_get_protocol_data(pc);
@@ -1375,18 +1378,20 @@ teams_mark_conv_seen(PurpleConversation *conv, PurpleConversationUpdateType type
 			if (convname && *convname) {
 				url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
 				// Should be [messageId];[timestampInMillis];[clientMessageId]
-				post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", last_teams_id, teams_get_js_time(), last_teams_id);
+				post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", last_teams_id, teams_get_js_time(), last_teams_clientmessageid);
 				
 				teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
 				
 				g_free(convname);
 				g_free(post);
 				g_free(url);
-			
 			}
-			g_free(last_teams_id);
-			purple_conversation_set_data(conv, "last_teams_id", NULL);
 		}
+
+		g_free(last_teams_id);
+		g_free(last_teams_clientmessageid);
+		purple_conversation_set_data(conv, "last_teams_id", NULL);
+		purple_conversation_set_data(conv, "last_teams_clientmessageid", NULL);
 	}
 }
 

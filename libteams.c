@@ -471,6 +471,7 @@ teams_close(PurpleConnection *pc)
 		PurpleConversation *conv = convs->data;
 		if(purple_conversation_get_account(conv) == sa->account) {
 			g_free(purple_conversation_get_data(conv, "last_teams_id"));
+			g_free(purple_conversation_get_data(conv, "last_teams_clientmessageid"));
 			g_free(purple_conversation_get_data(conv, "chatname"));
 		}
 		convs = g_list_next(convs);

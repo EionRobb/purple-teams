@@ -644,7 +644,7 @@ teams_trouter_info_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respo
 		g_string_append_printf(url, "%s=%s&", key, purple_url_encode(value));
 	}
 	g_list_free(list);
-	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"49/23111630013\"}"));
+	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"" TEAMS_CLIENTINFO_VERSION "\"}"));
 	g_string_append_printf(url, "con_num=%" G_GINT64_FORMAT "_%d&", 1234567890123, 1);
 	const gchar *ccid = json_object_get_string_member(obj, "ccid");
 	if (ccid != NULL) {
