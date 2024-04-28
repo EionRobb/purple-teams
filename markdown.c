@@ -19,15 +19,18 @@
 #include <string.h>
 #include "markdown.h"
 
+// Define here so as to not need to include all of libpurple
+gchar *purple_strreplace(const char *string, const char *delimiter, const char *replacement);
+
 /* Markdown test string:
  *
  * "<--- \o/ **¯\_(ツ)_/¯**  _italics_ __underline__ *correction right* *italics2* ~~strikethrough~~ ~notstriked~ ~me https://pidgin.im <style>body{background-color:red}</script> &lt;style&gt;body{background-color: red}&lt;/style&gt; <b>notbold</b> &lt;notatag&gt;"
  *
  * Checks for:
  * 	- Correct escaping of lt/gt signs
- * 	- Aesthetically correct (but non-comformant) handling of escape sequences as found in backslash-containing emoticons
+ * 	- Aesthetically correct (but non-conformant) handling of escape sequences as found in backslash-containing emoticons
  * 	- Exhaustive test of syntaxes for italics, underline, strikethrough
- * 	- Correct escaping for XSS rsisk
+ * 	- Correct escaping for XSS risk
  *
  * Does not check for (open issues):
  * 	- Italicised shruggie
@@ -143,7 +146,8 @@ markdown_convert_markdown(const gchar *html, gboolean escape_html, gboolean disc
 	gboolean s_codebit = FALSE;
 	gboolean s_spoiler = FALSE;
 
-	for (guint i = 0; i < html_len; ++i) {
+	guint i;
+	for (i = 0; i < html_len; ++i) {
 		char c = html[i];
 
 		if ((s_codeblock || s_codebit) && c != '`') {
@@ -302,7 +306,8 @@ markdown_escape_md(const gchar *markdown, gboolean discord_hacks)
 	gboolean code_block = FALSE;
 	gboolean link = FALSE;
 
-	for (guint i = 0; i < markdown_len; ++i) {
+	guint i;
+	for (i = 0; i < markdown_len; ++i) {
 		char c = markdown[i];
 
 		if (c == '`') {

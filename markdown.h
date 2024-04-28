@@ -20,7 +20,6 @@
 #ifndef __MARKDOWN_H
 #define __MARKDOWN_H
 
-#include <purple.h>
 #include <glib.h>
 
 gchar *markdown_convert_markdown(const gchar *html, gboolean escape_html, gboolean markdown_hacks);

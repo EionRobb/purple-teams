@@ -22,6 +22,7 @@
 #include "teams_contacts.h"
 #include "teams_login.h"
 #include "teams_trouter.h"
+#include "teams_cards.h"
 
 static GString* make_last_timestamp_setting(const gchar *convname) {
 	GString *rv = g_string_new(NULL);
@@ -328,11 +329,41 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			PurpleChatUserFlags cbflags;
 			PurpleChatUser *cb; 
 			
+			from = teams_contact_url_to_name(from);
+			if (from == NULL) {
+				g_free(messagetype_parts);
+				g_return_if_reached();
+				return;
+			}
+
+			// Hard reset cbflags even if user changed settings while someone typing message.
+			cb = purple_chat_conversation_find_user(chatconv, from);
+			if (cb != NULL) {
+				cbflags = purple_chat_user_get_flags(cb);
+				
+				cbflags &= ~PURPLE_CHAT_USER_TYPING;
+				
+				purple_chat_user_set_flags(cb, cbflags);
+			
+			} else {
+				purple_chat_conversation_add_user(chatconv, from, NULL, PURPLE_CHAT_USER_NONE, FALSE);
+				cb = purple_chat_conversation_find_user(chatconv, from);
+			}
+
+			if (json_object_has_member(resource, "imdisplayname") || json_object_has_member(resource, "imDisplayName")) {
+				const gchar *displayname = json_object_get_string_member(resource, "imdisplayname");
+				if (displayname == NULL) {
+					displayname = json_object_get_string_member(resource, "imDisplayName");
+				}
+				
+				if (cb && displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
+					purple_chat_user_set_alias(cb, displayname);
+				}
+			}
+			
 			if (g_str_equal(messagetype, "RichText/UriObject")) {
 				PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
 				const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");
-				
-				from = teams_contact_url_to_name(from);
 				
 				if (from && *from) {
 					teams_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
@@ -352,16 +383,38 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					const gchar *swift_b64 = purple_xmlnode_get_attrib(swift, "b64");
 					gsize swift_b64_len;
 					guchar *swift_data = purple_base64_decode(swift_b64, &swift_b64_len);
+					JsonObject *swift_json = json_decode_object((const gchar *)swift_data, swift_b64_len);
+					JsonArray *swift_attachments = json_object_get_array_member(swift_json, "attachments");
+					guint i, len = json_array_get_length(swift_attachments);
+
+					//Process JSON blob of a Card into something vaguely HTML
 					
-					from = teams_contact_url_to_name(from);
-					html = purple_markup_escape_text((gchar *)swift_data, swift_b64_len);
+					if (swift_json == NULL || swift_attachments == NULL) {
+						// Couldn't process, dump the raw data
+						html = purple_markup_escape_text((gchar *)swift_data, swift_b64_len);
+						purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+						g_free(html);
+					} else {
+						for(i = 0; i < len; i++) {
+							JsonObject *attachment = json_array_get_object_element(swift_attachments, i);
+							JsonObject *content = json_object_get_object_member(attachment, "content");
+							const gchar *contentType = json_object_get_string_member(attachment, "contentType");
+
+							html = teams_convert_card_to_html(content, contentType);
+							if (html == NULL) {
+								// Couldn't process or unknown content type, dump the raw data
+								html = teams_jsonobj_to_string(content);
+							}
 					
-					//TODO process JSON blob of a Card into something vaguely HTML
-					purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+							purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+							
+							g_free(html);
+						}
+					}
 					
-					g_free(html);
 					html = NULL;
 					g_free(swift_data);
+					json_object_unref(swift_json);
 					message_processed = TRUE;
 				}
 				
@@ -374,28 +427,6 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			
 			if (json_object_has_member(resource, "skypeemoteoffset")) {
 				skypeemoteoffset = g_ascii_strtoll(json_object_get_string_member(resource, "skypeemoteoffset"), NULL, 10);
-			}
-			
-			from = teams_contact_url_to_name(from);
-			if (from == NULL) {
-				g_free(messagetype_parts);
-				g_return_if_reached();
-				return;
-			}
-			
-			// Hard reset cbflags even if user changed settings while someone typing message.
-			
-			cb = purple_chat_conversation_find_user(chatconv, from);
-			if (cb != NULL) {
-				cbflags = purple_chat_user_get_flags(cb);
-				
-				cbflags &= ~PURPLE_CHAT_USER_TYPING;
-				
-				purple_chat_user_set_flags(cb, cbflags);
-			
-			} else {
-				purple_chat_conversation_add_user(chatconv, from, NULL, PURPLE_CHAT_USER_NONE, FALSE);
-				cb = purple_chat_conversation_find_user(chatconv, from);
 			}
 			
 			if (content && *content) {
@@ -447,17 +478,6 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				} else {
 					html = teams_process_files_in_properties(properties, &html);
 					
-				}
-			}
-			
-			if (json_object_has_member(resource, "imdisplayname") || json_object_has_member(resource, "imDisplayName")) {
-				const gchar *displayname = json_object_get_string_member(resource, "imdisplayname");
-				if (displayname == NULL) {
-					displayname = json_object_get_string_member(resource, "imDisplayName");
-				}
-				
-				if (cb && displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
-					purple_chat_user_set_alias(cb, displayname);
 				}
 			}
 			
@@ -794,7 +814,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 			}
 			
-			if (html != NULL && *html && !purple_strequal(convbuddyname, "48:calllogs")) {
+			if (html != NULL && *html && !purple_strequal(convbuddyname, "48:calllogs") && !purple_strequal(convbuddyname, "48:annotations")) {
 				const gchar *modified_convbuddyname = convbuddyname;
 				//Handle self-send messages
 				if (purple_strequal(convbuddyname, "48:notes")) {
