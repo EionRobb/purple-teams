@@ -180,6 +180,45 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 }
 
 static gchar *
+teams_process_cards_in_properties(JsonObject *properties, gchar **html)
+{
+	if (json_object_has_member(properties, "cards")) {
+		const gchar *cards_str = json_object_get_string_member(properties, "cards");
+		JsonArray *cards = json_decode_array(cards_str, -1);
+		GString *cards_string = g_string_new(NULL);
+		guint i, len = json_array_get_length(cards);
+
+		for(i = 0; i < len; i++) {
+			JsonObject *card = json_array_get_object_element(cards, i);
+			JsonObject *content = json_object_get_object_member(card, "content");
+			const gchar *contentType = json_object_get_string_member(card, "contentType");
+
+			gchar *card_html = teams_convert_card_to_html(content, contentType);
+			if (card_html == NULL) {
+				// Couldn't process or unknown content type, dump the raw data
+				card_html = teams_jsonobj_to_string(card);
+			}
+			g_string_append(cards_string, card_html);
+			g_string_append(cards_string, "<br>");
+			g_free(card_html);
+		}
+		
+		json_array_unref(cards);
+		
+		if (html != NULL) {
+			gchar *temp = g_strconcat(*html ? *html : "", cards_string->str, NULL);
+			g_free(*html);
+			*html = temp;
+		}
+		
+		g_string_free(cards_string, TRUE);
+	}
+	
+	return *html;
+
+}
+
+static gchar *
 teams_clean_chat_name(TeamsAccount *sa, gchar *chatname)
 {
 	PurpleAccount *account = sa->account;
@@ -477,7 +516,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					
 				} else {
 					html = teams_process_files_in_properties(properties, &html);
-					
+					html = teams_process_cards_in_properties(properties, &html);
+
 				}
 			}
 			
@@ -794,6 +834,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				
 				} else {
 					html = teams_process_files_in_properties(properties, &html);
+					html = teams_process_cards_in_properties(properties, &html);
 					
 				}
 			}
