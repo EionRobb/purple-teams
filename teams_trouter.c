@@ -580,7 +580,7 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	purple_debug_info("teams", "Trouter WS URL: %s\n", url->str);
 	
 	// Inject the extra header (hack!)
-	gchar *skypetoken_header = g_strdup_printf("\r\nX-Skypetoken: %s", sa->skype_token);
+	gchar *skypetoken_header = g_strdup_printf("\r\nX-Skypetoken: %s\r\nUser-Agent: " TEAMS_USER_AGENT, sa->skype_token);
 	sa->trouter_socket = purple_websocket_connect(sa->account, url->str, skypetoken_header, teams_trouter_websocket_cb, sa);
 	g_free(skypetoken_header);
 

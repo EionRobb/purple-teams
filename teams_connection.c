@@ -117,6 +117,7 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 #ifdef ENABLE_TEAMS_PERSONAL
 	purple_http_request_header_set(request, "X-MS-Client-Consumer-Type", "teams4life");
 #endif
+	purple_http_request_header_set(request, "User-Agent", TEAMS_USER_AGENT);
 	
 	if (g_str_equal(host, TEAMS_CONTACTS_HOST) || g_str_equal(host, TEAMS_VIDEOMAIL_HOST) || g_str_equal(host, TEAMS_NEW_CONTACTS_HOST)) {
 		purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
@@ -150,9 +151,9 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 			purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
 		}
 		purple_http_request_header_set(request, "Accept", "application/json");
-		purple_http_request_header_set(request, "x-ms-client-user-agent", "Teams-Desktop");
+		purple_http_request_header_set(request, "x-ms-client-user-agent", "Teams-V2-Desktop");
 		purple_http_request_header_set(request, "x-ms-correlation-id", "1");
-		purple_http_request_header_set(request, "x-ms-client-version", "27/1.0.0.2023052414");
+		purple_http_request_header_set(request, "x-ms-client-version", TEAMS_CLIENTINFO_VERSION); 
 		purple_http_request_header_set(request, "x-ms-endpoint-id", sa->endpoint);
 		
 	} else if (g_str_equal(host, "substrate.office.com")) {
