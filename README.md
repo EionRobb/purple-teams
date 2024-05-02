@@ -48,13 +48,11 @@ to install.
 
 ## debian bookworm
 ```
-sudo apt install pidgin
-sudo apt install libjson-glib-dev libpurple-dev libglib2.0-dev
+sudo apt install pidgin libjson-glib-dev libpurple-dev libglib2.0-dev
 git clone https://github.com/EionRobb/purple-teams
 cd purple-teams
 make
 sudo make install
-cp libteams.so libteams-personal.so ~/.purple/plugins
 ```
 Now you can launch pidgin and enable the plugin!
 
