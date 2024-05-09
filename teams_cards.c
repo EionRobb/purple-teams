@@ -152,7 +152,12 @@ teams_adaptive_card_item_to_html(GString *html, JsonObject *item)
         const gchar *weight = json_object_get_string_member(item, "weight");
         const gchar *color = json_object_get_string_member(item, "color");
         const gchar *wrap = json_object_get_string_member(item, "wrap");
+        const gchar *fontType = json_object_get_string_member(item, "fontType");
+        const gchar *separator = json_object_get_string_member(item, "separator");
 
+        if (separator) {
+            g_string_append(html, "<hr />");
+        }
         if (text) {
             gchar *escaped = markdown_convert_markdown(text, TRUE, FALSE);
             GString *style = g_string_new("");
@@ -163,7 +168,23 @@ teams_adaptive_card_item_to_html(GString *html, JsonObject *item)
                 g_string_append_printf(style, "font-weight: %s;", weight);
             }
             if (color) {
+                if (purple_strequal(color, "attention")) {
+                    color = "red";
+                } else if (purple_strequal(color, "good")) {
+                    color = "green";
+                } else if (purple_strequal(color, "warning")) {
+                    color = "orange";
+                } else if (purple_strequal(color, "accent")) {
+                    color = "blue";
+                } else if (purple_strequal(color, "dark")) {
+                    color = "black";
+                } else if (purple_strequal(color, "light")) {
+                    color = "grey";
+                }
                 g_string_append_printf(style, "color: %s;", color);
+            }
+            if (fontType) {
+                g_string_append_printf(style, "font-family: %s;", fontType);
             }
             if (wrap) {
                 g_string_append_printf(style, "white-space: %s;", purple_strequal(wrap, "true") ? "normal" : "nowrap");
@@ -199,6 +220,19 @@ teams_adaptive_card_item_to_html(GString *html, JsonObject *item)
                     g_string_append_printf(style, "font-family: %s;", fontType);
                 }
                 if (color) {
+                    if (purple_strequal(color, "attention")) {
+                        color = "red";
+                    } else if (purple_strequal(color, "good")) {
+                        color = "green";
+                    } else if (purple_strequal(color, "warning")) {
+                        color = "orange";
+                    } else if (purple_strequal(color, "accent")) {
+                        color = "blue";
+                    } else if (purple_strequal(color, "dark")) {
+                        color = "black";
+                    } else if (purple_strequal(color, "light")) {
+                        color = "grey";
+                    }
                     g_string_append_printf(style, "color: %s;", color);
                 }
 
@@ -221,7 +255,7 @@ teams_adaptive_card_item_to_html(GString *html, JsonObject *item)
             //}
 
             //g_string_append_printf(html, "<img src=\"%s\" style=\"%s\" />", url, style->str);
-            g_string_append_printf(html, "Image: %s", url);
+            g_string_append_printf(html, "Image: %s<br/>", url);
             //g_string_free(style, TRUE);
         }
     } else if (purple_strequal(type, "Media")) {

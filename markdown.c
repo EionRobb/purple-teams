@@ -19,9 +19,6 @@
 #include <string.h>
 #include "markdown.h"
 
-// Define here so as to not need to include all of libpurple
-gchar *purple_strreplace(const char *string, const char *delimiter, const char *replacement);
-
 /* Markdown test string:
  *
  * "<--- \o/ **¯\_(ツ)_/¯**  _italics_ __underline__ *correction right* *italics2* ~~strikethrough~~ ~notstriked~ ~me https://pidgin.im <style>body{background-color:red}</script> &lt;style&gt;body{background-color: red}&lt;/style&gt; <b>notbold</b> &lt;notatag&gt;"
@@ -73,14 +70,28 @@ static gboolean
 markdown_is_escapable(char c)
 {
 	switch (c) {
-	case '\\':
-	case '*':
-	case '~':
-	case '_':
-	case '`':
-		return TRUE;
-	default:
-		return FALSE;
+		case '\\':
+		case '*':
+		case '~':
+		case '_':
+		case '`':
+		case '{':
+		case '}':
+		case '[':
+		case ']':
+		case '(':
+		case ')':
+		case '<':
+		case '>':
+		case '#':
+		case '+':
+		case '-':
+		case '.':
+		case '!':
+		case '|':
+			return TRUE;
+		default:
+			return FALSE;
 	}
 }
 
@@ -145,6 +156,9 @@ markdown_convert_markdown(const gchar *html, gboolean escape_html, gboolean disc
 	gboolean s_codeblock = FALSE;
 	gboolean s_codebit = FALSE;
 	gboolean s_spoiler = FALSE;
+	gboolean s_link_url = FALSE;
+	gboolean s_link_text = FALSE;
+	GString *link_text = NULL;
 
 	guint i;
 	for (i = 0; i < html_len; ++i) {
@@ -152,6 +166,40 @@ markdown_convert_markdown(const gchar *html, gboolean escape_html, gboolean disc
 
 		if ((s_codeblock || s_codebit) && c != '`') {
 			out = g_string_append_c(out, html[i]);
+			continue;
+		}
+		if (s_link_url) {
+			if (c == ')') {
+				out = g_string_append(out, "\">");
+				out = g_string_append(out, link_text->str);
+				out = g_string_append(out, "</a>");
+				g_string_free(link_text, TRUE);
+				link_text = NULL;
+				s_link_url = FALSE;
+			} else {
+				out = g_string_append_c(out, c);
+			}
+			continue;
+		}
+		if (s_link_text) {
+			if (c == ']') {
+				if (html[i + 1] == '(') {
+					out = g_string_append(out, "<a href=\"");
+					s_link_url = TRUE;
+					i++;
+				} else {
+					// Unexpected character, probably not a url, just print it
+					out = g_string_append_c(out, '[');
+					out = g_string_append(out, link_text->str);
+					out = g_string_append_c(out, ']');
+					out = g_string_append_c(out, c);
+					g_string_free(link_text, TRUE);
+					link_text = NULL;
+				}
+				s_link_text = FALSE;
+			} else {
+				link_text = g_string_append_c(link_text, c);
+			}
 			continue;
 		}
 
@@ -260,14 +308,25 @@ markdown_convert_markdown(const gchar *html, gboolean escape_html, gboolean disc
 #endif
 				i++;
 			}
+		} else if (c == '[') { //TODO handle ![...](...) as an image url
+			s_link_text = TRUE;
+			link_text = g_string_new("");
+		} else if (c == '\n') {
+			out = g_string_append(out, "<br>");
 		} else {
 			out = g_string_append_c(out, c);
 		}
 	}
 
-	gchar *new_out = purple_strreplace(out->str, "\n", "<br>");
-	g_string_free(out, TRUE);
-	return new_out;
+	if (G_UNLIKELY(link_text != NULL)) {
+		g_warn_if_reached();
+
+		out = g_string_append_c(out, '[');
+		out = g_string_append(out, link_text->str);
+		g_string_free(link_text, TRUE);
+	}
+
+	return g_string_free(out, FALSE);
 }
 
 #define REPLACE_TAG(name, repl) \
