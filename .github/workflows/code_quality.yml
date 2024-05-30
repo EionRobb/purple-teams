@@ -17,13 +17,18 @@ jobs:
       checks: write
     steps:
       - uses: actions/checkout@v4
+        if: ${{ !env.ACT }}
         with:
           ref: ${{ github.event.pull_request.head.sha }}  # to check out the actual pull request commit, not the merge commit
           fetch-depth: 0  # a full history is required for pull request analysis
+      
+      - uses: actions/checkout@v4
+        if: ${{ env.ACT }}
+      
       - name: 'Qodana Scan'
         uses: JetBrains/qodana-action@v2024.1
         with:
           args: 
-            --compile-commands qodana/compile_commands.json
+            '--compile-commands=./qodana/compile_commands.json'
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
