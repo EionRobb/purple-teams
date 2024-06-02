@@ -20,7 +20,6 @@
 #include "teams_util.h"
 #include "teams_connection.h"
 #include "teams_contacts.h"
-#include "teams_login.h"
 #include "teams_trouter.h"
 #include "teams_cards.h"
 
@@ -143,6 +142,10 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 static gchar *
 teams_process_files_in_properties(JsonObject *properties, gchar **html)
 {
+	if (html == NULL) {
+		return NULL;
+	}
+
 	if (json_object_has_member(properties, "files")) {
 		const gchar *files_str = json_object_get_string_member(properties, "files");
 		JsonArray *files = json_decode_array(files_str, -1);
@@ -167,11 +170,9 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 		
 		json_array_unref(files);
 		
-		if (html != NULL) {
-			gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
-			g_free(*html);
-			*html = temp;
-		}
+		gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
+		g_free(*html);
+		*html = temp;
 		
 		g_string_free(files_string, TRUE);
 	}
@@ -182,6 +183,10 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 static gchar *
 teams_process_cards_in_properties(JsonObject *properties, gchar **html)
 {
+	if (html == NULL) {
+		return NULL;
+	}
+
 	if (json_object_has_member(properties, "cards")) {
 		const gchar *cards_str = json_object_get_string_member(properties, "cards");
 		JsonArray *cards = json_decode_array(cards_str, -1);
@@ -205,11 +210,9 @@ teams_process_cards_in_properties(JsonObject *properties, gchar **html)
 		
 		json_array_unref(cards);
 		
-		if (html != NULL) {
-			gchar *temp = g_strconcat(*html ? *html : "", cards_string->str, NULL);
-			g_free(*html);
-			*html = temp;
-		}
+		gchar *temp = g_strconcat(*html ? *html : "", cards_string->str, NULL);
+		g_free(*html);
+		*html = temp;
 		
 		g_string_free(cards_string, TRUE);
 	}
@@ -916,8 +919,6 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			if (!teams_is_user_self(sa, from)) {
 				
 				teams_present_uri_as_filetransfer(sa, uri, from);
-				
-				from = convbuddyname;
 			}
 			purple_xmlnode_free(blob);
 		} else if (g_str_equal(messagetype, "RichText/Media_CallRecording")) {

@@ -23,7 +23,6 @@
 
 #define TEAMS_GUID_REGEX_PATTERN "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
-
 void
 teams_logout(TeamsAccount *sa)
 {
@@ -716,10 +715,16 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		gchar *message;
 
 		if (interval == 0) {
-			interval = atoi(json_object_get_string_member(obj, "interval"));
+			const gchar *interval_str = json_object_get_string_member(obj, "interval");
+			if (interval_str != NULL) {
+				interval = atoi(interval_str);
+			}
 		}
 		if (expires_in == 0) {
-			expires_in = atoi(json_object_get_string_member(obj, "expires_in"));
+			const gchar *expires_in_str = json_object_get_string_member(obj, "expires_in");
+			if (expires_in_str != NULL) {
+				expires_in = atoi(expires_in_str);
+			}
 		}
 		if (verification_url == NULL) {
 			verification_url = json_object_get_string_member(obj, "verification_uri");

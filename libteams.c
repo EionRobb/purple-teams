@@ -17,12 +17,10 @@
  */
 
 #include "libteams.h"
-#include "teams_connection.h"
 #include "teams_contacts.h"
 #include "teams_login.h"
 #include "teams_messages.h"
 #include "teams_util.h"
-#include "purple-websocket.h"
 #include "teams_trouter.h"
 
 void

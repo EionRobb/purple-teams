@@ -76,15 +76,13 @@ teams_trouter_send_authentication(TeamsAccount *sa)
 	JsonArray *args = json_array_new();
 	JsonObject *arg0 = json_object_new();
 	JsonObject *headers = json_object_new();
-	JsonObject *connectparams = json_object_new();
+	JsonObject *connectparams = json_object_get_object_member(sa->trouter_socket_obj, "connectparams");
 
 	json_object_set_string_member(headers, "X-Ms-Test-User", "False");
 	gchar *auth_header = g_strdup_printf("Bearer %s", sa->id_token);
 	json_object_set_string_member(headers, "Authorization", auth_header);
 	g_free(auth_header);
 	json_object_set_string_member(headers, "X-MS-Migration", "True");
-	
-	connectparams = json_object_get_object_member(sa->trouter_socket_obj, "connectparams");
 
 	json_object_set_object_member(arg0, "headers", headers);
 	json_object_set_object_member(arg0, "connectparams", json_object_ref(connectparams));
