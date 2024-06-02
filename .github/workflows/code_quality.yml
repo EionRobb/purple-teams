@@ -3,8 +3,8 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: 
-      - master 
+    branches:
+      - master
 
 jobs:
   qodana:
@@ -13,6 +13,7 @@ jobs:
       contents: write
       pull-requests: write
       checks: write
+      security-events: write
     steps:
       - uses: actions/checkout@v4
         if: ${{ !env.ACT }}
@@ -32,6 +33,6 @@ jobs:
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
 
-      - uses: github/codeql-action/upload-sarif@v2
+      - uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json
