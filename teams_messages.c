@@ -712,7 +712,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				const gchar *count = purple_xmlnode_get_attrib(partlist, "count");
 				if (!count) {
 					// Add join link:  https://teams.microsoft.com/l/meetup-join/{convID}/0
-					message = g_strconcat(_("Call started"), " - https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
+					message = g_strconcat(_("Call started"), " - <a href=\"https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0\">", _("Join Teams Meeting"), "</a>", NULL);
 				} else {
 					// someone left
 				}
@@ -969,7 +969,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					
 					conv = PURPLE_CONVERSATION(imconv);
 					if (g_str_equal(partlisttype, "started")) {
-						message = g_strconcat(_("Call started"), " - https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
+						message = g_strconcat(_("Call started"), " - <a href=\"https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0\">", _("Join Teams Meeting"), "</a>", NULL);
 						
 					} else if (g_str_equal(partlisttype, "ended")) {
 						PurpleXmlNode *part;

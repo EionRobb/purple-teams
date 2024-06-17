@@ -1930,7 +1930,7 @@ teams_calendar_timer_cb(gpointer user_data)
 			teams_get_thread_users(sa, chatname);
 		}
 
-		gchar *html = g_strdup_printf("Reminder: You have a Teams meeting starting soon <a href=\"%s\">Join Teams Meeting</a>", data->teams_join_link);
+		gchar *html = g_strdup_printf("%s <a href=\"%s\">%s</a>", _("Reminder: You have a Teams meeting starting soon"), data->teams_join_link, _("Join Teams Meeting"));
 		purple_conversation_write_system_message(PURPLE_CONVERSATION(chatconv), html, PURPLE_MESSAGE_NO_LOG | PURPLE_MESSAGE_NOTIFY | PURPLE_MESSAGE_RECV);
 		g_free(html);
 	}
