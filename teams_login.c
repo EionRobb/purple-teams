@@ -49,7 +49,11 @@ teams_get_tenant_host(const gchar *tenant)
 		}
 		
 	} else {
-		tenant_host = g_strdup("Common");
+#ifdef ENABLE_TEAMS_PERSONAL
+		tenant_host = g_strdup("consumers");
+#else
+		tenant_host = g_strdup("organizations");
+#endif
 	}
 
 	return tenant_host;
@@ -571,10 +575,11 @@ teams_do_web_auth(TeamsAccount *sa)
 	const gchar *tenant_host;
 	gchar *auth_url;
 	
-	//https://login.microsoftonline.com/Common/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&amr_values=mfa
+	//https://login.microsoftonline.com/organizations/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&amr_values=mfa
 	
 	tenant_host = teams_get_tenant_host(sa->tenant);
-	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/authorize?client_id=", TEAMS_OAUTH_CLIENT_ID, "&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient", NULL);
+
+	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/authorize?client_id=", TEAMS_OAUTH_CLIENT_ID, "&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=", purple_url_encode(TEAMS_OAUTH_REDIRECT_URI), NULL);
 	
 	purple_notify_uri(pc, auth_url);
 	purple_request_input(pc, _("Authorization Code"), auth_url,
@@ -667,7 +672,7 @@ teams_devicecode_login_poll(gpointer user_data)
 	PurpleHttpRequest *request;
 
 #ifdef ENABLE_TEAMS_PERSONAL
-	tenant_host = "common";
+	tenant_host = "consumers";
 #else
 	tenant_host = teams_get_tenant_host(sa->tenant);
 #endif // ENABLE_TEAMS_PERSONAL
@@ -789,7 +794,7 @@ teams_do_devicecode_login(TeamsAccount *sa)
 	PurpleHttpRequest *request;
 
 #ifdef ENABLE_TEAMS_PERSONAL
-	tenant_host = "common";
+	tenant_host = "consumers";
 #else	
 	tenant_host = teams_get_tenant_host(sa->tenant);
 #endif // ENABLE_TEAMS_PERSONAL
