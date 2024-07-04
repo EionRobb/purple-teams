@@ -41,11 +41,13 @@ teams_do_all_the_things(TeamsAccount *sa)
 		purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
 
 		teams_get_friend_list(sa);
-		//TODO remove me when switching to websocket
-		if (sa->friend_list_poll_timeout) 
-			g_source_remove(sa->friend_list_poll_timeout);
-		sa->friend_list_poll_timeout = g_timeout_add_seconds(300, (GSourceFunc)teams_get_friend_list, sa);
-		teams_poll(sa);
+		if (!purple_account_get_bool(sa->account, "only_use_websocket", FALSE)) {
+			//TODO remove me when switching to websocket
+			if (sa->friend_list_poll_timeout) 
+				g_source_remove(sa->friend_list_poll_timeout);
+			sa->friend_list_poll_timeout = g_timeout_add_seconds(300, (GSourceFunc)teams_get_friend_list, sa);
+			teams_poll(sa);
+		}
 		teams_trouter_begin(sa);
 		
 		teams_get_offline_history(sa);
@@ -866,6 +868,9 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 	
 	opt = purple_account_option_int_new(_("Notify me before meeting begins (minutes)"), "calendar_notify_minutes", -1);
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+
+	opt = purple_account_option_bool_new(_("Only use Websocket for message events (Experimental)"), "only_use_websocket", FALSE);
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 
 #undef TEAMS_PRPL_APPEND_ACCOUNT_OPTION

@@ -1900,6 +1900,9 @@ teams_get_friend_list(TeamsAccount *sa)
 	url = "/api/mt/beta/contacts/buddylist?migrationRequested=true&federatedContactsSupported=true";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_buddylist_cb, NULL, TRUE);
 
+	if (purple_account_get_bool(sa->account, "only_use_websocket", FALSE)) {
+		return FALSE;
+	}
 	return TRUE;
 }
 
