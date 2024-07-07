@@ -153,13 +153,8 @@
 #define TEAMS_VDMS_TTL 300
 
 #define TEAMS_CLIENTINFO_NAME "skypeteams"
-#ifdef ENABLE_TEAMS_PERSONAL
-#	define TEAMS_CLIENTINFO_VERSION "48/24032909844"
-#	define TEAMS_USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0 maglev/24060.3102.2733.5911/48"
-#else
-#	define TEAMS_CLIENTINFO_VERSION "49/24033101817"
-#	define TEAMS_USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0 maglev/24091.214.2846.1452/49"
-#endif
+#define TEAMS_CLIENTINFO_VERSION "49/24062722442"
+#define TEAMS_USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0 Teams/24165.1410.2974.6689/49"
 
 
 
