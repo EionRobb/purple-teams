@@ -23,6 +23,7 @@
 #include "teams_util.h"
 
 #define TEAMS_TROUTER_TTL 86400
+#define TEAMS_TROUTER_TCCV "2024.23.01.2"
 
 static gboolean teams_trouter_register(gpointer user_data);
 static void teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path);
@@ -54,18 +55,39 @@ teams_trouter_stop(TeamsAccount *sa)
 	}
 }
 
+static const gchar *
+teams_generate_correlation_vector()
+{
+	static const gchar *valid_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/+";
+	static const gchar *valid_suffix = "AgQw";
+	static const int valid_chars_len = 64;
+	static gchar *cv = NULL;
+	gint i;
+	
+	if (cv == NULL) {
+		cv = g_new(gchar, 23);
+	}
+
+	for (i = 0; i < 21; i++) {
+		cv[i] = valid_chars[g_random_int_range(0, valid_chars_len)];
+	}
+	cv[21] = valid_suffix[g_random_int_range(0, 4)];
+	cv[22] = '\0';
+
+	return cv;
+}
+
 void
 teams_trouter_send_active(TeamsAccount *sa, gboolean active)
 {
 	gchar *message;
-	gchar *cv;
+	const gchar *cv;
 
-	cv = purple_uuid_random();
-	message = g_strdup_printf("{\"name\":\"user.activity\",\"args\":[{\"state\":\"%s\",\"cv\":\"%s\"}]}", active ? "active" : "inactive", cv);
+	cv = teams_generate_correlation_vector();
+	message = g_strdup_printf("{\"name\":\"user.activity\",\"args\":[{\"state\":\"%s\",\"cv\":\"%s.0.1\"}]}", active ? "active" : "inactive", cv);
 	
 	teams_trouter_send_message(sa, message);
 	
-	g_free(cv);
 	g_free(message);
 }
 
@@ -564,8 +586,9 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 		g_string_append_printf(url, "%s=%s&", key, purple_url_encode(value));
 	}
 	g_list_free(list);
-	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"" TEAMS_CLIENTINFO_VERSION "\"}"));
+	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"" TEAMS_TROUTER_TCCV "\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"" TEAMS_CLIENTINFO_VERSION "\"}"));
 	g_string_append_printf(url, "con_num=%" G_GINT64_FORMAT "_%d&", 1234567890123, 1); //TODO sa->trouter_count++
+	g_string_append_printf(url, "epid=%s&", purple_url_encode(sa->endpoint));
 	const gchar *ccid = json_object_get_string_member(obj, "ccid");
 	if (ccid != NULL) {
 		g_string_append_printf(url, "ccid=%s&", purple_url_encode(ccid));
@@ -642,12 +665,14 @@ teams_trouter_info_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respo
 		g_string_append_printf(url, "%s=%s&", key, purple_url_encode(value));
 	}
 	g_list_free(list);
-	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"2023.45.01.11\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"" TEAMS_CLIENTINFO_VERSION "\"}"));
+	g_string_append_printf(url, "tc=%s&", purple_url_encode("{\"cv\":\"" TEAMS_TROUTER_TCCV "\",\"ua\":\"TeamsCDL\",\"hr\":\"\",\"v\":\"" TEAMS_CLIENTINFO_VERSION "\"}"));
 	g_string_append_printf(url, "con_num=%" G_GINT64_FORMAT "_%d&", 1234567890123, 1);
+	g_string_append_printf(url, "epid=%s&", purple_url_encode(sa->endpoint));
 	const gchar *ccid = json_object_get_string_member(obj, "ccid");
 	if (ccid != NULL) {
 		g_string_append_printf(url, "ccid=%s&", purple_url_encode(ccid));
 	}
+	g_string_append(url, "auth=true&timeout=40&");
 
 	purple_debug_info("teams", "Trouter URL: %s\n", url->str);
 	request = purple_http_request_new(url->str);
