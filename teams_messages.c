@@ -960,45 +960,42 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			}
 
 			if (from != NULL) {
-				if (partlisttype) {
-					imconv = purple_conversations_find_im_with_account(from, sa->account);
-					if (imconv == NULL)
-					{
-						imconv = purple_im_conversation_new(sa->account, from);
-					}
+				imconv = purple_conversations_find_im_with_account(from, sa->account);
+				if (imconv == NULL)
+				{
+					imconv = purple_im_conversation_new(sa->account, from);
+				}
+				
+				conv = PURPLE_CONVERSATION(imconv);
+				if (content == NULL || strstr(content, "<ended/>")) {
+					message = g_strdup(_("Call ended"));
+				} else if (!partlisttype || g_str_equal(partlisttype, "started")) {
+					message = g_strconcat(_("Call started"), " - <a href=\"https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0\">", _("Join Teams Meeting"), "</a>", NULL);
+
+				} else if (g_str_equal(partlisttype, "ended")) {
+					PurpleXmlNode *part;
+					gint duration_int = -1;
 					
-					conv = PURPLE_CONVERSATION(imconv);
-					if (g_str_equal(partlisttype, "started")) {
-						message = g_strconcat(_("Call started"), " - <a href=\"https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0\">", _("Join Teams Meeting"), "</a>", NULL);
-						
-					} else if (g_str_equal(partlisttype, "ended")) {
-						PurpleXmlNode *part;
-						gint duration_int = -1;
-						
-						for(part = purple_xmlnode_get_child(partlist, "part");
-							part;
-							part = purple_xmlnode_get_next_twin(part))
-						{
-							const gchar *identity = purple_xmlnode_get_attrib(part, "identity");
-							if (identity && teams_is_user_self(sa, identity)) {
-								PurpleXmlNode *duration = purple_xmlnode_get_child(part, "duration");
-								if (duration != NULL) {
-									gchar *duration_str;
-									duration_str = purple_xmlnode_get_data(duration);
-									duration_int = atoi(duration_str);
-									break;
-								}
+					for(part = purple_xmlnode_get_child(partlist, "part");
+						part;
+						part = purple_xmlnode_get_next_twin(part))
+					{
+						const gchar *identity = purple_xmlnode_get_attrib(part, "identity");
+						if (identity && teams_is_user_self(sa, identity)) {
+							PurpleXmlNode *duration = purple_xmlnode_get_child(part, "duration");
+							if (duration != NULL) {
+								gchar *duration_str;
+								duration_str = purple_xmlnode_get_data(duration);
+								duration_int = atoi(duration_str);
+								break;
 							}
 						}
-						if (duration_int < 0) {
-							message = g_strdup(_("Call missed"));
-						} else {
-							message = g_strdup_printf("%s %d:%d", _("Call ended"), duration_int / 60, duration_int % 60);
-						}
 					}
-				}
-				else {
-					message = g_strdup(_("Unsupported call received"));
+					if (duration_int < 0) {
+						message = g_strdup(_("Call missed"));
+					} else {
+						message = g_strdup_printf("%s %d:%d", _("Call ended"), duration_int / 60, duration_int % 60);
+					}
 				}
 
 				purple_serv_got_im(sa->pc, from, message, PURPLE_MESSAGE_RECV | PURPLE_MESSAGE_SYSTEM, composetimestamp);
