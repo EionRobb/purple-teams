@@ -18,6 +18,7 @@
  
 
 #include "teams_contacts.h"
+#include "libteams.h"
 #include "teams_connection.h"
 #include "teams_messages.h"
 #include "teams_util.h"
@@ -118,6 +119,9 @@ teams_get_icon_now(PurpleBuddy *buddy)
 		//https://teams.microsoft.com/api/mt/apac/beta/users/.../profilepicturev2?displayname=Eion%20Robb&size=HR96x96
 		//https://teams.microsoft.com/api/mt/part/au-01/beta/users/...myid.../profilepicturev2/8:orgid:userid?displayname=Eion%20Robb&size=HR196x196&ETag=1704940983743
 		url = g_strdup_printf("https://" TEAMS_BASE_ORIGIN_HOST TEAMS_PROFILES_PREFIX "users/%s%s/profilepicturev2?size=HR128x128", teams_user_url_prefix(buddy_name), purple_url_encode(buddy_name));
+
+		// alternative
+		//https://aus.loki.delve.office.com/api/v2/personaphoto?AadObjectId=12345678-abcd-4321-1234-123456789abc&AuthToken=eyJ...&ClientType=MicrosoftStream
 	}
 
 	if (purple_strequal(url, purple_buddy_icons_get_checksum_for_user(buddy))) {
@@ -2201,15 +2205,25 @@ teams_buddy_block(PurpleConnection *pc, const char *name)
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *url;
-	const gchar *postdata;
+	gchar *postdata;
 	
-	//TODO /api/mt/beta/usersettings/blocklist
+	// Old skype (teams personal?)
 	url = g_strdup_printf("/contacts/v2/users/SELF/contacts/blocklist/%s%s", teams_user_url_prefix(name), purple_url_encode(name));
-	postdata = "{\"report_abuse\":\"false\",\"ui_version\":\"skype.com\"}";
+	postdata = g_strdup("{\"report_abuse\":\"false\",\"ui_version\":\"skype.com\"}");
 	
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST, url, postdata, NULL, NULL, TRUE);
-	
+
 	g_free(url);
+	g_free(postdata);
+	
+	// New teams
+	url = g_strdup(TEAMS_PROFILES_PREFIX "userSettings/blocklist/manage");
+	postdata = g_strdup_printf("{\"add\":[\"%s%s\"]}", teams_user_url_prefix(name), name);
+	
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, NULL, NULL, TRUE);
+
+	g_free(url);
+	g_free(postdata);
 }
 
 void
@@ -2217,14 +2231,31 @@ teams_buddy_unblock(PurpleConnection *pc, const char *name)
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *url;
+	gchar *postdata;
 	
-	//TODO /api/mt/beta/usersettings/blocklist
+	// Old skype (teams personal?)
 	url = g_strdup_printf("/contacts/v2/users/SELF/contacts/blocklist/%s%s", teams_user_url_prefix(name), purple_url_encode(name));
 	
 	teams_post_or_get(sa, TEAMS_METHOD_DELETE | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST, url, NULL, NULL, NULL, TRUE);
-	
+
 	g_free(url);
+	
+	// New teams
+	url = g_strdup(TEAMS_PROFILES_PREFIX "userSettings/blocklist/manage");
+	postdata = g_strdup_printf("{\"remove\":[\"%s%s\"]}", teams_user_url_prefix(name), name);
+	
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, NULL, NULL, TRUE);
+
+	g_free(url);
+	g_free(postdata);
 }
+
+// TODO
+// add_allow
+// POST https://teams.microsoft.com/api/mt/beta/userSettings/acceptlist/manage
+// {
+//	"add": ["8:orgid:...."]
+//}
 
 
 void
