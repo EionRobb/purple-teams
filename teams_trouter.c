@@ -116,6 +116,7 @@ teams_trouter_send_authentication(TeamsAccount *sa)
 	gchar *message = teams_jsonobj_to_string(obj);
 	teams_trouter_send_ephemeral_message(sa, message);
 	g_free(message);
+	json_object_unref(obj);
 }
 
 static void
