@@ -672,7 +672,7 @@ teams_devicecode_login_poll(gpointer user_data)
 	PurpleHttpRequest *request;
 
 #ifdef ENABLE_TEAMS_PERSONAL
-	tenant_host = "consumers";
+	tenant_host = "common";
 #else
 	tenant_host = teams_get_tenant_host(sa->tenant);
 #endif // ENABLE_TEAMS_PERSONAL
@@ -794,7 +794,7 @@ teams_do_devicecode_login(TeamsAccount *sa)
 	PurpleHttpRequest *request;
 
 #ifdef ENABLE_TEAMS_PERSONAL
-	tenant_host = "consumers";
+	tenant_host = "common";
 #else	
 	tenant_host = teams_get_tenant_host(sa->tenant);
 #endif // ENABLE_TEAMS_PERSONAL
@@ -827,3 +827,4 @@ teams_do_devicecode_login(TeamsAccount *sa)
 // https://api.myaccount.microsoft.com/api/organizations triggered by https://myaccount.microsoft.com/organizations
 // https://graph.microsoft.com/beta/tenantRelationships/getResourceTenants?$select=tenantId,displayName
 // https://teams.microsoft.com/api/mt/apac/beta/users/tenants
+// https://portal.azure.com/#view/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/~/Properties
