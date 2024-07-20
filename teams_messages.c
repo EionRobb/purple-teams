@@ -17,11 +17,13 @@
  */
  
 #include "teams_messages.h"
+#include "purplecompat.h"
 #include "teams_util.h"
 #include "teams_connection.h"
 #include "teams_contacts.h"
 #include "teams_trouter.h"
 #include "teams_cards.h"
+#include "util.h"
 
 static GString* make_last_timestamp_setting(const gchar *convname) {
 	GString *rv = g_string_new(NULL);
@@ -465,6 +467,49 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					g_free(messagetype_parts);
 					return;
 				}
+			} else if (purple_strequal(messagetype, "RichText/Media_CallRecording") ||
+						purple_strequal(messagetype, "RichText/Media_LocalRecording")) {
+				PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
+				PurpleXmlNode *recordingStatus = purple_xmlnode_get_child(blob, "RecordingStatus");
+
+				if (recordingStatus) {
+					const gchar *recordingStatusValue = purple_xmlnode_get_attrib(recordingStatus, "status");
+					if (recordingStatusValue && *recordingStatusValue) {
+						if (purple_strequal(recordingStatusValue, "Initial")) {
+							html = g_strconcat("<b>", _("Call recording"), "</b>: ", _("Started"), NULL);
+
+						} else if (purple_strequal(recordingStatusValue, "ChunkFinished")) {
+							html = g_strconcat("<b>", _("Call recording"), "</b>: ", _("Processing"), NULL);
+
+						} else if (purple_strequal(recordingStatusValue, "Success")) {
+							PurpleXmlNode *title = purple_xmlnode_get_child(blob, "Title");
+							PurpleXmlNode *link = purple_xmlnode_get_child(blob, "a");
+							PurpleXmlNode *originalName = purple_xmlnode_get_child(blob, "OriginalName");
+							const gchar *titleValue = purple_xmlnode_get_data(title);
+							const gchar *linkHref = purple_xmlnode_get_attrib(link, "href");
+							const gchar *originalNameValue = purple_xmlnode_get_attrib(originalName, "v");
+
+							html = g_strconcat("<h2>", titleValue ? titleValue : "", "</h2><br/><b>", _("Call recording"), "</b>: ", _("Success"), " - <a href=\"", linkHref ? linkHref : "#", "\">", originalNameValue ? originalNameValue : "Recording.mp4", "</a>", NULL);
+
+						} else {
+							purple_debug_error("teams", "Unknown recording status: %s\n", recordingStatusValue);
+							html = g_strconcat("<b>", _("Call recording"), "</b>: ", recordingStatusValue, NULL);
+						}
+
+						purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV, html, composetimestamp);
+						g_free(html);
+						html = NULL;
+					}
+				}
+				purple_xmlnode_free(blob);
+				
+				g_free(messagetype_parts);
+				return;
+			} else if (purple_strequal(messagetype, "RichText/Media_CallTranscript")) {
+				html = g_strdup(_("Transcript is available"));
+				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV, html, composetimestamp);
+				g_free(html);
+				html = NULL;
 			}
 			
 			if (json_object_has_member(resource, "skypeemoteoffset")) {
