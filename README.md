@@ -88,3 +88,10 @@ Thats not really a question!  Maybe you want to try one of the notification plug
 Something else!
 ---------------
 Feel free to [open an issue](https://github.com/EionRobb/purple-teams/issues) and hopefully find a reasonable outcome :)
+
+Say thanks
+----------
+Did this plugin bring you joy?  If so, send $1 to say thanks :)
+* GitHub Sponsors: https://github.com/sponsors/EionRobb
+* Ko-Fi https://ko-fi.com/eionrobb
+* Buy Me A Coffee: https://www.buymeacoffee.com/eionrobb
