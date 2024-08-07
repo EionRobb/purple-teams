@@ -16,7 +16,7 @@ jobs:
 
       - name: Load Pidgin from cache
         id: pidgin-cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: pidgin
           key: pidgin-2.14.1
@@ -33,7 +33,7 @@ jobs:
       
       - name: Load Win32 deps from cache
         id: win32-cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: win32-dev
           key: win32-dev
@@ -42,11 +42,11 @@ jobs:
         if: steps.win32-cache.outputs.cache-hit != 'true'
         run: |
           mkdir win32-dev
-          curl --http1.1 -L http://ftp.gnome.org/pub/gnome/binaries/win32/glib/2.28/glib-dev_2.28.8-1_win32.zip -o glib-dev.zip
+          curl --http1.1 -L https://download.gnome.org/binaries/win32/glib/2.28/glib-dev_2.28.8-1_win32.zip -o glib-dev.zip
           unzip glib-dev.zip -d win32-dev/glib-2.28.8
-          curl --http1.1 -L http://ftp.gnome.org/pub/gnome/binaries/win32/dependencies/gettext-runtime-dev_0.18.1.1-2_win32.zip -o gettext-runtime.zip
+          curl --http1.1 -L https://download.gnome.org/binaries/win32/dependencies/gettext-runtime-dev_0.18.1.1-2_win32.zip -o gettext-runtime.zip
           unzip gettext-runtime.zip -d win32-dev/glib-2.28.8
-          curl --http1.1 -L http://ftp.gnome.org/pub/gnome/binaries/win32/dependencies/zlib-dev_1.2.5-2_win32.zip -o zlib-dev.zip
+          curl --http1.1 -L https://download.gnome.org/binaries/win32/dependencies/zlib-dev_1.2.5-2_win32.zip -o zlib-dev.zip
           unzip zlib-dev.zip -d win32-dev/glib-2.28.8
 
           cd win32-dev

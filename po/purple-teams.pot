@@ -1,0 +1,236 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-06-17 02:23+0100\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Status"
+msgstr ""
+
+msgid "Message"
+msgstr ""
+
+msgid "Available"
+msgstr ""
+
+msgid "Away"
+msgstr ""
+
+msgid "Be Right Back"
+msgstr ""
+
+msgid "Busy"
+msgstr ""
+
+msgid "Do Not Disturb"
+msgstr ""
+
+msgid "Offline"
+msgstr ""
+
+msgid "Available (Idle)"
+msgstr ""
+
+msgid "Busy (Idle)"
+msgstr ""
+
+msgid "Unknown"
+msgstr ""
+
+msgid "Teams Name"
+msgstr ""
+
+msgid "Initiate _Chat"
+msgstr ""
+
+msgid "Authenticating"
+msgstr ""
+
+#, c-format
+msgid "current topic is: %s"
+msgstr ""
+
+msgid "No topic is set"
+msgstr ""
+
+msgid "leave:  Leave the group chat"
+msgstr ""
+
+msgid "kick &lt;user&gt;:  Kick a user from the group chat."
+msgstr ""
+
+msgid "add &lt;user&gt;:  Add a user to the group chat."
+msgstr ""
+
+msgid "topic [&lt;new topic&gt;]:  View or change the topic"
+msgstr ""
+
+msgid "list: Display a list of multi-chat group chats you are in."
+msgstr ""
+
+msgid "call: Create a URL link to start a voice/video call in the browser."
+msgstr ""
+
+msgid "Search for Teams Contacts"
+msgstr ""
+
+msgid "Tenant"
+msgstr ""
+
+msgid "Set global status"
+msgstr ""
+
+msgid "Collapse Teams threads into a single chat window"
+msgstr ""
+
+msgid "Notify me before meeting begins (minutes)"
+msgstr ""
+
+msgid "Skype Name"
+msgstr ""
+
+msgid "Display Name"
+msgstr ""
+
+msgid "Received contacts"
+msgstr ""
+
+msgid "ID"
+msgstr ""
+
+msgid "Email"
+msgstr ""
+
+msgid "Given Name"
+msgstr ""
+
+msgid "Surname"
+msgstr ""
+
+#, c-format
+msgid "Your search for the user \"%s\" returned no results"
+msgstr ""
+
+msgid "No users found"
+msgstr ""
+
+msgid "_Search"
+msgstr ""
+
+msgid "_Cancel"
+msgstr ""
+
+msgid "Reminder: You have a Teams meeting starting soon"
+msgstr ""
+
+msgid "Join Teams Meeting"
+msgstr ""
+
+msgid "Please authorize me so I can add you to my buddy list."
+msgstr ""
+
+msgid "Login error: %s (code %"
+msgstr ""
+
+msgid ")"
+msgstr ""
+
+msgid "Failed getting Skype Token (alt)"
+msgstr ""
+
+msgid "Invalid response"
+msgstr ""
+
+msgid "User cancelled authorization"
+msgstr ""
+
+msgid "Authorization Code"
+msgstr ""
+
+msgid "Please login in your browser"
+msgstr ""
+
+msgid ""
+"and then paste the URL of the blank page here (should contain 'nativeclient')"
+msgstr ""
+
+msgid "OK"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Device code expired"
+msgstr ""
+
+#, c-format
+msgid ""
+"To sign in, use a web browser to open the page %s and enter the code %s to "
+"authenticate."
+msgstr ""
+
+msgid "Files sent"
+msgstr ""
+
+msgid "Edited: "
+msgstr ""
+
+msgid "User deleted their message"
+msgstr ""
+
+#, c-format
+msgid "%u users reacted with a :%s:\n"
+msgstr ""
+
+msgid "Call ended"
+msgstr ""
+
+msgid "Call started"
+msgstr ""
+
+#, c-format
+msgid "Reacted with a :%s:\n"
+msgstr ""
+
+msgid "Call missed"
+msgstr ""
+
+msgid "Unsupported call received"
+msgstr ""
+
+#, c-format
+msgid "The user sent a contact: %s (%s)"
+msgstr ""
+
+msgid "The user sent a Moji"
+msgstr ""
+
+msgid "The user sent files in an unsupported way"
+msgstr ""
+
+msgid "Users"
+msgstr ""
+
+msgid "Topic"
+msgstr ""
+
+msgid "Image Send Error"
+msgstr ""
+
+msgid "There was an error sending the image"
+msgstr ""
+
+msgid "Media"
+msgstr ""

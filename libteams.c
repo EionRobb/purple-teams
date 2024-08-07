@@ -17,12 +17,10 @@
  */
 
 #include "libteams.h"
-#include "teams_connection.h"
 #include "teams_contacts.h"
 #include "teams_login.h"
 #include "teams_messages.h"
 #include "teams_util.h"
-#include "purple-websocket.h"
 #include "teams_trouter.h"
 
 void
@@ -43,11 +41,13 @@ teams_do_all_the_things(TeamsAccount *sa)
 		purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
 
 		teams_get_friend_list(sa);
-		//TODO remove me when switching to websocket
-		if (sa->friend_list_poll_timeout) 
-			g_source_remove(sa->friend_list_poll_timeout);
-		sa->friend_list_poll_timeout = g_timeout_add_seconds(300, (GSourceFunc)teams_get_friend_list, sa);
-		teams_poll(sa);
+		if (!purple_account_get_bool(sa->account, "only_use_websocket", FALSE)) {
+			//TODO remove me when switching to websocket
+			if (sa->friend_list_poll_timeout) 
+				g_source_remove(sa->friend_list_poll_timeout);
+			sa->friend_list_poll_timeout = g_timeout_add_seconds(300, (GSourceFunc)teams_get_friend_list, sa);
+			teams_poll(sa);
+		}
 		teams_trouter_begin(sa);
 		
 		teams_get_offline_history(sa);
@@ -393,6 +393,7 @@ teams_login(PurpleAccount *account)
 	sa->keepalive_pool = purple_http_keepalive_pool_new();
 	purple_http_keepalive_pool_set_limit_per_host(sa->keepalive_pool, TEAMS_MAX_CONNECTIONS);
 	sa->conns = purple_http_connection_set_new();
+	sa->processed_event_messages = g_queue_new();
 	
 #ifdef ENABLE_TEAMS_PERSONAL
 	tenant = TEAMS_PERSONAL_TENANT_ID;
@@ -443,6 +444,7 @@ teams_close(PurpleConnection *pc)
 	g_source_remove(sa->idle_timeout);
 	g_source_remove(sa->login_device_code_expires_timeout);
 	g_source_remove(sa->login_device_code_timeout);
+	// Trouter timeouts handled in teams_trouter_stop()
 
 	teams_logout(sa);
 	
@@ -469,10 +471,18 @@ teams_close(PurpleConnection *pc)
 		PurpleConversation *conv = convs->data;
 		if(purple_conversation_get_account(conv) == sa->account) {
 			g_free(purple_conversation_get_data(conv, "last_teams_id"));
+			g_free(purple_conversation_get_data(conv, "last_teams_clientmessageid"));
 			g_free(purple_conversation_get_data(conv, "chatname"));
 		}
 		convs = g_list_next(convs);
 	}
+
+	// Don't use g_queue_free_full() since that's too-new for Windows
+	while (!g_queue_is_empty(sa->processed_event_messages)) {
+		gpointer event_message = g_queue_pop_head(sa->processed_event_messages);
+		g_free(event_message);
+	}
+	g_queue_free(sa->processed_event_messages);
 	
 	g_hash_table_destroy(sa->sent_messages_hash);
 	g_hash_table_destroy(sa->buddy_to_chat_lookup);
@@ -793,7 +803,7 @@ PurpleConnection *pc
 	GList *m = NULL;
 	PurpleProtocolAction *act;
 
-	act = purple_protocol_action_new(_("Search for friends..."), teams_search_users);
+	act = purple_protocol_action_new(_("Search for Teams Contacts"), teams_search_users);
 	m = g_list_append(m, act);
 
 	return m;
@@ -858,6 +868,9 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 	
 	opt = purple_account_option_int_new(_("Notify me before meeting begins (minutes)"), "calendar_notify_minutes", -1);
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+
+	opt = purple_account_option_bool_new(_("Only use Websocket for message events (Experimental)"), "only_use_websocket", FALSE);
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 
 #undef TEAMS_PRPL_APPEND_ACCOUNT_OPTION

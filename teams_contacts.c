@@ -18,6 +18,7 @@
  
 
 #include "teams_contacts.h"
+#include "libteams.h"
 #include "teams_connection.h"
 #include "teams_messages.h"
 #include "teams_util.h"
@@ -118,6 +119,9 @@ teams_get_icon_now(PurpleBuddy *buddy)
 		//https://teams.microsoft.com/api/mt/apac/beta/users/.../profilepicturev2?displayname=Eion%20Robb&size=HR96x96
 		//https://teams.microsoft.com/api/mt/part/au-01/beta/users/...myid.../profilepicturev2/8:orgid:userid?displayname=Eion%20Robb&size=HR196x196&ETag=1704940983743
 		url = g_strdup_printf("https://" TEAMS_BASE_ORIGIN_HOST TEAMS_PROFILES_PREFIX "users/%s%s/profilepicturev2?size=HR128x128", teams_user_url_prefix(buddy_name), purple_url_encode(buddy_name));
+
+		// alternative
+		//https://aus.loki.delve.office.com/api/v2/personaphoto?AadObjectId=12345678-abcd-4321-1234-123456789abc&AuthToken=eyJ...&ClientType=MicrosoftStream
 	}
 
 	if (purple_strequal(url, purple_buddy_icons_get_checksum_for_user(buddy))) {
@@ -163,6 +167,8 @@ void
 teams_get_icon(PurpleBuddy *buddy)
 {
 	if (!buddy) return;
+	if (purple_strequal(purple_core_get_ui(), "BitlBee"))
+		return;
 	
 	g_timeout_add(100, teams_get_icon_queuepop, (gpointer)buddy);
 }
@@ -1113,7 +1119,7 @@ teams_search_users_text_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	
 	if (results == NULL || length == 0)
 	{
-		gchar *primary_text = g_strdup_printf("Your search for the user \"%s\" returned no results", search_term);
+		gchar *primary_text = g_strdup_printf(_("Your search for the user \"%s\" returned no results"), search_term);
 		purple_notify_warning(sa->pc, _("No users found"), primary_text, "", purple_request_cpar_from_connection(sa->pc));
 		g_free(primary_text);
 		g_free(search_term);
@@ -1128,6 +1134,11 @@ teams_search_users_text(gpointer user_data, const gchar *text)
 {
 	TeamsAccount *sa = user_data;
 	const gchar *url = TEAMS_PROFILES_PREFIX "users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
+	//https://teams.microsoft.com/api/mt/part/au-01/beta/users/emailaddressgoeshere@example.com/externalsearchv3?includeTFLUsers=true
+	//https://substrate.office.com/search/api/v1/suggestions?scenario=peoplepicker.addToChat&setflight=ServeEdContactsFromEdShards
+
+	//https://teams.live.com/api/mt/beta/users/searchUsers
+	// {"emails":["emailaddressgoeshere@example.com"],"phones":[]}
 	
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, text, teams_search_users_text_cb, g_strdup(text), TRUE);
 	
@@ -1139,8 +1150,8 @@ teams_search_users(PurpleProtocolAction *action)
 	PurpleConnection *pc = purple_protocol_action_get_connection(action);
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	
-	purple_request_input(pc, "Search for Teams Contacts",
-					   "Search for Teams Contacts",
+	purple_request_input(pc, _("Search for Teams Contacts"),
+					   _("Search for Teams Contacts"),
 					   NULL,
 					   NULL, FALSE, FALSE, NULL,
 					   _("_Search"), G_CALLBACK(teams_search_users_text),
@@ -1868,7 +1879,8 @@ teams_get_friend_list(TeamsAccount *sa)
 	const gchar *url = TEAMS_PROFILES_PREFIX "users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
 	
 	//TODO
-	// get tenants: https://teams.microsoft.com/api/mt/apac/beta/users/tenants
+	// get tenants: https://teams.microsoft.com/api/mt/apac/beta/users/tenants or https://teams.microsoft.com/api/mt/part/au-01/beta/users/tenantsv2
+	// https://teams.microsoft.com/api/mt/part/au-01/beta/contactsv3/?pageSize=500
 	
 	// Do a search for all users with . in their email addresses - doesn't work for Guests
 	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, ".", teams_get_friend_list_cb, NULL, TRUE);
@@ -1892,6 +1904,9 @@ teams_get_friend_list(TeamsAccount *sa)
 	url = "/api/mt/beta/contacts/buddylist?migrationRequested=true&federatedContactsSupported=true";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_buddylist_cb, NULL, TRUE);
 
+	if (purple_account_get_bool(sa->account, "only_use_websocket", FALSE)) {
+		return FALSE;
+	}
 	return TRUE;
 }
 
@@ -1924,7 +1939,7 @@ teams_calendar_timer_cb(gpointer user_data)
 			teams_get_thread_users(sa, chatname);
 		}
 
-		gchar *html = g_strdup_printf("Reminder: You have a Teams meeting starting soon <a href=\"%s\">Join Teams Meeting</a>", data->teams_join_link);
+		gchar *html = g_strdup_printf("%s <a href=\"%s\">%s</a>", _("Reminder: You have a Teams meeting starting soon"), data->teams_join_link, _("Join Teams Meeting"));
 		purple_conversation_write_system_message(PURPLE_CONVERSATION(chatconv), html, PURPLE_MESSAGE_NO_LOG | PURPLE_MESSAGE_NOTIFY | PURPLE_MESSAGE_RECV);
 		g_free(html);
 	}
@@ -2190,15 +2205,25 @@ teams_buddy_block(PurpleConnection *pc, const char *name)
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *url;
-	const gchar *postdata;
+	gchar *postdata;
 	
-	//TODO /api/mt/beta/usersettings/blocklist
+	// Old skype (teams personal?)
 	url = g_strdup_printf("/contacts/v2/users/SELF/contacts/blocklist/%s%s", teams_user_url_prefix(name), purple_url_encode(name));
-	postdata = "{\"report_abuse\":\"false\",\"ui_version\":\"skype.com\"}";
+	postdata = g_strdup("{\"report_abuse\":\"false\",\"ui_version\":\"skype.com\"}");
 	
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST, url, postdata, NULL, NULL, TRUE);
-	
+
 	g_free(url);
+	g_free(postdata);
+	
+	// New teams
+	url = g_strdup(TEAMS_PROFILES_PREFIX "userSettings/blocklist/manage");
+	postdata = g_strdup_printf("{\"add\":[\"%s%s\"]}", teams_user_url_prefix(name), name);
+	
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, NULL, NULL, TRUE);
+
+	g_free(url);
+	g_free(postdata);
 }
 
 void
@@ -2206,14 +2231,31 @@ teams_buddy_unblock(PurpleConnection *pc, const char *name)
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *url;
+	gchar *postdata;
 	
-	//TODO /api/mt/beta/usersettings/blocklist
+	// Old skype (teams personal?)
 	url = g_strdup_printf("/contacts/v2/users/SELF/contacts/blocklist/%s%s", teams_user_url_prefix(name), purple_url_encode(name));
 	
 	teams_post_or_get(sa, TEAMS_METHOD_DELETE | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST, url, NULL, NULL, NULL, TRUE);
-	
+
 	g_free(url);
+	
+	// New teams
+	url = g_strdup(TEAMS_PROFILES_PREFIX "userSettings/blocklist/manage");
+	postdata = g_strdup_printf("{\"remove\":[\"%s%s\"]}", teams_user_url_prefix(name), name);
+	
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, NULL, NULL, TRUE);
+
+	g_free(url);
+	g_free(postdata);
 }
+
+// TODO
+// add_allow
+// POST https://teams.microsoft.com/api/mt/beta/userSettings/acceptlist/manage
+// {
+//	"add": ["8:orgid:...."]
+//}
 
 
 void

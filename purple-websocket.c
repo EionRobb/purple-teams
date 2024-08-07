@@ -1,15 +1,17 @@
 #include <errno.h>
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>
-
-#ifdef _WIN32
-#include <winsock2.h>
-#endif
 
 #include <cipher.h>
 #include <debug.h>
 #include <sslconn.h>
+
+#ifdef _WIN32
+#include "win32/win32dep.h"
+#else
+#include <unistd.h>
+#endif
+
 
 #include "purple-websocket.h"
 
@@ -253,6 +255,7 @@ static size_t ws_read_message(PurpleWebsocket *ws) {
 					break;
 				default:
 					ws_error(ws, "Unknown frame op");
+					return 0;
 			}
 			return off;
 		}
@@ -294,9 +297,9 @@ static void ws_input_cb(gpointer data, G_GNUC_UNUSED gint source, PurpleInputCon
 	PurpleWebsocket *ws = data;
 
 	if (cond & PURPLE_INPUT_WRITE) {
-		ssize_t len = ws->output.off >= ws->output.len ? 0 :
+		gssize len = ws->output.off >= ws->output.len ? 0 :
 			ws->ssl_connection
-			? (ssize_t)purple_ssl_write(ws->ssl_connection, ws->output.buf + ws->output.off, ws->output.len - ws->output.off)
+			? purple_ssl_write(ws->ssl_connection, ws->output.buf + ws->output.off, ws->output.len - ws->output.off)
 			: write(ws->fd, ws->output.buf + ws->output.off, ws->output.len - ws->output.off);
 
 		if (len < 0) {
@@ -319,8 +322,8 @@ static void ws_input_cb(gpointer data, G_GNUC_UNUSED gint source, PurpleInputCon
 
 	while (cond & PURPLE_INPUT_READ) {
 		g_return_if_fail(ws->input.off < ws->input.len);
-		ssize_t len = ws->ssl_connection
-			? (ssize_t)purple_ssl_read(ws->ssl_connection, ws->input.buf + ws->input.off, ws->input.siz - ws->input.off)
+		gssize len = ws->ssl_connection
+			? purple_ssl_read(ws->ssl_connection, ws->input.buf + ws->input.off, ws->input.siz - ws->input.off)
 			: read(ws->fd, ws->input.buf + ws->input.off, ws->input.siz - ws->input.off);
 
 		if (len < 0) {

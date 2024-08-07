@@ -17,11 +17,13 @@
  */
  
 #include "teams_messages.h"
+#include "purplecompat.h"
 #include "teams_util.h"
 #include "teams_connection.h"
 #include "teams_contacts.h"
-#include "teams_login.h"
 #include "teams_trouter.h"
+#include "teams_cards.h"
+#include "util.h"
 
 static GString* make_last_timestamp_setting(const gchar *convname) {
 	GString *rv = g_string_new(NULL);
@@ -142,6 +144,10 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 static gchar *
 teams_process_files_in_properties(JsonObject *properties, gchar **html)
 {
+	if (html == NULL) {
+		return NULL;
+	}
+
 	if (json_object_has_member(properties, "files")) {
 		const gchar *files_str = json_object_get_string_member(properties, "files");
 		JsonArray *files = json_decode_array(files_str, -1);
@@ -166,16 +172,55 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 		
 		json_array_unref(files);
 		
-		if (html != NULL) {
-			gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
-			g_free(*html);
-			*html = temp;
-		}
+		gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
+		g_free(*html);
+		*html = temp;
 		
 		g_string_free(files_string, TRUE);
 	}
 	
 	return *html;
+}
+
+static gchar *
+teams_process_cards_in_properties(JsonObject *properties, gchar **html)
+{
+	if (html == NULL) {
+		return NULL;
+	}
+
+	if (json_object_has_member(properties, "cards")) {
+		const gchar *cards_str = json_object_get_string_member(properties, "cards");
+		JsonArray *cards = json_decode_array(cards_str, -1);
+		GString *cards_string = g_string_new(NULL);
+		guint i, len = json_array_get_length(cards);
+
+		for(i = 0; i < len; i++) {
+			JsonObject *card = json_array_get_object_element(cards, i);
+			JsonObject *content = json_object_get_object_member(card, "content");
+			const gchar *contentType = json_object_get_string_member(card, "contentType");
+
+			gchar *card_html = teams_convert_card_to_html(content, contentType);
+			if (card_html == NULL) {
+				// Couldn't process or unknown content type, dump the raw data
+				card_html = teams_jsonobj_to_string(card);
+			}
+			g_string_append(cards_string, card_html);
+			g_string_append(cards_string, "<br>");
+			g_free(card_html);
+		}
+		
+		json_array_unref(cards);
+		
+		gchar *temp = g_strconcat(*html ? *html : "", cards_string->str, NULL);
+		g_free(*html);
+		*html = temp;
+		
+		g_string_free(cards_string, TRUE);
+	}
+	
+	return *html;
+
 }
 
 static gchar *
@@ -328,11 +373,41 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			PurpleChatUserFlags cbflags;
 			PurpleChatUser *cb; 
 			
+			from = teams_contact_url_to_name(from);
+			if (from == NULL) {
+				g_free(messagetype_parts);
+				g_return_if_reached();
+				return;
+			}
+
+			// Hard reset cbflags even if user changed settings while someone typing message.
+			cb = purple_chat_conversation_find_user(chatconv, from);
+			if (cb != NULL) {
+				cbflags = purple_chat_user_get_flags(cb);
+				
+				cbflags &= ~PURPLE_CHAT_USER_TYPING;
+				
+				purple_chat_user_set_flags(cb, cbflags);
+			
+			} else {
+				purple_chat_conversation_add_user(chatconv, from, NULL, PURPLE_CHAT_USER_NONE, FALSE);
+				cb = purple_chat_conversation_find_user(chatconv, from);
+			}
+
+			if (json_object_has_member(resource, "imdisplayname") || json_object_has_member(resource, "imDisplayName")) {
+				const gchar *displayname = json_object_get_string_member(resource, "imdisplayname");
+				if (displayname == NULL) {
+					displayname = json_object_get_string_member(resource, "imDisplayName");
+				}
+				
+				if (cb && displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
+					purple_chat_user_set_alias(cb, displayname);
+				}
+			}
+			
 			if (g_str_equal(messagetype, "RichText/UriObject")) {
 				PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
 				const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");
-				
-				from = teams_contact_url_to_name(from);
 				
 				if (from && *from) {
 					teams_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
@@ -352,16 +427,38 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					const gchar *swift_b64 = purple_xmlnode_get_attrib(swift, "b64");
 					gsize swift_b64_len;
 					guchar *swift_data = purple_base64_decode(swift_b64, &swift_b64_len);
+					JsonObject *swift_json = json_decode_object((const gchar *)swift_data, swift_b64_len);
+					JsonArray *swift_attachments = json_object_get_array_member(swift_json, "attachments");
+					guint i, len = json_array_get_length(swift_attachments);
+
+					//Process JSON blob of a Card into something vaguely HTML
 					
-					from = teams_contact_url_to_name(from);
-					html = purple_markup_escape_text((gchar *)swift_data, swift_b64_len);
+					if (swift_json == NULL || swift_attachments == NULL) {
+						// Couldn't process, dump the raw data
+						html = purple_markup_escape_text((gchar *)swift_data, swift_b64_len);
+						purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+						g_free(html);
+					} else {
+						for(i = 0; i < len; i++) {
+							JsonObject *attachment = json_array_get_object_element(swift_attachments, i);
+							JsonObject *content = json_object_get_object_member(attachment, "content");
+							const gchar *contentType = json_object_get_string_member(attachment, "contentType");
+
+							html = teams_convert_card_to_html(content, contentType);
+							if (html == NULL) {
+								// Couldn't process or unknown content type, dump the raw data
+								html = teams_jsonobj_to_string(content);
+							}
 					
-					//TODO process JSON blob of a Card into something vaguely HTML
-					purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+							purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+							
+							g_free(html);
+						}
+					}
 					
-					g_free(html);
 					html = NULL;
 					g_free(swift_data);
+					json_object_unref(swift_json);
 					message_processed = TRUE;
 				}
 				
@@ -370,32 +467,53 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					g_free(messagetype_parts);
 					return;
 				}
+			} else if (purple_strequal(messagetype, "RichText/Media_CallRecording") ||
+						purple_strequal(messagetype, "RichText/Media_LocalRecording")) {
+				PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
+				PurpleXmlNode *recordingStatus = purple_xmlnode_get_child(blob, "RecordingStatus");
+
+				if (recordingStatus) {
+					const gchar *recordingStatusValue = purple_xmlnode_get_attrib(recordingStatus, "status");
+					if (recordingStatusValue && *recordingStatusValue) {
+						if (purple_strequal(recordingStatusValue, "Initial")) {
+							html = g_strconcat("<b>", _("Call recording"), "</b>: ", _("Started"), NULL);
+
+						} else if (purple_strequal(recordingStatusValue, "ChunkFinished")) {
+							html = g_strconcat("<b>", _("Call recording"), "</b>: ", _("Processing"), NULL);
+
+						} else if (purple_strequal(recordingStatusValue, "Success")) {
+							PurpleXmlNode *title = purple_xmlnode_get_child(blob, "Title");
+							PurpleXmlNode *link = purple_xmlnode_get_child(blob, "a");
+							PurpleXmlNode *originalName = purple_xmlnode_get_child(blob, "OriginalName");
+							const gchar *titleValue = purple_xmlnode_get_data(title);
+							const gchar *linkHref = purple_xmlnode_get_attrib(link, "href");
+							const gchar *originalNameValue = purple_xmlnode_get_attrib(originalName, "v");
+
+							html = g_strconcat("<h2>", titleValue ? titleValue : "", "</h2><br/><b>", _("Call recording"), "</b>: ", _("Success"), " - <a href=\"", linkHref ? linkHref : "#", "\">", originalNameValue ? originalNameValue : "Recording.mp4", "</a>", NULL);
+
+						} else {
+							purple_debug_error("teams", "Unknown recording status: %s\n", recordingStatusValue);
+							html = g_strconcat("<b>", _("Call recording"), "</b>: ", recordingStatusValue, NULL);
+						}
+
+						purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV, html, composetimestamp);
+						g_free(html);
+						html = NULL;
+					}
+				}
+				purple_xmlnode_free(blob);
+				
+				g_free(messagetype_parts);
+				return;
+			} else if (purple_strequal(messagetype, "RichText/Media_CallTranscript")) {
+				html = g_strdup(_("Transcript is available"));
+				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV, html, composetimestamp);
+				g_free(html);
+				html = NULL;
 			}
 			
 			if (json_object_has_member(resource, "skypeemoteoffset")) {
 				skypeemoteoffset = g_ascii_strtoll(json_object_get_string_member(resource, "skypeemoteoffset"), NULL, 10);
-			}
-			
-			from = teams_contact_url_to_name(from);
-			if (from == NULL) {
-				g_free(messagetype_parts);
-				g_return_if_reached();
-				return;
-			}
-			
-			// Hard reset cbflags even if user changed settings while someone typing message.
-			
-			cb = purple_chat_conversation_find_user(chatconv, from);
-			if (cb != NULL) {
-				cbflags = purple_chat_user_get_flags(cb);
-				
-				cbflags &= ~PURPLE_CHAT_USER_TYPING;
-				
-				purple_chat_user_set_flags(cb, cbflags);
-			
-			} else {
-				purple_chat_conversation_add_user(chatconv, from, NULL, PURPLE_CHAT_USER_NONE, FALSE);
-				cb = purple_chat_conversation_find_user(chatconv, from);
 			}
 			
 			if (content && *content) {
@@ -446,18 +564,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					
 				} else {
 					html = teams_process_files_in_properties(properties, &html);
-					
-				}
-			}
-			
-			if (json_object_has_member(resource, "imdisplayname") || json_object_has_member(resource, "imDisplayName")) {
-				const gchar *displayname = json_object_get_string_member(resource, "imdisplayname");
-				if (displayname == NULL) {
-					displayname = json_object_get_string_member(resource, "imDisplayName");
-				}
-				
-				if (cb && displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
-					purple_chat_user_set_alias(cb, displayname);
+					html = teams_process_cards_in_properties(properties, &html);
+
 				}
 			}
 			
@@ -649,7 +757,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				const gchar *count = purple_xmlnode_get_attrib(partlist, "count");
 				if (!count) {
 					// Add join link:  https://teams.microsoft.com/l/meetup-join/{convID}/0
-					message = g_strconcat(_("Call started"), " - https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
+					message = g_strconcat(_("Call started"), " - <a href=\"https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0\">", _("Join Teams Meeting"), "</a>", NULL);
 				} else {
 					// someone left
 				}
@@ -774,6 +882,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				
 				} else {
 					html = teams_process_files_in_properties(properties, &html);
+					html = teams_process_cards_in_properties(properties, &html);
 					
 				}
 			}
@@ -794,7 +903,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 			}
 			
-			if (html != NULL && *html && !purple_strequal(convbuddyname, "48:calllogs")) {
+			if (html != NULL && *html && !purple_strequal(convbuddyname, "48:calllogs") && !purple_strequal(convbuddyname, "48:annotations")) {
 				const gchar *modified_convbuddyname = convbuddyname;
 				//Handle self-send messages
 				if (purple_strequal(convbuddyname, "48:notes")) {
@@ -855,8 +964,6 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			if (!teams_is_user_self(sa, from)) {
 				
 				teams_present_uri_as_filetransfer(sa, uri, from);
-				
-				from = convbuddyname;
 			}
 			purple_xmlnode_free(blob);
 		} else if (g_str_equal(messagetype, "RichText/Media_CallRecording")) {
@@ -898,45 +1005,42 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			}
 
 			if (from != NULL) {
-				if (partlisttype) {
-					imconv = purple_conversations_find_im_with_account(from, sa->account);
-					if (imconv == NULL)
-					{
-						imconv = purple_im_conversation_new(sa->account, from);
-					}
+				imconv = purple_conversations_find_im_with_account(from, sa->account);
+				if (imconv == NULL)
+				{
+					imconv = purple_im_conversation_new(sa->account, from);
+				}
+				
+				conv = PURPLE_CONVERSATION(imconv);
+				if (content == NULL || strstr(content, "<ended/>")) {
+					message = g_strdup(_("Call ended"));
+				} else if (!partlisttype || g_str_equal(partlisttype, "started")) {
+					message = g_strconcat(_("Call started"), " - <a href=\"https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0\">", _("Join Teams Meeting"), "</a>", NULL);
+
+				} else if (g_str_equal(partlisttype, "ended")) {
+					PurpleXmlNode *part;
+					gint duration_int = -1;
 					
-					conv = PURPLE_CONVERSATION(imconv);
-					if (g_str_equal(partlisttype, "started")) {
-						message = g_strconcat(_("Call started"), " - https://", TEAMS_BASE_ORIGIN_HOST, "/l/meetup-join/", purple_url_encode(chatname), "/0", NULL);
-						
-					} else if (g_str_equal(partlisttype, "ended")) {
-						PurpleXmlNode *part;
-						gint duration_int = -1;
-						
-						for(part = purple_xmlnode_get_child(partlist, "part");
-							part;
-							part = purple_xmlnode_get_next_twin(part))
-						{
-							const gchar *identity = purple_xmlnode_get_attrib(part, "identity");
-							if (identity && teams_is_user_self(sa, identity)) {
-								PurpleXmlNode *duration = purple_xmlnode_get_child(part, "duration");
-								if (duration != NULL) {
-									gchar *duration_str;
-									duration_str = purple_xmlnode_get_data(duration);
-									duration_int = atoi(duration_str);
-									break;
-								}
+					for(part = purple_xmlnode_get_child(partlist, "part");
+						part;
+						part = purple_xmlnode_get_next_twin(part))
+					{
+						const gchar *identity = purple_xmlnode_get_attrib(part, "identity");
+						if (identity && teams_is_user_self(sa, identity)) {
+							PurpleXmlNode *duration = purple_xmlnode_get_child(part, "duration");
+							if (duration != NULL) {
+								gchar *duration_str;
+								duration_str = purple_xmlnode_get_data(duration);
+								duration_int = atoi(duration_str);
+								break;
 							}
 						}
-						if (duration_int < 0) {
-							message = g_strdup(_("Call missed"));
-						} else {
-							message = g_strdup_printf("%s %d:%d", _("Call ended"), duration_int / 60, duration_int % 60);
-						}
 					}
-				}
-				else {
-					message = g_strdup(_("Unsupported call received"));
+					if (duration_int < 0) {
+						message = g_strdup(_("Call missed"));
+					} else {
+						message = g_strdup_printf("%s %d:%d", _("Call ended"), duration_int / 60, duration_int % 60);
+					}
 				}
 
 				purple_serv_got_im(sa->pc, from, message, PURPLE_MESSAGE_RECV | PURPLE_MESSAGE_SYSTEM, composetimestamp);
@@ -1020,15 +1124,15 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		const gchar *id = json_object_get_string_member(resource, "id");
 		
 		g_free(purple_conversation_get_data(conv, "last_teams_id"));
+		g_free(purple_conversation_get_data(conv, "last_teams_clientmessageid"));
 		
 		if (purple_conversation_has_focus(conv) && convname && *convname) {
 			// Mark message as seen straight away
 			gchar *post, *url;
 			
-			//TODO
 			url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
 			// Should be [messageId];[timestampInMillis];[clientMessageId]
-			post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", id ? id : "", teams_get_js_time(), id ? id : "");
+			post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", id ? id : "", teams_get_js_time(), clientmessageid ? clientmessageid : "");
 			
 			teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
 			
@@ -1036,8 +1140,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			g_free(url);
 			
 			purple_conversation_set_data(conv, "last_teams_id", NULL);
+			purple_conversation_set_data(conv, "last_teams_clientmessageid", NULL);
 		} else {
 			purple_conversation_set_data(conv, "last_teams_id", g_strdup(id));
+			purple_conversation_set_data(conv, "last_teams_clientmessageid", g_strdup(clientmessageid));
 		}
 	}
 	
@@ -1180,8 +1286,10 @@ gboolean
 teams_timeout(gpointer userdata)
 {
 	TeamsAccount *sa = userdata;
-	teams_poll(sa);
-	
+	if (!purple_account_get_bool(sa->account, "only_use_websocket", FALSE)) {
+		teams_poll(sa);
+	}
+
 	// If no response within 1 minute, assume connection lost and try again
 	g_source_remove(sa->watchdog_timeout);
 	sa->watchdog_timeout = g_timeout_add_seconds(60, teams_timeout, sa);
@@ -1193,7 +1301,20 @@ void
 teams_process_event_message(TeamsAccount *sa, JsonObject *message)
 {
 	const gchar *resourceType = json_object_get_string_member(message, "resourceType");
+	const gchar *time = json_object_get_string_member(message, "time");
 	JsonObject *resource = json_object_get_object_member(message, "resource");
+
+	if (time != NULL) {
+		if (g_queue_find_custom(sa->processed_event_messages, time, (GCompareFunc) g_strcmp0)) {
+			// Already processed this message
+			return;
+		}
+		g_queue_push_head(sa->processed_event_messages, g_strdup(time));
+		if (g_queue_get_length(sa->processed_event_messages) > TEAMS_MAX_PROCESSED_EVENT_BUFFER) {
+			// Remove oldest message
+			g_queue_pop_tail(sa->processed_event_messages);
+		}
+	}
 	
 	if (purple_strequal(resourceType, "NewMessage"))
 	{
@@ -1347,6 +1468,7 @@ teams_mark_conv_seen(PurpleConversation *conv, PurpleConversationUpdateType type
 	
 	if (type == PURPLE_CONVERSATION_UPDATE_UNSEEN) {
 		gchar *last_teams_id = purple_conversation_get_data(conv, "last_teams_id");
+		gchar *last_teams_clientmessageid = purple_conversation_get_data(conv, "last_teams_clientmessageid");
 		
 		if (last_teams_id && *last_teams_id) {
 			TeamsAccount *sa = purple_connection_get_protocol_data(pc);
@@ -1362,18 +1484,20 @@ teams_mark_conv_seen(PurpleConversation *conv, PurpleConversationUpdateType type
 			if (convname && *convname) {
 				url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
 				// Should be [messageId];[timestampInMillis];[clientMessageId]
-				post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", last_teams_id, teams_get_js_time(), last_teams_id);
+				post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", last_teams_id, teams_get_js_time(), last_teams_clientmessageid);
 				
 				teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, NULL, NULL, TRUE);
 				
 				g_free(convname);
 				g_free(post);
 				g_free(url);
-			
 			}
-			g_free(last_teams_id);
-			purple_conversation_set_data(conv, "last_teams_id", NULL);
 		}
+
+		g_free(last_teams_id);
+		g_free(last_teams_clientmessageid);
+		purple_conversation_set_data(conv, "last_teams_id", NULL);
+		purple_conversation_set_data(conv, "last_teams_clientmessageid", NULL);
 	}
 }
 
@@ -1853,23 +1977,29 @@ teams_subscribe_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
 	JsonObject *obj = json_node_get_object(node);
 	JsonArray *subscriptions = json_object_get_array_member(obj, "subscriptions");
+	guint i, len;
 	
 	if (subscriptions != NULL) {
-		JsonObject *sub = json_array_get_object_element(subscriptions, 0);
-		if (sub != NULL) {
-			// TODO check channelType is HttpLongPoll
-			const gchar *longpollurl = json_object_get_string_member(sub, "longPollUrl");
-			gchar *next_server = teams_string_get_chunk(longpollurl, -1, "https://", "/users");
-			
-			if (next_server != NULL) {
-				g_free(sa->messages_host);
-				sa->messages_host = next_server;
-			}
-			
-			gchar *cursor = teams_string_get_chunk(longpollurl, -1, "?cursor=", NULL);
-			if (cursor != NULL) {
-				g_free(sa->messages_cursor);
-				sa->messages_cursor = cursor;
+		len = json_array_get_length(subscriptions);
+		for(i = 0; i < len; i++) {
+			JsonObject *sub = json_array_get_object_element(subscriptions, i);
+
+			const gchar * channelType = json_object_get_string_member(sub, "channelType");
+			if (purple_strequal(channelType, "HttpLongPoll")) {
+				// We have a longpoll url
+				const gchar *longpollurl = json_object_get_string_member(sub, "longPollUrl");
+				gchar *next_server = teams_string_get_chunk(longpollurl, -1, "https://", "/users");
+				
+				if (next_server != NULL) {
+					g_free(sa->messages_host);
+					sa->messages_host = next_server;
+				}
+				
+				gchar *cursor = teams_string_get_chunk(longpollurl, -1, "?cursor=", NULL);
+				if (cursor != NULL) {
+					g_free(sa->messages_cursor);
+					sa->messages_cursor = cursor;
+				}
 			}
 		}
 	}
@@ -1906,6 +2036,7 @@ teams_subscribe_with_callback(TeamsAccount *sa, TeamsProxyCallbackFunc callback)
 	if (sa->trouter_surl != NULL) {
 		JsonObject *trouter_sub = json_object_new();
 		json_object_set_string_member(trouter_sub, "channelType", "TrouterPush");
+		json_object_set_string_member(trouter_sub, "longPollUrl", sa->trouter_surl);
 		json_object_set_array_member(trouter_sub, "interestedResources", json_array_ref(interested));
 		json_array_add_object_element(subscriptions, trouter_sub);
 	}
@@ -1913,7 +2044,14 @@ teams_subscribe_with_callback(TeamsAccount *sa, TeamsProxyCallbackFunc callback)
 	post = teams_jsonobj_to_string(obj);
 
 	if (!sa->endpoint) {
-		sa->endpoint = purple_uuid_random();
+		// Prevent running out of endpoints aka "Endpoint limit exceeded"
+		const gchar *endpoint = purple_account_get_string(sa->account, "endpoint", NULL);
+		if (!endpoint || !*endpoint) {
+			sa->endpoint = purple_uuid_random();
+			purple_account_set_string(sa->account, "endpoint", sa->endpoint);
+		} else {
+			sa->endpoint = g_strdup(endpoint);
+		}
 	}
 
 	gchar *url = g_strdup_printf("/v2/users/ME/endpoints/%s", purple_url_encode(sa->endpoint));
@@ -2050,8 +2188,13 @@ static void
 teams_set_endpoint_statusid(TeamsAccount *sa, const gchar *status)
 {
 	gchar *post;
+	PurplePresence *presence;
+	const gchar *activity;
 	
 	g_return_if_fail(status);
+
+	presence = purple_account_get_presence(sa->account);
+	activity = purple_presence_is_idle(presence) ? "Away" : "Available";
 
 	// This lets the 'reportmyactivity' idle/active endpoint work
 	// and sets our status only on this endpoint
@@ -2064,7 +2207,7 @@ teams_set_endpoint_statusid(TeamsAccount *sa, const gchar *status)
 	//	"capabilities": ["Audio", "Video"],
 	// 	"deviceType": "Desktop"
 	// }
-	post = g_strdup_printf("{\"id\":\"%s\",\"availability\":\"%s\",\"deviceType\":\"Desktop\"}", sa->endpoint, status);
+	post = g_strdup_printf("{\"id\":\"%s\",\"availability\":\"%s\",\"activity\":\"%s\",\"activityReporting\":\"Transport\",\"deviceType\":\"Desktop\"}", sa->endpoint, status, activity);
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/endpoints/", post, NULL, NULL, TRUE);
 	g_free(post);
 }

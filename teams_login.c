@@ -23,7 +23,6 @@
 
 #define TEAMS_GUID_REGEX_PATTERN "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
-
 void
 teams_logout(TeamsAccount *sa)
 {
@@ -50,7 +49,11 @@ teams_get_tenant_host(const gchar *tenant)
 		}
 		
 	} else {
-		tenant_host = g_strdup("Common");
+#ifdef ENABLE_TEAMS_PERSONAL
+		tenant_host = g_strdup("consumers");
+#else
+		tenant_host = g_strdup("organizations");
+#endif
 	}
 
 	return tenant_host;
@@ -280,11 +283,15 @@ teams_oauth_refreshed_skypetoken_access(PurpleHttpConnection *http_conn, PurpleH
 	raw_response = purple_http_response_get_data(response, &response_len);
 	obj = json_decode_object(raw_response, response_len);
 
-	if (purple_http_response_is_successful(response) && obj)
+	if (obj)
 	{
-		const gchar *id_token = json_object_get_string_member(obj, "access_token");
-		
-		teams_login_get_api_skypetoken(sa, NULL, NULL, id_token);
+		if (purple_http_response_is_successful(response))
+		{
+			const gchar *id_token = json_object_get_string_member(obj, "access_token");
+			
+			teams_login_get_api_skypetoken(sa, NULL, NULL, id_token);
+		}
+		json_object_unref(obj);
 	}
 }
 
@@ -568,10 +575,11 @@ teams_do_web_auth(TeamsAccount *sa)
 	const gchar *tenant_host;
 	gchar *auth_url;
 	
-	//https://login.microsoftonline.com/Common/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&amr_values=mfa
+	//https://login.microsoftonline.com/organizations/oauth2/authorize?resource=https%3A%2F%2Fapi.spaces.skype.com&client_id=1fec8e78-bce4-4aaf-ab1b-5451cc387264&response_type=code&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient&prompt=select_account&display=popup&amr_values=mfa
 	
 	tenant_host = teams_get_tenant_host(sa->tenant);
-	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/authorize?client_id=", TEAMS_OAUTH_CLIENT_ID, "&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient", NULL);
+
+	auth_url = g_strconcat("https://login.microsoftonline.com/", purple_url_encode(tenant_host), "/oauth2/authorize?client_id=", TEAMS_OAUTH_CLIENT_ID, "&response_type=code&display=popup&prompt=select_account&amr_values=mfa&redirect_uri=", purple_url_encode(TEAMS_OAUTH_REDIRECT_URI), NULL);
 	
 	purple_notify_uri(pc, auth_url);
 	purple_request_input(pc, _("Authorization Code"), auth_url,
@@ -712,10 +720,16 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		gchar *message;
 
 		if (interval == 0) {
-			interval = atoi(json_object_get_string_member(obj, "interval"));
+			const gchar *interval_str = json_object_get_string_member(obj, "interval");
+			if (interval_str != NULL) {
+				interval = atoi(interval_str);
+			}
 		}
 		if (expires_in == 0) {
-			expires_in = atoi(json_object_get_string_member(obj, "expires_in"));
+			const gchar *expires_in_str = json_object_get_string_member(obj, "expires_in");
+			if (expires_in_str != NULL) {
+				expires_in = atoi(expires_in_str);
+			}
 		}
 		if (verification_url == NULL) {
 			verification_url = json_object_get_string_member(obj, "verification_uri");
@@ -730,6 +744,10 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		purple_notify_uri(sa->pc, verification_url);
 		purple_notify_message(sa->pc, PURPLE_NOTIFY_MSG_INFO, _("Authorization Code"),
 			message, NULL, NULL, NULL);
+
+		if (g_strcmp0(purple_core_get_ui(), "spectrum") == 0) {
+			purple_serv_got_im(sa->pc, "TeamsLogin", message, PURPLE_MESSAGE_RECV, time(NULL));
+		}
 		
 		g_free(message);
 		
@@ -809,3 +827,4 @@ teams_do_devicecode_login(TeamsAccount *sa)
 // https://api.myaccount.microsoft.com/api/organizations triggered by https://myaccount.microsoft.com/organizations
 // https://graph.microsoft.com/beta/tenantRelationships/getResourceTenants?$select=tenantId,displayName
 // https://teams.microsoft.com/api/mt/apac/beta/users/tenants
+// https://portal.azure.com/#view/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/~/Properties

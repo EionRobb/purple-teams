@@ -114,6 +114,7 @@
 
 #define TEAMS_CALENDAR_REFRESH_MINUTES 15
 #define TEAMS_MAX_MSG_RETRY 2
+#define TEAMS_MAX_PROCESSED_EVENT_BUFFER 10
 
 #define TEAMS_PLUGIN_ID "prpl-eionrobb-msteams"
 #define TEAMS_PLUGIN_VERSION "1.0"
@@ -152,7 +153,9 @@
 #define TEAMS_VDMS_TTL 300
 
 #define TEAMS_CLIENTINFO_NAME "skypeteams"
-#define TEAMS_CLIENTINFO_VERSION "1417/5.23.77.2023235003"
+#define TEAMS_CLIENTINFO_VERSION "49/24062722442"
+#define TEAMS_USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0 Teams/24165.1410.2974.6689/49"
+
 
 
 #define TEAMS_BUDDY_IS_MSN(a) G_UNLIKELY((a) != NULL && strchr((a), '@') != NULL)
@@ -212,11 +215,14 @@ struct _TeamsAccount {
 	guint friend_list_poll_timeout;
 	GHashTable *calendar_reminder_timeouts;
 	guint calendar_poll_timeout;
+	GQueue *processed_event_messages;
 	
 	struct _PurpleWebsocket *trouter_socket;
 	gchar *trouter_surl;
 	guint trouter_ping_timeout;
 	guint trouter_command_count;
+	guint trouter_registration_timeout;
+	JsonObject *trouter_socket_obj;
 
 	//devicecode login
 	gchar *login_device_code;

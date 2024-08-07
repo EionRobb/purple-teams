@@ -1,6 +1,6 @@
 /*
  * Teams Plugin for libpurple/Pidgin
- * Copyright (c) 2014-2022 Eion Robb
+ * Copyright (c) 2014-2024 Eion Robb
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,16 +16,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
  
-#ifndef TEAMS_TROUTER_H
-#define TEAMS_TROUTER_H
+#ifndef TEAMS_CARDS_H
+#define TEAMS_CARDS_H
 
 #include "libteams.h"
-#include "purple-websocket.h"
 
-void teams_trouter_begin(TeamsAccount *sa);
-void teams_trouter_stop(TeamsAccount *sa);
-gboolean teams_trouter_send_message(TeamsAccount *sa, const gchar *message);
-gboolean teams_trouter_send_ephemeral_message(TeamsAccount *sa, const gchar *message);
-void teams_trouter_send_active(TeamsAccount *sa, gboolean active);
+gchar *teams_convert_card_to_html(JsonObject *content, const gchar *content_type);
 
-#endif /*TEAMS_TROUTER_H*/
+#endif
