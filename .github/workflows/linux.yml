@@ -31,11 +31,6 @@ jobs:
             name: plugin 
             path: lib*.so
 
-      - name: attest
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-path: lib*.so
-
       - name: release
         if: ${{ !env.ACT }}
         uses: ncipollo/release-action@v1
@@ -45,3 +40,9 @@ jobs:
           name: Nightly ${{ github.sha }}
           allowUpdates: true
           makeLatest: true
+
+      - name: attest
+        if: ${{ !env.ACT }}
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: lib*.so
