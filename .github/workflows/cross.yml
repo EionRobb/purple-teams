@@ -71,3 +71,9 @@ jobs:
         with: 
             name: plugin 
             path: lib*.dll
+
+      - name: release
+        if: ${{ !env.ACT }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: lib*.dll
