@@ -74,6 +74,8 @@ jobs:
 
       - name: release
         if: ${{ !env.ACT }}
-        uses: softprops/action-gh-release@v2
+        uses: ncipollo/release-action@v1
         with:
-          files: lib*.dll
+          artifacts: lib*.dll
+          name: ${{ github.sha }}
+          allowUpdates: true

@@ -28,6 +28,8 @@ jobs:
 
       - name: release
         if: ${{ !env.ACT }}
-        uses: softprops/action-gh-release@v2
+        uses: ncipollo/release-action@v1
         with:
-          files: lib*.so
+          artifacts: lib*.so
+          name: ${{ github.sha }}
+          allowUpdates: true
