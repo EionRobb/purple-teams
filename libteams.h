@@ -240,6 +240,7 @@ struct _TeamsBuddy {
 	gchar *display_name;
 	gboolean authorized;
 	gboolean blocked;
+	gchar *tenant;
 	
 	/** Profile info */
 	gchar *avatar_url;

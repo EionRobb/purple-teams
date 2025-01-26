@@ -1186,6 +1186,7 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *new_avatar;
 		const gchar *displayName = json_object_get_string_member(contact, "displayName");
 		const gchar *givenName = json_object_get_string_member(contact, "givenName");
+		const gchar *tenantName = json_object_get_string_member(contact, "tenantName");
 		
 		buddy = purple_blist_find_buddy(sa->account, username);
 		if (!buddy)
@@ -1209,6 +1210,7 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		}
 		
 		if (!purple_strequal(json_object_get_string_member(contact, "email"), givenName)) {
+			g_free(sbuddy->fullname);
 			if (json_object_has_member(contact, "surname")) {
 				gchar *fullname = g_strconcat(givenName, " ", json_object_get_string_member(contact, "surname"), NULL);
 				
@@ -1216,13 +1218,17 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 					purple_buddy_set_server_alias(buddy, fullname);
 				}
 				
-				g_free(fullname);
+				sbuddy->fullname = fullname;
 			} else {
 				if (givenName && *givenName) {
 					purple_buddy_set_server_alias(buddy, givenName);
+					sbuddy->fullname = g_strdup(givenName);
 				}
 			}
 		}
+
+		g_free(sbuddy->tenant);
+		sbuddy->tenant = g_strdup(tenantName);
 		
 		// Only bots have images
 		new_avatar = json_object_get_string_member(contact, "imageUri");
@@ -1243,23 +1249,38 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 	GString *postdata;
 	GSList *cur = contacts;
 	const gchar *user_prefix;
-	
+	const gint max_contacts = 900;
+	gint count = 0;
+
 	if (contacts == NULL)
 		return;
-	
+
 	postdata = g_string_new("[\"\"");
-	
+
 	do {
 		user_prefix = teams_user_url_prefix(cur->data);
 		if (g_str_equal(user_prefix, "8:") && strncmp(cur->data, "orgid:", 6) != 0) continue;
 		g_string_append_printf(postdata, ",\"%s%s\"", user_prefix, (gchar *) cur->data);
+		count++;
+
+		if (count >= max_contacts) {
+			g_string_append(postdata, "]");
+			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+			g_string_free(postdata, TRUE);
+
+			postdata = g_string_new("[\"\"");
+			count = 0;
+		}
 	} while((cur = g_slist_next(cur)));
+
+	if (count > 0) {	
+		g_string_append(postdata, "]");
 	
-	g_string_append(postdata, "]");
-	
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
-	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
-	
+		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+	}
+
 	g_string_free(postdata, TRUE);
 }
 
@@ -1318,6 +1339,7 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *firstname = json_object_get_string_member(userobj, "givenName");
 		const gchar *surname = json_object_get_string_member(userobj, "surname");
 		const gchar *display_name = json_object_get_string_member(userobj, "displayName");
+		const gchar *tenantName = json_object_get_string_member(userobj, "tenantName");
 		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
 		
 		if (sbuddy == NULL) {
@@ -1325,22 +1347,28 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			sbuddy = g_new0(TeamsBuddy, 1);
 			sbuddy->skypename = g_strdup(username);
 			sbuddy->sa = sa;
-			sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
-			sbuddy->display_name = g_strdup(display_name);
 			
 			sbuddy->buddy = buddy;
 			purple_buddy_set_protocol_data(buddy, sbuddy);
 			
 		} else {
-			sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
-			sbuddy->display_name = g_strdup(display_name);
+			g_free(sbuddy->fullname);
+			g_free(sbuddy->display_name);
+			g_free(sbuddy->tenant);
 		}
+		
+		sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
+		sbuddy->display_name = g_strdup(display_name);
+		sbuddy->tenant = g_strdup(tenantName);
 		
 		if (sbuddy->display_name && *sbuddy->display_name && !purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name)) {
 			purple_serv_got_alias(sa->pc, username, sbuddy->display_name);
 		}
-		if (sbuddy->fullname && *sbuddy->fullname && !purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
-			purple_buddy_set_server_alias(buddy, sbuddy->fullname);
+		if (!purple_strequal(json_object_get_string_member(userobj, "email"), firstname)) {
+			sbuddy->fullname = g_strconcat(firstname, (surname ? " " : NULL), surname, NULL);
+			if (sbuddy->fullname && *sbuddy->fullname && !purple_strequal(purple_buddy_get_server_alias(buddy), sbuddy->fullname)) {
+				purple_buddy_set_server_alias(buddy, sbuddy->fullname);
+			}
 		}
 	}
 	

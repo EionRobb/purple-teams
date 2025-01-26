@@ -144,12 +144,17 @@ teams_tooltip_text(PurpleBuddy *buddy, PurpleNotifyUserInfo *user_info, gboolean
 			
 		if (sbuddy->display_name && *sbuddy->display_name) {
 			gchar *escaped = g_markup_printf_escaped("%s", sbuddy->display_name);
-			purple_notify_user_info_add_pair_html(user_info, "Alias", escaped);
+			purple_notify_user_info_add_pair_html(user_info, _("Alias"), escaped);
 			g_free(escaped);
 		}
 		if (sbuddy->fullname && *sbuddy->fullname) {
 			gchar *escaped = g_markup_printf_escaped("%s", sbuddy->fullname);
-			purple_notify_user_info_add_pair_html(user_info, "Full Name", escaped);
+			purple_notify_user_info_add_pair_html(user_info, _("Full Name"), escaped);
+			g_free(escaped);
+		}
+		if (sbuddy->tenant && *sbuddy->tenant) {
+			gchar *escaped = g_markup_printf_escaped("%s", sbuddy->tenant);
+			purple_notify_user_info_add_pair_html(user_info, _("Tenant"), escaped);
 			g_free(escaped);
 		}
 	}
@@ -314,6 +319,7 @@ teams_buddy_free(PurpleBuddy *buddy)
 		g_free(sbuddy->display_name);
 		g_free(sbuddy->avatar_url);
 		g_free(sbuddy->mood);
+		g_free(sbuddy->tenant);
 		
 		g_free(sbuddy);
 	}
