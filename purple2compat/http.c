@@ -1709,14 +1709,15 @@ static void purple_http_connection_free(PurpleHttpConnection *hc)
 	if (hc->gc) {
 		GList *gc_list, *gc_list_new;
 		gc_list = g_hash_table_lookup(purple_http_hc_by_gc, hc->gc);
-		g_assert(gc_list != NULL);
-
-		gc_list_new = g_list_delete_link(gc_list, hc->link_gc);
-		if (gc_list != gc_list_new) {
-			g_hash_table_steal(purple_http_hc_by_gc, hc->gc);
-			if (gc_list_new)
-				g_hash_table_insert(purple_http_hc_by_gc,
-					hc->gc, gc_list_new);
+		
+		if(gc_list != NULL) {
+			gc_list_new = g_list_delete_link(gc_list, hc->link_gc);
+			if (gc_list != gc_list_new) {
+				g_hash_table_steal(purple_http_hc_by_gc, hc->gc);
+				if (gc_list_new)
+					g_hash_table_insert(purple_http_hc_by_gc,
+						hc->gc, gc_list_new);
+			}
 		}
 	}
 
