@@ -330,7 +330,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				topic = json_object_get_string_member(resource, "threadtopic");
 				purple_chat_conversation_set_topic(chatconv, NULL, topic);
 			}
-				
+			
 			teams_get_conversation_history(sa, chatname);
 			teams_get_thread_users(sa, chatname);
 		}
@@ -346,6 +346,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 
 			from = teams_contact_url_to_name(from);
 			if (from == NULL) {
+				g_free(convname);
 				g_strfreev(messagetype_parts);
 				g_return_if_reached();
 				return;
@@ -375,7 +376,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			
 			from = teams_contact_url_to_name(from);
 			if (from == NULL) {
-				g_free(messagetype_parts);
+				g_free(convname);
+				g_strfreev(messagetype_parts);
 				g_return_if_reached();
 				return;
 			}
@@ -414,7 +416,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 				purple_xmlnode_free(blob);
 				
-				g_free(messagetype_parts);
+				g_free(convname);
+				g_strfreev(messagetype_parts);
 				return;
 				
 			} else if (purple_strequal(messagetype, "RichText/Media_Card")) {
@@ -464,7 +467,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				
 				purple_xmlnode_free(uriobject);
 				if (message_processed) {
-					g_free(messagetype_parts);
+					g_free(convname);
+					g_strfreev(messagetype_parts);
 					return;
 				}
 			} else if (purple_strequal(messagetype, "RichText/Media_CallRecording") ||
@@ -485,12 +489,13 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 							PurpleXmlNode *title = purple_xmlnode_get_child(blob, "Title");
 							PurpleXmlNode *link = purple_xmlnode_get_child(blob, "a");
 							PurpleXmlNode *originalName = purple_xmlnode_get_child(blob, "OriginalName");
-							const gchar *titleValue = purple_xmlnode_get_data(title);
+							gchar *titleValue = purple_xmlnode_get_data(title);
 							const gchar *linkHref = purple_xmlnode_get_attrib(link, "href");
 							const gchar *originalNameValue = purple_xmlnode_get_attrib(originalName, "v");
 
 							html = g_strconcat("<h2>", titleValue ? titleValue : "", "</h2><br/><b>", _("Call recording"), "</b>: ", _("Success"), " - <a href=\"", linkHref ? linkHref : "#", "\">", originalNameValue ? originalNameValue : "Recording.mp4", "</a>", NULL);
 
+							g_free(titleValue);
 						} else {
 							purple_debug_error("teams", "Unknown recording status: %s\n", recordingStatusValue);
 							html = g_strconcat("<b>", _("Call recording"), "</b>: ", recordingStatusValue, NULL);
@@ -503,7 +508,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 				purple_xmlnode_free(blob);
 				
-				g_free(messagetype_parts);
+				g_free(convname);
+				g_strfreev(messagetype_parts);
 				return;
 			} else if (purple_strequal(messagetype, "RichText/Media_CallTranscript")) {
 				html = g_strdup(_("Transcript is available"));
@@ -1032,6 +1038,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 								gchar *duration_str;
 								duration_str = purple_xmlnode_get_data(duration);
 								duration_int = atoi(duration_str);
+								g_free(duration_str);
 								break;
 							}
 						}
