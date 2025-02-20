@@ -127,7 +127,6 @@ teams_tooltip_text(PurpleBuddy *buddy, PurpleNotifyUserInfo *user_info, gboolean
 	{
 		PurplePresence *presence;
 		PurpleStatus *status;
-		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
 
 		presence = purple_buddy_get_presence(buddy);
 		status = purple_presence_get_active_status(presence);
@@ -314,12 +313,12 @@ teams_buddy_free(PurpleBuddy *buddy)
 	{
 		purple_buddy_set_protocol_data(buddy, NULL);
 
-		g_free(sbuddy->skypename);
-		g_free(sbuddy->fullname);
-		g_free(sbuddy->display_name);
-		g_free(sbuddy->avatar_url);
-		g_free(sbuddy->mood);
-		g_free(sbuddy->tenant);
+		g_free(sbuddy->skypename); sbuddy->skypename = NULL;
+		g_free(sbuddy->fullname); sbuddy->fullname = NULL;
+		g_free(sbuddy->display_name); sbuddy->display_name = NULL;
+		g_free(sbuddy->avatar_url); sbuddy->avatar_url = NULL;
+		g_free(sbuddy->mood); sbuddy->mood = NULL;
+		g_free(sbuddy->tenant); sbuddy->tenant = NULL;
 		
 		g_free(sbuddy);
 	}
