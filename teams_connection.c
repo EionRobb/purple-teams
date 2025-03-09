@@ -43,12 +43,13 @@ teams_post_or_get_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 			conn->callback(conn->sa, NULL, conn->user_data);
 		} else {
 			JsonParser *parser = json_parser_new();
-			if (!json_parser_load_from_data(parser, data, len, NULL))
+			GError *error = NULL;
+			if (!json_parser_load_from_data(parser, data, len, &error))
 			{
 				if (conn->error_callback != NULL) {
 					conn->error_callback(conn->sa, data, len, conn->user_data);
 				} else {
-					purple_debug_error("teams", "Error parsing response: %s\n", data);
+					purple_debug_error("teams", "Error parsing response: %s (%s)\n", error ? error->message : "", data);
 				}
 			} else {
 				JsonNode *root = json_parser_get_root(parser);
@@ -96,6 +97,7 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 	
 	purple_http_request_set_max_redirects(request, 0);
 	purple_http_request_set_timeout(request, 120);
+	purple_http_request_set_max_len(request, -1);
 	
 	if (method & (TEAMS_METHOD_POST | TEAMS_METHOD_PUT)) {
 		if (postdata && (postdata[0] == '[' || postdata[0] == '{')) {
