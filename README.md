@@ -19,8 +19,6 @@ Pros
 
 Cons
 ----
-:-1: Doesn't support Teams For Personal/Free (see [this issue](https://github.com/EionRobb/purple-teams/issues/16), work in progress!)
-
 :-1: Doesn't support calls, provides direct links to the Teams website
 
 :-1: Threaded conversations are not Pidgin's strong point
