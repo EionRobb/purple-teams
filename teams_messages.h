@@ -59,6 +59,7 @@ void teams_chat_set_topic(PurpleConnection *pc, int id, const char *topic);
 
 void teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data);
 void teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts);
+void teams_subscribe_to_single_contact_status(TeamsAccount *sa, const gchar *username);
 void teams_unsubscribe_from_contact_status(TeamsAccount *sa, const gchar *who);
 void teams_get_conversation_history_since(TeamsAccount *sa, const gchar *convname, gint since);
 void teams_get_conversation_history(TeamsAccount *sa, const gchar *convname);

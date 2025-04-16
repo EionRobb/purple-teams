@@ -1175,6 +1175,10 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		return;
 	obj = json_node_get_object(node);
 	contacts = json_object_get_array_member(obj, "value");
+	if (contacts == NULL) {
+		// Different array key for the fetchTflConsumers call
+		contacts = json_object_get_array_member(obj, "resolvedUsers");
+	}
 	length = json_array_get_length(contacts);
 	
 	for(index = 0; index < length; index++)
@@ -1249,6 +1253,7 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 	//TODO users/fetch?isMailAddress=false&skypeTeamsInfo=true&includeIBBarredUsers=true
 	const gchar *profiles_url = TEAMS_PROFILES_PREFIX "users/fetchShortProfile?isMailAddress=false&canBeSmtpAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true";
 	const gchar *federated_profiles_url = TEAMS_PROFILES_PREFIX "users/fetchFederated";
+	const gchar *skype_profiles_url = TEAMS_PROFILES_PREFIX "users/fetchTflConsumers?edEnabled=false&includeDisabledAccounts=true";
 	GString *postdata;
 	GSList *cur = contacts;
 	const gchar *user_prefix;
@@ -1270,6 +1275,7 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 			g_string_append(postdata, "]");
 			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, skype_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 			g_string_free(postdata, TRUE);
 
 			postdata = g_string_new("[\"\"");
@@ -1282,6 +1288,7 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 	
 		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, skype_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 	}
 
 	g_string_free(postdata, TRUE);
@@ -1305,6 +1312,12 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	userobj = json_node_get_object(node);
 	if (json_object_has_member(userobj, "value")) {
 		node = json_object_get_member(userobj, "value");
+		
+		if (json_node_get_node_type(node) == JSON_NODE_ARRAY)
+			node = json_array_get_element(json_node_get_array(node), 0);
+		userobj = json_node_get_object(node);
+	} else if (json_object_has_member(userobj, "resolvedUsers")) {
+		node = json_object_get_member(userobj, "resolvedUsers");
 		
 		if (json_node_get_node_type(node) == JSON_NODE_ARRAY)
 			node = json_array_get_element(json_node_get_array(node), 0);
@@ -1375,6 +1388,11 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 				purple_buddy_set_server_alias(buddy, sbuddy->fullname);
 			}
 		}
+
+		// Force download their avatar again
+		teams_get_icon_now(buddy);
+		// Force update their online status
+		teams_subscribe_to_single_contact_status(sa, username);
 	}
 	
 	purple_notify_userinfo(sa->pc, username, user_info, NULL, NULL);
@@ -1395,12 +1413,17 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 	
 	g_free(url);
 	
-	// just in case they're a user on a different tenant:
-	
-	if (strncmp(username, "orgid:", 6) != 0) {
+	// Check if the user is a Skype user
+	if (!g_str_has_prefix(username, "orgid:")) {
+		url = TEAMS_PROFILES_PREFIX "users/fetchTflConsumers?edEnabled=false&includeDisabledAccounts=true";
+		postdata = g_strconcat("[\"", teams_user_url_prefix(username), username, "\"]", NULL);
+		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, teams_got_info, g_strdup(username), TRUE);
+		g_free(postdata);
 		return;
 	}
 	
+	// just in case they're a user on a different tenant:
+
 	url = TEAMS_PROFILES_PREFIX "users/fetchFederated";
 	
 	postdata = g_strconcat("[\"", teams_user_url_prefix(username), username, "\"]", NULL);
@@ -2092,7 +2115,6 @@ teams_auth_accept_cb(
 	PurpleBuddy *buddy = sender;
 	TeamsAccount *sa;
 	gchar *url = NULL;
-	GSList *users_to_fetch;
 	gchar *buddy_name;
 	
 	sa = purple_connection_get_protocol_data(purple_account_get_connection(purple_buddy_get_account(buddy)));
@@ -2103,10 +2125,9 @@ teams_auth_accept_cb(
 	g_free(url);
 	
 	// Subscribe to status/message updates
-	users_to_fetch = g_slist_prepend(NULL, buddy_name);
-	teams_subscribe_to_contact_status(sa, users_to_fetch);
-	g_slist_free(users_to_fetch);
+	teams_subscribe_to_single_contact_status(sa, buddy_name);
 	g_free(buddy_name);
+	teams_get_icon_now(buddy);
 }
 
 void
@@ -2190,7 +2211,6 @@ teams_add_buddy_with_invite(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGrou
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *postdata;
 	const gchar *url = "/contacts/v2/users/SELF/contacts";
-	GSList *users_to_fetch;
 	JsonObject *obj;
 	gchar *buddy_name, *mri;
 	
@@ -2213,11 +2233,9 @@ teams_add_buddy_with_invite(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGrou
 	json_object_unref(obj);
 	
 	// Subscribe to status/message updates
-	users_to_fetch = g_slist_prepend(NULL, buddy_name);
-	teams_subscribe_to_contact_status(sa, users_to_fetch);
-	g_slist_free(users_to_fetch);
-	
+	teams_subscribe_to_single_contact_status(sa, buddy_name);
 	g_free(buddy_name);
+	teams_get_icon_now(buddy);
 }
 
 void 

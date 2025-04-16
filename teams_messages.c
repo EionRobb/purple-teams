@@ -17,6 +17,7 @@
  */
  
 #include "teams_messages.h"
+#include "glib.h"
 #include "purplecompat.h"
 #include "teams_util.h"
 #include "teams_connection.h"
@@ -1230,10 +1231,7 @@ process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 				
 				//Fetch buddy presence
-				GSList *users_to_fetch = g_slist_prepend(NULL, (gchar *) buddyid);
-				teams_get_friend_profiles(sa, users_to_fetch);
-				teams_subscribe_to_contact_status(sa, users_to_fetch);
-				g_slist_free(users_to_fetch);
+				teams_subscribe_to_single_contact_status(sa, buddyid);
 				
 				//Create an array of one to one mappings for IMs
 				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
@@ -1897,26 +1895,12 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		teams_lookup_contact_statuses(sa, contacts);
 		return;
 	}
-	
-	//TODO - switch to websocket for contact status reverse-webhooks
-
-	/* 
-	{
-		"trouterUri": "trouter.surl ... /TeamsUnifiedPresenceService",
-		"subscriptionsToAdd": [{
-			"mri": "8:orgid:abc1234a-5289-8372-8234-djfs8a78f987"
-		}, ...],
-		"subscriptionsToRemove": [],
-		"shouldPurgePreviousSubscriptions": false
-	}
-	*/
-	//POST to https://presence.teams.microsoft.com/v1/pubsub/subscriptions/{sa->endpoint}
-	//TODO how many in a batch?
 
 	JsonArray *subscriptionsToAdd = json_array_new();
 	JsonArray *subscriptionsToRemove = json_array_new();
 	gchar *trouterUri = g_strconcat(sa->trouter_surl, "/TeamsUnifiedPresenceService", NULL);
 	gchar *url = g_strdup_printf("/v1/pubsub/subscriptions/%s", purple_url_encode(sa->endpoint));
+	GSList *fallback_contacts = NULL;
 
 	gchar *post;
 	GSList *cur = contacts;
@@ -1930,6 +1914,10 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		id = g_strconcat(teams_user_url_prefix(cur->data), cur->data, NULL);
 		json_object_set_string_member(contact, "mri", id);
 		json_array_add_object_element(subscriptionsToAdd, contact);
+		if (!g_str_has_prefix(cur->data, "orgid:")) {
+			// Might be an old skype contact that we dont get the realtime presence for
+			fallback_contacts = g_slist_prepend(fallback_contacts, g_strdup(cur->data));
+		}
 		g_free(id);
 
 		if (++count >= 100) {
@@ -1976,8 +1964,20 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 
 	g_free(url);
 	g_free(trouterUri);
+
+	if (fallback_contacts != NULL) {
+		teams_lookup_contact_statuses(sa, fallback_contacts);
+		g_slist_free_full(fallback_contacts, g_free);
+	}
 }
 
+void
+teams_subscribe_to_single_contact_status(TeamsAccount *sa, const gchar *username)
+{
+	GSList *users_to_fetch = g_slist_prepend(NULL, (gpointer) username);
+	teams_subscribe_to_contact_status(sa, users_to_fetch);
+	g_slist_free(users_to_fetch);
+}
 
 static void
 teams_subscribe_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
