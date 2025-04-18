@@ -360,7 +360,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				//   },
 				//   "debugContent": null
 				// }
-
+				
 			} else {
 				purple_debug_info("teams", "Trouter WS: Unknown request: %s\n", request_url);
 			}
@@ -477,6 +477,7 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 #ifdef ENABLE_TEAMS_PERSONAL
 #	define TEAMS_REGISTRAR_URL "https://edge.skype.com/registrar/prod/v2/registrations"
 #else
+// https://config.teams.micrsofot.com/config/v1/Teams/ Notifications -> PNMRegistrarRest -> ProdEnvURL
 #	define TEAMS_REGISTRAR_URL "https://teams.microsoft.com/registrar/prod/V2/registrations"
 #endif
 
@@ -528,7 +529,6 @@ teams_trouter_register(gpointer user_data)
 	
 	//TODO scan through buddy list and call teams_subscribe_to_contact_status instead
 	teams_get_friend_list(sa);
-	teams_subscribe_with_callback(sa, NULL);
 
 	gchar *ngc_path = g_strconcat(sa->trouter_surl, "NGCallManagerWin", NULL);
 	teams_trouter_register_one(sa, "NextGenCalling", "DesktopNgc_2.3:SkypeNgc", ngc_path);

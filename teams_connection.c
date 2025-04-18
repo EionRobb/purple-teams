@@ -133,12 +133,6 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 		purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
 		purple_http_request_header_set(request, "Accept", "application/json");
 		
-	} else if (g_str_equal(host, sa->messages_host)) {
-		purple_http_request_header_set_printf(request, "Authentication", "skypetoken=%s", sa->skype_token);
-		purple_http_request_header_set(request, "Referer", "https://" TEAMS_BASE_ORIGIN_HOST "/");
-		purple_http_request_header_set(request, "Accept", "application/json; ver=1.0");
-		purple_http_request_header_set(request, "ClientInfo", "os=windows; osVer=10; proc=x86; lcid=en-us; deviceType=1; country=n/a; clientName=" TEAMS_CLIENTINFO_NAME "; clientVer=" TEAMS_CLIENTINFO_VERSION);
-		
 	} else if (g_str_equal(host, TEAMS_DEFAULT_CONTACT_SUGGESTIONS_HOST)) {
 		purple_http_request_header_set(request, "X-RecommenderServiceSettings", "{\"experiment\":\"default\",\"recommend\":\"true\"}");
 		purple_http_request_header_set(request, "X-ECS-ETag", TEAMS_CLIENTINFO_NAME);

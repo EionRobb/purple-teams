@@ -132,7 +132,6 @@
 #	define TEAMS_CONTACTS_HOST "apac.ng.msg.teams.microsoft.com"
 #endif
 
-#define TEAMS_DEFAULT_MESSAGES_HOST "apac.notifications.teams.microsoft.com"
 #define TEAMS_PRESENCE_HOST "presence." TEAMS_BASE_ORIGIN_HOST
 
 #define TEAMS_NEW_CONTACTS_HOST "contacts.skype.com"
@@ -181,7 +180,6 @@ struct _TeamsAccount {
 	PurpleHttpKeepalivePool *keepalive_pool;
 	PurpleHttpConnectionSet *conns;
 	PurpleHttpCookieJar *cookie_jar;
-	gchar *messages_host;
 	
 	GHashTable *sent_messages_hash;
 	guint poll_timeout;
@@ -212,7 +210,6 @@ struct _TeamsAccount {
 	gchar *csa_access_token;
 	gchar *presence_access_token;
 	struct _TeamsConnection *poll_conn;
-	guint friend_list_poll_timeout;
 	GHashTable *calendar_reminder_timeouts;
 	guint calendar_poll_timeout;
 	GQueue *processed_event_messages;

@@ -28,10 +28,20 @@ teams_do_all_the_things(TeamsAccount *sa)
 {
 	// teams_get_vdms_token(sa);
 
+	if (!sa->endpoint) {
+		// Prevent running out of endpoints aka "Endpoint limit exceeded"
+		const gchar *endpoint = purple_account_get_string(sa->account, "endpoint", NULL);
+		if (!endpoint || !*endpoint) {
+			sa->endpoint = purple_uuid_random();
+			purple_account_set_string(sa->account, "endpoint", sa->endpoint);
+		} else {
+			sa->endpoint = g_strdup(endpoint);
+		}
+	}
+
 	if (!sa->username) {
 		teams_get_self_details(sa);
-	} else
-	if (sa->endpoint) {
+	} else {
 		teams_get_self_details(sa);
 		
 		if (sa->authcheck_timeout) 
@@ -41,13 +51,6 @@ teams_do_all_the_things(TeamsAccount *sa)
 		purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
 
 		teams_get_friend_list(sa);
-		if (!purple_account_get_bool(sa->account, "only_use_websocket", FALSE)) {
-			//TODO remove me when switching to websocket
-			if (sa->friend_list_poll_timeout) 
-				g_source_remove(sa->friend_list_poll_timeout);
-			sa->friend_list_poll_timeout = g_timeout_add_seconds(300, (GSourceFunc)teams_get_friend_list, sa);
-			teams_poll(sa);
-		}
 		teams_trouter_begin(sa);
 		
 		teams_get_offline_history(sa);
@@ -62,9 +65,6 @@ teams_do_all_the_things(TeamsAccount *sa)
 		if (sa->calendar_poll_timeout) 
 			g_source_remove(sa->calendar_poll_timeout);
 		sa->calendar_poll_timeout = g_timeout_add_seconds(TEAMS_CALENDAR_REFRESH_MINUTES * 60, (GSourceFunc)teams_check_calendar, sa);
-	} else {
-		//Too soon!
-		teams_subscribe(sa);
 	}
 
 
@@ -394,7 +394,6 @@ teams_login(PurpleAccount *account)
 	sa->buddy_to_chat_lookup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	sa->chat_to_buddy_lookup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	sa->calendar_reminder_timeouts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-	sa->messages_host = g_strdup(TEAMS_DEFAULT_MESSAGES_HOST);
 	sa->keepalive_pool = purple_http_keepalive_pool_new();
 	purple_http_keepalive_pool_set_limit_per_host(sa->keepalive_pool, TEAMS_MAX_CONNECTIONS);
 	sa->conns = purple_http_connection_set_new();
@@ -441,7 +440,6 @@ teams_close(PurpleConnection *pc)
 	g_return_if_fail(sa != NULL);
 	
 	g_source_remove(sa->calendar_poll_timeout);
-	g_source_remove(sa->friend_list_poll_timeout);
 	g_source_remove(sa->authcheck_timeout);
 	g_source_remove(sa->poll_timeout);
 	g_source_remove(sa->watchdog_timeout);
@@ -505,7 +503,6 @@ teams_close(PurpleConnection *pc)
 	g_free(sa->tenant);
 	
 	g_free(sa->vdms_token);
-	g_free(sa->messages_host);
 	g_free(sa->skype_token);
 	g_free(sa->registration_token);
 	g_free(sa->endpoint);
@@ -873,9 +870,6 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 	
 	opt = purple_account_option_int_new(_("Notify me before meeting begins (minutes)"), "calendar_notify_minutes", -1);
-	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
-
-	opt = purple_account_option_bool_new(_("Only use Websocket for message events (Experimental)"), "only_use_websocket", FALSE);
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 
 #undef TEAMS_PRPL_APPEND_ACCOUNT_OPTION

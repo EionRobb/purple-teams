@@ -1287,21 +1287,6 @@ process_endpointpresence_resource(TeamsAccount *sa, JsonObject *resource)
 	}
 }
 
-gboolean
-teams_timeout(gpointer userdata)
-{
-	TeamsAccount *sa = userdata;
-	if (!purple_account_get_bool(sa->account, "only_use_websocket", FALSE)) {
-		teams_poll(sa);
-	}
-
-	// If no response within 1 minute, assume connection lost and try again
-	g_source_remove(sa->watchdog_timeout);
-	sa->watchdog_timeout = g_timeout_add_seconds(60, teams_timeout, sa);
-	
-	return FALSE;
-}
-
 void
 teams_process_event_message(TeamsAccount *sa, JsonObject *message)
 {
@@ -1343,122 +1328,6 @@ teams_process_event_message(TeamsAccount *sa, JsonObject *message)
 	} else {
 		purple_debug_info("teams", "Unknown resourceType '%s'\n", resourceType);
 	}
-}
-
-static void
-teams_poll_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
-{
-	JsonArray *messages = NULL;
-	gint index, length;
-	JsonObject *obj = NULL;
-
-	// if (((int)time(NULL)) > sa->vdms_expiry) {
-		// teams_get_vdms_token(sa);
-	// }
-
-	// if (node == NULL && ((int)time(NULL)) > sa->registration_expiry) {
-		// teams_get_registration_token(sa);
-		// return;
-	// } 
-
-	
-	if (node != NULL && json_node_get_node_type(node) == JSON_NODE_OBJECT)
-		obj = json_node_get_object(node);
-	
-	if (obj != NULL) {
-		if (json_object_has_member(obj, "next")) {
-			const gchar *next = json_object_get_string_member(obj, "next");
-			gchar *next_server = teams_string_get_chunk(next, -1, "https://", "/users");
-			
-			if (next_server != NULL) {
-				g_free(sa->messages_host);
-				sa->messages_host = next_server;
-			}
-			
-			gchar *cursor = teams_string_get_chunk(next, -1, "?cursor=", NULL);
-			if (cursor != NULL) {
-				g_free(sa->messages_cursor);
-				sa->messages_cursor = cursor;
-			}
-		}
-		
-		if (json_object_has_member(obj, "eventMessages"))
-			messages = json_object_get_array_member(obj, "eventMessages");
-		
-		if (messages != NULL) {
-			length = json_array_get_length(messages);
-			for(index = 0; index < length; index++)
-			{
-				JsonObject *message = json_array_get_object_element(messages, index);
-				teams_process_event_message(sa, message);
-			}
-		} else if (json_object_has_member(obj, "errorCode")) {
-			gint64 errorCode = json_object_get_int_member(obj, "errorCode");
-			
-			if (errorCode == 729) {
-				// "You must create an endpoint before performing this operation"
-				// Dammit, Jim; I'm a programmer, not a surgeon!
-				teams_subscribe(sa);
-				return;
-			} else if (errorCode == 450) {
-				// "Subscription requested could not be found."
-				// No more Womens Weekly? :O
-			}
-		} else if (purple_strequal(json_object_get_string_member(obj, "code"), "Forbidden")) {
-			teams_subscribe(sa);
-		}
-		
-		//TODO record id of highest recieved id to make sure we dont process the same id twice
-		
-	} else {
-		// No data received, or timeout
-	}
-	
-	if (!purple_connection_is_disconnecting(sa->pc)) {
-		sa->poll_timeout = g_timeout_add_seconds(1, teams_timeout, sa);
-	}
-
-	// poll_conn is free'd by parent function
-	sa->poll_conn = NULL;
-}
-
-void
-teams_poll(TeamsAccount *sa)
-{
-	GString *url;
-	
-	if (sa->poll_conn) {
-		PurpleHttpConnection *http_conn = sa->poll_conn->http_conn;
-		if (purple_http_conn_is_running(http_conn)) {
-			
-			// This will trigger a reconnection
-			purple_http_conn_cancel(http_conn);
-			return;
-		}
-	}
-	
-	url = g_string_new("/users/");
-	
-	if (sa->username) {
-		g_string_append_printf(url, "8:%s", purple_url_encode(sa->username));
-	} else {
-		g_string_append(url, "ME");
-	}
-	g_string_append(url, "/endpoints/");
-	if (sa->endpoint) {
-		g_string_append(url, purple_url_encode(sa->endpoint));
-	} else {
-		g_string_append(url, "SELF");
-	}
-	g_string_append(url, "/events/poll");
-	
-	if (sa->messages_cursor) {
-		g_string_append_printf(url, "?cursor=%s", sa->messages_cursor);
-	}
-	
-	sa->poll_conn = teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, sa->messages_host, url->str, NULL, teams_poll_cb, NULL, TRUE);
-	
-	g_string_free(url, TRUE);
 }
 
 void
@@ -1980,103 +1849,6 @@ teams_subscribe_to_single_contact_status(TeamsAccount *sa, const gchar *username
 }
 
 static void
-teams_subscribe_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
-{
-	JsonObject *obj = json_node_get_object(node);
-	JsonArray *subscriptions = json_object_get_array_member(obj, "subscriptions");
-	guint i, len;
-	
-	if (subscriptions != NULL) {
-		len = json_array_get_length(subscriptions);
-		for(i = 0; i < len; i++) {
-			JsonObject *sub = json_array_get_object_element(subscriptions, i);
-
-			const gchar * channelType = json_object_get_string_member(sub, "channelType");
-			if (purple_strequal(channelType, "HttpLongPoll")) {
-				// We have a longpoll url
-				const gchar *longpollurl = json_object_get_string_member(sub, "longPollUrl");
-				gchar *next_server = teams_string_get_chunk(longpollurl, -1, "https://", "/users");
-				
-				if (next_server != NULL) {
-					g_free(sa->messages_host);
-					sa->messages_host = next_server;
-				}
-				
-				gchar *cursor = teams_string_get_chunk(longpollurl, -1, "?cursor=", NULL);
-				if (cursor != NULL) {
-					g_free(sa->messages_cursor);
-					sa->messages_cursor = cursor;
-				}
-			}
-		}
-	}
-	
-	teams_do_all_the_things(sa);
-}
-
-void
-teams_subscribe_with_callback(TeamsAccount *sa, TeamsProxyCallbackFunc callback)
-{
-	JsonObject *obj, *sub;
-	JsonArray *interested;
-	JsonArray *subscriptions;
-	gchar *post;
-
-	interested = json_array_new();
-	json_array_add_string_element(interested, "/v1/users/ME/conversations/ALL/properties");
-	json_array_add_string_element(interested, "/v1/users/ME/conversations/ALL/messages");
-	json_array_add_string_element(interested, "/v1/users/ME/contacts/ALL");
-	json_array_add_string_element(interested, "/v1/threads/ALL");
-	
-	obj = json_object_new();
-	json_object_set_int_member(obj, "startingTimeSpan", 0);
-	json_object_set_string_member(obj, "endpointFeatures", "Agent,Presence2015,MessageProperties,CustomUserProperties,NotificationStream,SupportsSkipRosterFromThreads");
-	
-	sub = json_object_new();
-	json_object_set_array_member(sub, "interestedResources", interested);
-	json_object_set_string_member(sub, "channelType", "HttpLongPoll");
-	
-	subscriptions = json_array_new();
-	json_array_add_object_element(subscriptions, sub);
-	json_object_set_array_member(obj, "subscriptions", subscriptions);
-
-	if (sa->trouter_surl != NULL) {
-		JsonObject *trouter_sub = json_object_new();
-		json_object_set_string_member(trouter_sub, "channelType", "TrouterPush");
-		json_object_set_string_member(trouter_sub, "longPollUrl", sa->trouter_surl);
-		json_object_set_array_member(trouter_sub, "interestedResources", json_array_ref(interested));
-		json_array_add_object_element(subscriptions, trouter_sub);
-	}
-	
-	post = teams_jsonobj_to_string(obj);
-
-	if (!sa->endpoint) {
-		// Prevent running out of endpoints aka "Endpoint limit exceeded"
-		const gchar *endpoint = purple_account_get_string(sa->account, "endpoint", NULL);
-		if (!endpoint || !*endpoint) {
-			sa->endpoint = purple_uuid_random();
-			purple_account_set_string(sa->account, "endpoint", sa->endpoint);
-		} else {
-			sa->endpoint = g_strdup(endpoint);
-		}
-	}
-
-	gchar *url = g_strdup_printf("/v2/users/ME/endpoints/%s", purple_url_encode(sa->endpoint));
-	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, post, callback, NULL, TRUE); // Personal: msgapi.teams.live.com
-	g_free(url);
-	
-	g_free(post);
-	json_object_unref(obj);
-}
-
-void
-teams_subscribe(TeamsAccount *sa)
-{
-	teams_subscribe_with_callback(sa, teams_subscribe_cb);
-}
-
-
-static void
 teams_got_vdms_token(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
 {
 	const gchar *token;
@@ -2195,13 +1967,14 @@ static void
 teams_set_endpoint_statusid(TeamsAccount *sa, const gchar *status)
 {
 	gchar *post;
-	PurplePresence *presence;
 	const gchar *activity;
 	
 	g_return_if_fail(status);
 
-	presence = purple_account_get_presence(sa->account);
-	activity = purple_presence_is_idle(presence) ? "Away" : "Available";
+	// Only works with Available/Available for "Transport" activity reporting type
+	// TODO remove this function since we don't need to set the status on the endpoint anymore
+	status = "Available";
+	activity = "Available";
 
 	// This lets the 'reportmyactivity' idle/active endpoint work
 	// and sets our status only on this endpoint

@@ -47,8 +47,6 @@ guint teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingS
 void teams_process_event_message(TeamsAccount *sa, JsonObject *message);
 void teams_poll(TeamsAccount *sa);
 void teams_get_registration_token(TeamsAccount *sa);
-void teams_subscribe(TeamsAccount *sa);
-void teams_subscribe_with_callback(TeamsAccount *sa, TeamsProxyCallbackFunc callback);
 void teams_get_vdms_token(TeamsAccount *sa);
 void teams_chat_kick(PurpleConnection *pc, int id, const char *who);
 void teams_chat_invite(PurpleConnection *pc, int id, const char *message, const char *who);
