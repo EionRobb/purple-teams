@@ -818,7 +818,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			
 			g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(convbuddyname), g_strdup(convname));
 			g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(convname), g_strdup(convbuddyname));
-		} else {
+		} else if (convbuddyname != NULL) {
 			// Ensure the most recent conversation is the one we use
 			g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(convbuddyname), g_strdup(convname));
 		}
