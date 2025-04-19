@@ -26,7 +26,7 @@
 #define TEAMS_TROUTER_TCCV "2024.23.01.2"
 
 static gboolean teams_trouter_register(gpointer user_data);
-static void teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path);
+static void teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path, const gchar *productContext);
 
 void
 teams_trouter_stop(TeamsAccount *sa)
@@ -383,7 +383,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 			JsonObject *obj = json_decode_object((const gchar *) &msg[i], len - i);
 			const gchar *name = json_object_get_string_member(obj, "name");
 			if (purple_strequal(name, "trouter.message_loss")) {
-				teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_1.9", sa->trouter_surl);
+				teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_1.9", sa->trouter_surl, NULL);
 			}
 			json_object_unref(obj);
 		}
@@ -441,7 +441,7 @@ teams_trouter_send_ping(gpointer user_data)
 }
 
 static void
-teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path)
+teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path, const gchar *productContext)
 {
 	JsonObject *reg_obj = json_object_new();
 	JsonObject *clientDescription = json_object_new();
@@ -455,9 +455,10 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 	json_object_set_string_member(clientDescription, "platform", "edge");
 	json_object_set_string_member(clientDescription, "templateKey", templateKey);
 	json_object_set_string_member(clientDescription, "platformUIVersion", TEAMS_CLIENTINFO_VERSION);
-#ifdef ENABLE_TEAMS_PERSONAL
-	json_object_set_string_member(clientDescription, "productContext", "TFL");
-#endif
+
+	if (productContext != NULL) {
+		json_object_set_string_member(clientDescription, "productContext", productContext);
+	}
 
 	json_object_set_string_member(trouter_obj, "context", "");
 	json_object_set_string_member(trouter_obj, "path", path);
@@ -477,7 +478,7 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 #ifdef ENABLE_TEAMS_PERSONAL
 #	define TEAMS_REGISTRAR_URL "https://edge.skype.com/registrar/prod/v2/registrations"
 #else
-// https://config.teams.micrsofot.com/config/v1/Teams/ Notifications -> PNMRegistrarRest -> ProdEnvURL
+// https://config.teams.microsoft.com/config/v1/Teams/ Notifications -> PNMRegistrarRest -> ProdEnvURL
 #	define TEAMS_REGISTRAR_URL "https://teams.microsoft.com/registrar/prod/V2/registrations"
 #endif
 
@@ -531,14 +532,19 @@ teams_trouter_register(gpointer user_data)
 	teams_get_friend_list(sa);
 
 	gchar *ngc_path = g_strconcat(sa->trouter_surl, "NGCallManagerWin", NULL);
-	teams_trouter_register_one(sa, "NextGenCalling", "DesktopNgc_2.3:SkypeNgc", ngc_path);
+	teams_trouter_register_one(sa, "NextGenCalling", "DesktopNgc_2.3:SkypeNgc", ngc_path, NULL);
 	g_free(ngc_path);
 
 	gchar *ssw_path = g_strconcat(sa->trouter_surl, "SkypeSpacesWeb", NULL);
-	teams_trouter_register_one(sa, "SkypeSpacesWeb", "SkypeSpacesWeb_2.3", ssw_path);
+	teams_trouter_register_one(sa, "SkypeSpacesWeb", "SkypeSpacesWeb_2.3", ssw_path, NULL);
 	g_free(ssw_path);
 
-	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_1.9", sa->trouter_surl);
+#ifdef ENABLE_TEAMS_PERSONAL
+	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.3", sa->trouter_surl, "");
+	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.3", sa->trouter_surl, "TFL");
+#else
+	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.1", sa->trouter_surl, NULL);
+#endif
 
 	return TRUE;
 }

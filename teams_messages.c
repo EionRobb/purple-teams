@@ -314,7 +314,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		convname = g_strdup(chatname);
 	}
 	
-	if (chatname && !g_hash_table_lookup(sa->chat_to_buddy_lookup, chatname) && !strstr(chatname, "@unq.gbl.spaces")) {
+	if (chatname && !g_hash_table_lookup(sa->chat_to_buddy_lookup, chatname) 
+			&& !strstr(chatname, "@unq.gbl.spaces") && !strstr(chatname, "@oneToOne.skype")) {
 		// This is a Thread/Group chat message
 		const gchar *topic;
 		PurpleChatConversation *chatconv;
@@ -817,6 +818,9 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			
 			g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(convbuddyname), g_strdup(convname));
 			g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(convname), g_strdup(convbuddyname));
+		} else {
+			// Ensure the most recent conversation is the one we use
+			g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(convbuddyname), g_strdup(convname));
 		}
 		
 		if (g_str_equal(messagetype_parts[0], "Control")) {
@@ -1184,6 +1188,10 @@ process_conversation_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 				
 				if (buddyid == NULL || teams_is_user_self(sa, buddyid)) {
+					if (g_str_has_prefix(id, "19:uni01_")) {
+						// Not possible to guess with the uni01 prefix
+						return;
+					}
 					// Try to guess the other person from the chat id
 					gchar** split = g_strsplit_set(id, ":_@", 4);
 					g_free(buddyid);
@@ -1936,6 +1944,13 @@ guint
 teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState state)
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
+
+#ifdef ENABLE_TEAMS_PERSONAL
+	if (G_UNLIKELY(strchr(name, ':') == NULL)) {
+		// Send Skype messages without using a thread
+		g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(name), g_strconcat("8:", name, NULL));
+	}
+#endif
 	
 	const gchar *channel = g_hash_table_lookup(sa->buddy_to_chat_lookup, name);
 	
@@ -2199,6 +2214,13 @@ const gchar *who, const gchar *message, PurpleMessageFlags flags)
 	
 	if (TEAMS_BUDDY_IS_NOTIFICATIONS(who)) {
 		convname = who;
+#ifdef ENABLE_TEAMS_PERSONAL
+	} else if (G_UNLIKELY(strchr(who, ':') == NULL)) {
+		// Send Skype messages without using a thread
+		gchar *direct_convname = g_strconcat("8:", who, NULL);
+		g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(who), direct_convname);
+		convname = direct_convname;
+#endif
 	} else {
 		convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, who);
 	}

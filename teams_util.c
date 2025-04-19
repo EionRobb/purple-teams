@@ -360,7 +360,7 @@ teams_user_url_prefix(const gchar *who)
 const gchar *
 teams_strip_user_prefix(const gchar *who)
 {
-	if (who[1] == ':') {
+	if (who && who[0] && who[1] == ':') {
 		if (who[0] != '2') {
 			return who + 2;
 		}

@@ -18,6 +18,7 @@
  
 
 #include "teams_contacts.h"
+#include "glibcompat.h"
 #include "libteams.h"
 #include "teams_connection.h"
 #include "teams_messages.h"
@@ -930,6 +931,10 @@ teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		return;
 	userobj = json_node_get_object(node);
 	
+	if (!json_object_has_member(userobj, "skypeName")) {
+		purple_debug_error("teams", "No skypeName in self details\n");
+		return;
+	}
 	username = json_object_get_string_member(userobj, "skypeName");
 	g_free(sa->username); sa->username = g_strdup(username);
 	purple_connection_set_display_name(sa->pc, sa->username);
@@ -1275,7 +1280,7 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 			g_string_append(postdata, "]");
 			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, federated_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
-			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, skype_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
+			teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, skype_profiles_url, postdata->str, teams_got_friend_profiles, NULL, TRUE);
 			g_string_free(postdata, TRUE);
 
 			postdata = g_string_new("[\"\"");
@@ -1417,7 +1422,7 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 	if (!g_str_has_prefix(username, "orgid:")) {
 		url = TEAMS_PROFILES_PREFIX "users/fetchTflConsumers?edEnabled=false&includeDisabledAccounts=true";
 		postdata = g_strconcat("[\"", teams_user_url_prefix(username), username, "\"]", NULL);
-		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, teams_got_info, g_strdup(username), TRUE);
+		teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, postdata, teams_got_info, g_strdup(username), TRUE);
 		g_free(postdata);
 		return;
 	}
@@ -1535,6 +1540,7 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 			JsonArray *members = json_object_get_array_member(chat, "members");
 			JsonObject *member = json_array_get_object_element(members, 0);
 			const gchar *mri = json_object_get_string_member(member, "mri");
+			if (mri == NULL) continue;
 			const gchar *buddyid = teams_strip_user_prefix(mri);
 			
 			if (teams_is_user_self(sa, buddyid)) {
@@ -1551,7 +1557,10 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 			users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(buddyid));
 			
 			//Create an array of one to one mappings for IMs
-			g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+			if (!g_hash_table_contains(sa->buddy_to_chat_lookup, buddyid)) {
+				// If we already have a buddy -> chat mapping, then it's probably more valid than the new one we're trying to add
+				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+			}
 			g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
 			
 			buddy = purple_blist_find_buddy(sa->account, buddyid);

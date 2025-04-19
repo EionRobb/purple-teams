@@ -122,7 +122,13 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 	purple_http_request_header_set(request, "User-Agent", TEAMS_USER_AGENT);
 	
 	if (g_str_equal(host, TEAMS_CONTACTS_HOST) || g_str_equal(host, TEAMS_VIDEOMAIL_HOST) || g_str_equal(host, TEAMS_NEW_CONTACTS_HOST)) {
+#ifdef ENABLE_TEAMS_PERSONAL
+		purple_http_request_header_set_printf(request, "Authentication", "skypetoken=%s", sa->skype_token);
+		purple_http_request_header_set(request, "ms-ic3-product", "tfl");
+		purple_http_request_header_set(request, "ms-ic3-additional-product", "Sfl");
+#else
 		purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
+#endif
 		purple_http_request_header_set(request, "X-Stratus-Caller", TEAMS_CLIENTINFO_NAME);
 		purple_http_request_header_set(request, "X-Stratus-Request", "abcd1234");
 		purple_http_request_header_set(request, "Origin", "https://" TEAMS_BASE_ORIGIN_HOST);
@@ -162,6 +168,8 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 	} else if (g_str_equal(host, TEAMS_BASE_ORIGIN_HOST)) { // maybe chatsvcagg.teams.microsoft.com too?
 #ifdef ENABLE_TEAMS_PERSONAL
 		if (strstr(url, "/api/csa/") == url) {
+			purple_http_request_header_set(request, "ms-ic3-product", "tfl");
+			purple_http_request_header_set(request, "ms-ic3-additional-product", "Sfl");
 #else
 		if (strstr(url, "/api/csa/") == url && sa->csa_access_token != NULL) {
 			purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->csa_access_token);
