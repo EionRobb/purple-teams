@@ -3,7 +3,7 @@ MS Teams Plugin for Pidgin
 
 A third-party alternative for the Microsoft Teams client - in development since April 2022, with no Electron/Webview!
 
-Comparasion to regular Teams client:
+Comparison to regular Teams client:
 ====================================
 Pros
 ----
