@@ -18,6 +18,7 @@
 
 #include "teams_trouter.h"
 
+#include "glib.h"
 #include "teams_contacts.h"
 #include "teams_messages.h"
 #include "teams_util.h"
@@ -314,7 +315,24 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				// 	},
 				// 	"groupContext":null
 				// }
+				if (json_object_has_member(body_obj, "callNotification")) {
+					JsonObject *callNotification = json_object_get_object_member(body_obj, "callNotification");
+					JsonObject *from = json_object_get_object_member(callNotification, "from");
+					JsonObject *to = json_object_get_object_member(callNotification, "to");
+					const gchar *fromId = json_object_get_string_member(from, "id");
+					//const gchar *fromDisplayName = json_object_get_string_member(from, "displayName");
+					const gchar *toId = json_object_get_string_member(to, "id");
+					//const gchar *toDisplayName = json_object_get_string_member(to, "displayName");
+					const gchar *convbuddyname = fromId;
+					const gchar *message = "Incoming call";
 
+					if (teams_is_user_self(sa, fromId)) {
+						convbuddyname = toId;
+						message = "Outgoing call";
+					}
+
+					purple_serv_got_im(sa->pc, convbuddyname, message, PURPLE_MESSAGE_RECV | PURPLE_MESSAGE_SYSTEM, time(NULL));
+				}
 
 				// Call started?
 				// {
@@ -327,6 +345,11 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				//     ]
 				// }
 
+
+			} else if (g_str_has_suffix(request_url, "/rosterUpdate")) {
+				// In progress call has added or removed users
+
+			} else if (g_str_has_suffix(request_url, "/end")) {
 				// Call ended
 				// {
 				//   "callEnd": {
