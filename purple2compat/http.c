@@ -262,31 +262,31 @@ static void
 purple_http_connection_set_remove(PurpleHttpConnectionSet *set,
 	PurpleHttpConnection *http_conn);
 
-static GRegex *purple_http_re_url, *purple_http_re_url_host,
-	*purple_http_re_rfc1123;
+static GRegex *purple_http_re_url = NULL, *purple_http_re_url_host = NULL,
+	*purple_http_re_rfc1123 = NULL;
 
 /*
  * Values: pointers to running PurpleHttpConnection.
  */
-static GList *purple_http_hc_list;
+static GList *purple_http_hc_list = NULL;
 
 /*
  * Keys: pointers to PurpleConnection.
  * Values: GList of pointers to running PurpleHttpConnection.
  */
-static GHashTable *purple_http_hc_by_gc;
+static GHashTable *purple_http_hc_by_gc = NULL;
 
 /*
  * Keys: pointers to PurpleConnection.
  * Values: gboolean TRUE.
  */
-static GHashTable *purple_http_cancelling_gc;
+static GHashTable *purple_http_cancelling_gc = NULL;
 
 /*
  * Keys: pointers to PurpleHttpConnection.
  * Values: pointers to links in purple_http_hc_list.
  */
-static GHashTable *purple_http_hc_by_ptr;
+static GHashTable *purple_http_hc_by_ptr = NULL;
 
 /*** Helper functions *********************************************************/
 

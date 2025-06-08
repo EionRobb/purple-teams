@@ -83,9 +83,6 @@ void purple_websocket_abort(PurpleWebsocket *ws) {
 	if (ws->inpa > 0)
 		purple_input_remove(ws->inpa);
 
-	if (ws->fd >= 0)
-		close(ws->fd);
-
 	g_free(ws->key);
 	g_free(ws->output.buf);
 	g_free(ws->input.buf);
