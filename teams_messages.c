@@ -1142,7 +1142,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			// Mark message as seen straight away
 			gchar *post, *url;
 			
-			url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
+			url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
 			// Should be [messageId];[timestampInMillis];[clientMessageId]
 			post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", id ? id : "", teams_get_js_time(), clientmessageid ? clientmessageid : "");
 			
@@ -1364,7 +1364,7 @@ teams_mark_conv_seen(PurpleConversation *conv, PurpleConversationUpdateType type
 			}
 			
 			if (convname && *convname) {
-				url = g_strdup_printf("/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
+				url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations/%s/properties?name=consumptionhorizon", purple_url_encode(convname));
 				// Should be [messageId];[timestampInMillis];[clientMessageId]
 				post = g_strdup_printf("{\"consumptionhorizon\":\"%s;%" G_GINT64_FORMAT ";%s\"}", last_teams_id, teams_get_js_time(), last_teams_clientmessageid);
 				
@@ -1464,7 +1464,7 @@ void
 teams_get_thread_users(TeamsAccount *sa, const gchar *convname)
 {
 	gchar *url;
-	url = g_strdup_printf("/v1/threads/%s?view=msnp24Equivalent", purple_url_encode(convname));
+	url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/threads/%s?view=msnp24Equivalent", purple_url_encode(convname));
 	
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_thread_users, g_strdup(convname), TRUE);
 	
@@ -1501,7 +1501,7 @@ void
 teams_get_conversation_history_since(TeamsAccount *sa, const gchar *convname, gint since)
 {
 	gchar *url;
-	url = g_strdup_printf("/v1/users/ME/conversations/%s/messages?startTime=%d000&pageSize=30&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent", purple_url_encode(convname), since);
+	url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations/%s/messages?startTime=%d000&pageSize=30&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent", purple_url_encode(convname), since);
 	
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_conv_history, GINT_TO_POINTER(since), TRUE);
 	
@@ -1553,7 +1553,7 @@ void
 teams_get_all_conversations_since(TeamsAccount *sa, gint since)
 {
 	gchar *url;
-	url = g_strdup_printf("/v1/users/ME/conversations?startTime=%d000&pageSize=100&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent", since);
+	url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations?startTime=%d000&pageSize=100&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent", since);
 	
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_all_convs, GINT_TO_POINTER(since), TRUE);
 	
@@ -1606,7 +1606,7 @@ PurpleRoomlist *
 teams_roomlist_get_list(PurpleConnection *pc)
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
-	const gchar *url = "/v1/users/ME/conversations?startTime=0&pageSize=100&view=msnp24Equivalent&targetType=Thread";
+	const gchar *url = TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations?startTime=0&pageSize=100&view=msnp24Equivalent&targetType=Thread";
 	PurpleRoomlist *roomlist;
 	GList *fields = NULL;
 	PurpleRoomlistField *f;
@@ -1633,7 +1633,7 @@ teams_roomlist_get_list(PurpleConnection *pc)
 void
 teams_unsubscribe_from_contact_status(TeamsAccount *sa, const gchar *who)
 {
-	const gchar *contacts_url = "/v1/users/ME/contacts";
+	const gchar *contacts_url = TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/contacts";
 	gchar *url;
 	
 	url = g_strconcat(contacts_url, "/", teams_user_url_prefix(who), purple_url_encode(who), NULL);
@@ -1907,7 +1907,7 @@ teams_conv_send_typing_to_channel(TeamsAccount *sa, const gchar *channel, Purple
 	gchar *post, *url;
 	JsonObject *obj;
 	
-	url = g_strdup_printf("/v1/users/ME/conversations/%s/messages", purple_url_encode(channel));
+	url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations/%s/messages", purple_url_encode(channel));
 	
 	obj = json_object_new();
 	json_object_set_string_member(obj, "messagetype", state == PURPLE_IM_TYPING ? "Control/Typing" : "Control/ClearTyping");
@@ -2105,7 +2105,7 @@ teams_send_message(TeamsAccount *sa, const gchar *convname, const gchar *message
 	gchar *font_stripped;
 	
 	
-	url = g_strdup_printf("/v1/users/ME/conversations/%s/messages", purple_url_encode(convname));
+	url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations/%s/messages", purple_url_encode(convname));
 	
 	clientmessageid = teams_get_js_time();
 	clientmessageid_str = g_strdup_printf("%" G_GINT64_FORMAT "", clientmessageid);
@@ -2251,7 +2251,7 @@ teams_chat_invite(PurpleConnection *pc, int id, const char *message, const char 
 	chatconv = purple_conversations_find_chat(pc, id);
 	chatname = purple_conversation_get_data(PURPLE_CONVERSATION(chatconv), "chatname");
 	
-	url = g_string_new("/v1/threads/");
+	url = g_string_new(TEAMS_CONTACTS_PATH_PREFIX "/v1/threads/");
 	g_string_append_printf(url, "%s", purple_url_encode(chatname));
 	g_string_append(url, "/members/");
 	g_string_append_printf(url, "%s%s", teams_user_url_prefix(who), purple_url_encode(who));
@@ -2275,7 +2275,7 @@ teams_chat_kick(PurpleConnection *pc, int id, const char *who)
 	chatconv = purple_conversations_find_chat(pc, id);
 	chatname = purple_conversation_get_data(PURPLE_CONVERSATION(chatconv), "chatname");
 	
-	url = g_string_new("/v1/threads/");
+	url = g_string_new(TEAMS_CONTACTS_PATH_PREFIX "/v1/threads/");
 	g_string_append_printf(url, "%s", purple_url_encode(chatname));
 	g_string_append(url, "/members/");
 	g_string_append_printf(url, "%s%s", teams_user_url_prefix(who), purple_url_encode(who));
@@ -2365,7 +2365,7 @@ teams_initiate_chat(TeamsAccount *sa, const gchar *who, gboolean one_to_one, con
 		initial_message_copy = NULL;
 	}
 	
-	conn = teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, "/v1/threads", post, teams_created_chat, initial_message_copy, TRUE);
+	conn = teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, TEAMS_CONTACTS_PATH_PREFIX "/v1/threads", post, teams_created_chat, initial_message_copy, TRUE);
 	
 	// Enable redirects
 	if (conn != NULL) {
@@ -2409,7 +2409,7 @@ teams_chat_set_topic(PurpleConnection *pc, int id, const char *topic)
 	chatconv = purple_conversations_find_chat(pc, id);
 	chatname = purple_conversation_get_data(PURPLE_CONVERSATION(chatconv), "chatname");
 	
-	url = g_string_new("/v1/threads/");
+	url = g_string_new(TEAMS_CONTACTS_PATH_PREFIX "/v1/threads/");
 	g_string_append_printf(url, "%s", purple_url_encode(chatname));
 	g_string_append(url, "/properties?name=topic");
 	

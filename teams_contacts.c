@@ -968,7 +968,7 @@ teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 void
 teams_get_self_details(TeamsAccount *sa)
 {
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, "/v1/users/ME/properties", NULL, teams_got_self_details, NULL, TRUE);
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/properties", NULL, teams_got_self_details, NULL, TRUE);
 }
 
 

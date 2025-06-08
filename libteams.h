@@ -126,10 +126,12 @@
 
 #ifdef ENABLE_TEAMS_PERSONAL
 #	define TEAMS_BASE_ORIGIN_HOST "teams.live.com"
-#	define TEAMS_CONTACTS_HOST "msgapi.teams.live.com"
+#	define TEAMS_CONTACTS_HOST "teams.live.com"
+#	define TEAMS_CONTACTS_PATH_PREFIX "/api/chatsvc/consumer"
 #else
 #	define TEAMS_BASE_ORIGIN_HOST "teams.microsoft.com"
 #	define TEAMS_CONTACTS_HOST "apac.ng.msg.teams.microsoft.com"
+#	define TEAMS_CONTACTS_PATH_PREFIX ""
 #endif
 
 #define TEAMS_PRESENCE_HOST "presence." TEAMS_BASE_ORIGIN_HOST
