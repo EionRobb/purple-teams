@@ -1608,6 +1608,23 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 	// Users
 	users = json_object_get_array_member(obj, "users");
 	(void) users;
+
+	// Find everyone on the buddy list to lookup
+	PurpleBlistNode *bnode;
+	for (bnode = purple_blist_get_root();
+	     bnode != NULL;
+		 bnode = purple_blist_node_next(bnode, TRUE)) {
+		if (PURPLE_IS_BUDDY(bnode)) {
+			PurpleBuddy *buddy = PURPLE_BUDDY(bnode);
+			const gchar *name;
+			if (purple_buddy_get_account(buddy) != sa->account) {
+				continue;
+			}
+			
+			name = purple_buddy_get_name(buddy);
+			users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(name));
+		}
+	}
 	
 	if (users_to_fetch)
 	{
