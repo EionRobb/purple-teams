@@ -1915,6 +1915,22 @@ teams_conv_send_typing_to_channel(TeamsAccount *sa, const gchar *channel, Purple
 {
 	gchar *post, *url;
 	JsonObject *obj;
+
+	if (state != PURPLE_IM_TYPING) {
+		// Teams no longer sends "I'm not typing" events
+		return 0;
+	}
+
+	// Give a 2 second buffer to first typing event
+	if (sa->last_typing_channel_hash != g_str_hash(channel)) {
+		sa->last_typing_channel_hash = g_str_hash(channel);
+		return 2;
+	}
+	// If we've already sent a typing event in the last 20 seconds, don't send another one
+	if (sa->last_typing_time > time(NULL) - 20) {
+		return sa->last_typing_time + 20 - time(NULL);
+	}
+	sa->last_typing_time = time(NULL);
 	
 	url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations/%s/messages", purple_url_encode(channel));
 	

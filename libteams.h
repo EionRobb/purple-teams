@@ -190,6 +190,9 @@ struct _TeamsAccount {
 	guint authcheck_timeout;
 	time_t last_authrequest;
 	guint idle_timeout;
+
+	time_t last_typing_time;
+	guint last_typing_channel_hash;
 	
 	//old skypeweb
 	gchar *skype_token;
@@ -240,7 +243,7 @@ struct _TeamsBuddy {
 	gboolean authorized;
 	gboolean blocked;
 	gchar *tenant;
-	gchar *user_type;
+	gchar *user_type; // "Federated", "ADUser", "BOT",
 	
 	/** Profile info */
 	gchar *avatar_url;
