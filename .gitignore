@@ -1,3 +1,11 @@
 libteams.so
 libteams-personal.so
 build/
+libteams.dll
+libteams-personal.dll
+*.chls
+*.json
+*.txt
+*.xml
+*.deb
+results/

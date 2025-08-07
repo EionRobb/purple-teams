@@ -422,6 +422,18 @@ teams_login(PurpleAccount *account)
 	if (!chat_conversation_typing_signal) {
 		chat_conversation_typing_signal = purple_signal_connect(purple_conversations_get_handle(), "chat-conversation-typing", purple_connection_get_protocol(pc), PURPLE_CALLBACK(teams_conv_send_typing), NULL);
 	}
+	// Setup callbacks for the preferences.
+	// handle = purple_proxy_get_handle();
+	// purple_prefs_connect_callback(handle, "/purple/proxy/type", proxy_pref_cb, NULL);
+	// purple_prefs_connect_callback(handle, "/purple/proxy/host", proxy_pref_cb, NULL);
+	// purple_prefs_connect_callback(handle, "/purple/proxy/port", proxy_pref_cb, NULL);
+	// purple_prefs_connect_callback(handle, "/purple/proxy/username", proxy_pref_cb, NULL);
+	// purple_prefs_connect_callback(handle, "/purple/proxy/password", proxy_pref_cb, NULL);
+	//
+	// static void
+	// proxy_pref_cb(const char *name, PurplePrefType type, gconstpointer value, gpointer data)
+	// purple_signal_emit(pidgin_account_get_handle(), "account-modified", account);
+
 }
 
 static void

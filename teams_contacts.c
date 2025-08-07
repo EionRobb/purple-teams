@@ -629,7 +629,7 @@ got_file_send_progress(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 		PurpleXmlNode *filesize = purple_xmlnode_new_child(uriobject, "FileSize");
 		gchar *message, *temp;
 		//We finally did it!
-		// May the pesants rejoyce
+		// May the peasants rejoice
 		purple_xfer_set_completed(xfer, TRUE);
 		
 		// Don't forget to let the other end know about it

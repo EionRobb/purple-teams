@@ -2,6 +2,7 @@
 #define _PURPLE_WEBSOCKET_H_
 
 #include <glib.h>
+#include "account.h"
 
 typedef struct _PurpleWebsocket PurpleWebsocket;
 
