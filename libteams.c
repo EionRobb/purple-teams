@@ -156,6 +156,13 @@ teams_tooltip_text(PurpleBuddy *buddy, PurpleNotifyUserInfo *user_info, gboolean
 			purple_notify_user_info_add_pair_html(user_info, _("Tenant"), escaped);
 			g_free(escaped);
 		}
+#ifndef ENABLE_TEAMS_PERSONAL
+		if (sbuddy->user_type && *sbuddy->user_type) {
+			gchar *escaped = g_markup_printf_escaped("%s", sbuddy->user_type);
+			purple_notify_user_info_add_pair_html(user_info, _("User Type"), escaped);
+			g_free(escaped);
+		}
+#endif // !ENABLE_TEAMS_PERSONAL
 	}
 }
 
@@ -163,11 +170,21 @@ const gchar *
 teams_list_emblem(PurpleBuddy *buddy)
 {
 	if (buddy != NULL) {
-		//TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
+#ifndef ENABLE_TEAMS_PERSONAL
+		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
+#endif // !ENABLE_TEAMS_PERSONAL
 		const gchar *buddy_name = purple_buddy_get_name(buddy);
 		
 		if (buddy_name && TEAMS_BUDDY_IS_BOT(buddy_name)) {
 			return "bot";
+#ifndef ENABLE_TEAMS_PERSONAL
+		} else if (sbuddy && sbuddy->user_type && *sbuddy->user_type) {
+			if (purple_strequal(sbuddy->user_type, "Federated")) {
+				return "external";
+			} else if (purple_strequal(sbuddy->user_type, "BOT")) {
+				return "bot";
+			}
+#endif // !ENABLE_TEAMS_PERSONAL
 		}
 	}
 	return NULL;
@@ -319,6 +336,7 @@ teams_buddy_free(PurpleBuddy *buddy)
 		g_free(sbuddy->avatar_url); sbuddy->avatar_url = NULL;
 		g_free(sbuddy->mood); sbuddy->mood = NULL;
 		g_free(sbuddy->tenant); sbuddy->tenant = NULL;
+		g_free(sbuddy->user_type); sbuddy->user_type = NULL;
 		
 		g_free(sbuddy);
 	}

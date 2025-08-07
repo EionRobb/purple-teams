@@ -1196,6 +1196,7 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *displayName = json_object_get_string_member(contact, "displayName");
 		const gchar *givenName = json_object_get_string_member(contact, "givenName");
 		const gchar *tenantName = json_object_get_string_member(contact, "tenantName");
+		const gchar *userType = json_object_get_string_member(contact, "type");
 		
 		buddy = purple_blist_find_buddy(sa->account, username);
 		if (!buddy)
@@ -1240,6 +1241,12 @@ teams_got_friend_profiles(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			// Better than nine ants
 			g_free(sbuddy->tenant);
 			sbuddy->tenant = g_strdup(tenantName);
+		}
+
+		if (userType && *userType) {
+			// Kind of like blood type but not as tasty
+			g_free(sbuddy->user_type);
+			sbuddy->user_type = g_strdup(userType);
 		}
 		
 		// Only bots have images
@@ -1361,6 +1368,7 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *surname = json_object_get_string_member(userobj, "surname");
 		const gchar *display_name = json_object_get_string_member(userobj, "displayName");
 		const gchar *tenantName = json_object_get_string_member(userobj, "tenantName");
+		const gchar *userType = json_object_get_string_member(userobj, "type");
 		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
 		
 		if (sbuddy == NULL) {
@@ -1377,6 +1385,10 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		if (tenantName && *tenantName) {
 			g_free(sbuddy->tenant);
 			sbuddy->tenant = g_strdup(tenantName);
+		}
+		if (userType && *userType) {
+			g_free(sbuddy->user_type);
+			sbuddy->user_type = g_strdup(userType);
 		}
 		
 		if (display_name && *display_name) {
