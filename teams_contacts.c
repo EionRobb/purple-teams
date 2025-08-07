@@ -1609,6 +1609,18 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 	users = json_object_get_array_member(obj, "users");
 	(void) users;
 
+	if (users_to_fetch)
+	{
+		teams_get_friend_profiles(sa, users_to_fetch);
+		teams_subscribe_to_contact_status(sa, users_to_fetch);
+		g_slist_free_full(users_to_fetch, g_free);
+	}
+}
+
+static void
+teams_lookup_buddy_list_contacts(TeamsAccount *sa)
+{
+	GSList *users_to_fetch = NULL;
 	// Find everyone on the buddy list to lookup
 	PurpleBlistNode *bnode;
 	for (bnode = purple_blist_get_root();
@@ -1625,7 +1637,7 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 			users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(name));
 		}
 	}
-	
+
 	if (users_to_fetch)
 	{
 		teams_get_friend_profiles(sa, users_to_fetch);
@@ -1994,6 +2006,9 @@ teams_get_friend_list(TeamsAccount *sa)
 	// Teams personal has a buddy list?!@
 	url = "/api/mt/beta/contacts/buddylist?migrationRequested=true&federatedContactsSupported=true";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_buddylist_cb, NULL, TRUE);
+
+	// Look up all the contacts in the buddy list
+	teams_lookup_buddy_list_contacts(sa);
 
 	return FALSE;
 }

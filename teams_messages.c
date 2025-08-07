@@ -66,6 +66,7 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 		}
 		
 		purple_blist_add_buddy(purple_buddy_new(sa->account, from, NULL), NULL, group, NULL);
+		teams_get_friend_profile(sa, from);
 	}
 
 	purple_protocol_got_user_status(sa->account, from, status, NULL);
@@ -1648,6 +1649,7 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
 	PurpleGroup *group = teams_get_blist_group(sa);
 	JsonArray *responses = json_node_get_array(node);
+	GSList *users_to_fetch = NULL;
 	
 	if (responses != NULL) {
 		const gchar *from;
@@ -1668,6 +1670,7 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			{
 				if (!teams_is_user_self(sa, from)) {
 					purple_blist_add_buddy(purple_buddy_new(sa->account, from, NULL), NULL, group, NULL);
+					users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(from));
 				}
 			}
 			
@@ -1704,6 +1707,12 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			gboolean is_idle = strstr(availability, "Idle") != NULL;
 			purple_prpl_got_user_idle(sa->account, from, is_idle, 0);
 		}
+	}
+
+	if (users_to_fetch)
+	{
+		teams_get_friend_profiles(sa, users_to_fetch);
+		g_slist_free_full(users_to_fetch, g_free);
 	}
 }
 
