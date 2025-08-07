@@ -25,7 +25,7 @@ jobs:
         if: ${{ env.ACT }}
       
       - name: 'Qodana Scan'
-        uses: JetBrains/qodana-action@v2024.1
+        uses: JetBrains/qodana-action@latest
         with:
           pr-mode: false
           args: 
