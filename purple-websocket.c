@@ -7,7 +7,7 @@
 #include <sslconn.h>
 
 #ifdef _WIN32
-#include "win32/win32dep.h"
+#include "win32/win32dep.h" // IWYU pragma: keep
 #else
 #include <unistd.h>
 #endif
@@ -29,6 +29,7 @@ static const char WS_SALT[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 #define WS_OP_PONG 0x0A
 #define WS_MASK	0x80
 #define MAX_FRAG 64
+#define MAX_FRAME_LEN (64 * 1024 * 1024) /* 64 MiB maximum */
 
 struct buffer {
 	guchar *buf;
@@ -56,6 +57,9 @@ struct _PurpleWebsocket {
 };
 
 static void buffer_set_len(struct buffer *b, size_t n) {
+	if (n > MAX_FRAME_LEN) {
+		return;
+	}
 	if (n > b->siz) {
 		b->buf = g_realloc(b->buf, n);
 		b->siz = n;
@@ -215,6 +219,10 @@ static size_t ws_read_message(PurpleWebsocket *ws) {
 				plen = GUINT16_FROM_BE(tlen);
 				break;
 		}
+		if (plen > MAX_FRAME_LEN) {
+			ws_error(ws, "Frame too large");
+			return 0;
+		}
 		frag[fi].l = plen;
 		frag[fi].p = GETN(plen);
 	
@@ -305,7 +313,10 @@ static void ws_input_cb(gpointer data, G_GNUC_UNUSED gint source, PurpleInputCon
 				return;
 			}
 		} else if ((ws->output.off += len) >= ws->output.len) {
-			g_assert(ws->output.off == ws->output.len);
+			if (ws->output.off != ws->output.len) {
+				ws_error(ws, "Short write: ws->output.off != ws->output.len");
+				return;
+			}
 			if (!ws_input(ws))
 				return;
 		}
@@ -372,6 +383,10 @@ static void ws_input_cb(gpointer data, G_GNUC_UNUSED gint source, PurpleInputCon
 				size_t r = ws_read_message(ws);
 				if (!r) /* error */
 					return;
+				else if (r > MAX_FRAME_LEN) {
+					ws_error(ws, "Frame too large");
+					return;
+				}
 				else if (r > ws->input.off) {
 					/* need more */
 					buffer_set_len(&ws->input, r);
@@ -399,6 +414,10 @@ void purple_websocket_send(PurpleWebsocket *ws, PurpleWebsocketOp op, const guch
 
 	ADDB(WS_FIN | op);
 	if (len > UINT16_MAX) {
+		if (len > MAX_FRAME_LEN) {
+			ws_error(ws, "Frame too large");
+			return;
+		}
 		ADDB(WS_MASK | 127);
 		ADD(uint64_t, GUINT64_TO_BE(len));
 	} else if (len >= 126) {
