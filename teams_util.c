@@ -488,8 +488,6 @@ teams_gunzip(const guchar *gzip_data, gsize *len_ptr)
 
 	g_free(data_buffer);	
 
-	if (len_ptr)
-		*len_ptr = output_string->len;
-
+	*len_ptr = output_string->len;
 	return g_string_free(output_string, FALSE);
 }

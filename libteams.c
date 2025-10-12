@@ -850,6 +850,19 @@ typedef struct
 {
 	PurplePluginProtocolInfo parent;
 
+	#if !PURPLE_VERSION_CHECK(2, 6, 0)
+		gboolean (*initiate_media)(PurpleAccount *account, const char *who, PurpleMediaSessionType type);
+		PurpleMediaCaps (*get_media_caps)(PurpleAccount *account, const char *who);
+	#endif
+	#if !PURPLE_VERSION_CHECK(2, 7, 0)
+		PurpleMood *(*get_moods)(PurpleAccount *account);
+		void (*set_public_alias)(PurpleConnection *gc, const char *alias, PurpleSetPublicAliasSuccessCallback success_cb, PurpleSetPublicAliasFailureCallback failure_cb);
+		void (*get_public_alias)(PurpleConnection *gc, PurpleGetPublicAliasSuccessCallback success_cb, PurpleGetPublicAliasFailureCallback failure_cb);
+	#endif
+	#if !PURPLE_VERSION_CHECK(2, 8, 0)
+		void (*add_buddy_with_invite)(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group, const char *message);
+		void (*add_buddies_with_invite)(PurpleConnection *pc, GList *buddies, GList *groups, const char *message);
+	#endif
 	#if !PURPLE_VERSION_CHECK(2, 14, 0)
 		char *(*get_cb_alias)(PurpleConnection *gc, int id, const char *who);
 		gboolean (*chat_can_receive_file)(PurpleConnection *, int id);
@@ -1061,7 +1074,7 @@ teams_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
 	// Plugin info
 	info->magic = PURPLE_PLUGIN_MAGIC;
 	info->major_version = 2;
-	info->minor_version = MIN(PURPLE_MINOR_VERSION, 8);
+	info->minor_version = 5;
 	info->type = PURPLE_PLUGIN_PROTOCOL;
 	info->priority = PURPLE_PRIORITY_DEFAULT;
 	info->version = TEAMS_PLUGIN_VERSION;
@@ -1074,11 +1087,11 @@ teams_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
 	info->extra_info = prpl_info;
 	
 	// Protocol info
-	#if PURPLE_MINOR_VERSION >= 5
-		prpl_info->struct_size = sizeof(PurplePluginProtocolInfoExt);
-	#endif
+	prpl_info->struct_size = sizeof(PurplePluginProtocolInfoExt);
 	#if PURPLE_MINOR_VERSION >= 8
 		prpl_info->add_buddy_with_invite = teams_add_buddy_with_invite;
+	#else
+		prpl_info_ext->add_buddy_with_invite = teams_add_buddy_with_invite;
 	#endif
 	
 	plugin->info = info;

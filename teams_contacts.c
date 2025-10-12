@@ -18,8 +18,10 @@
  
 
 #include "teams_contacts.h"
+#include "connection.h"
 #include "glibcompat.h"
 #include "libteams.h"
+#include "purplecompat.h"
 #include "teams_connection.h"
 #include "teams_messages.h"
 #include "teams_util.h"
@@ -1138,7 +1140,7 @@ void
 teams_search_users_text(gpointer user_data, const gchar *text)
 {
 	TeamsAccount *sa = user_data;
-	const gchar *url = TEAMS_PROFILES_PREFIX "users/searchV2?includeDLs=true&includeBots=true&enableGuest=true&source=newChat&skypeTeamsInfo=true";
+	const gchar *url = TEAMS_PROFILES_PREFIX "users/searchV2?includeDLs=true&includeBots=true&searchExternalContacts=true&searchImplicitContacts=false&enableGuest=true&source=newChat&skypeTeamsInfo=true";
 	//https://teams.microsoft.com/api/mt/part/au-01/beta/users/emailaddressgoeshere@example.com/externalsearchv3?includeTFLUsers=true
 	//https://substrate.office.com/search/api/v1/suggestions?scenario=peoplepicker.addToChat&setflight=ServeEdContactsFromEdShards
 
@@ -2385,4 +2387,29 @@ teams_set_mood_message(TeamsAccount *sa, const gchar *mood)
 	
 	g_free(post);
 	json_object_unref(obj);
+}
+
+gchar *
+teams_chat_get_cb_alias(PurpleConnection *gc, int id, const char *who)
+{
+	TeamsAccount *sa = purple_connection_get_protocol_data(gc);
+	PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, who);
+	if (buddy)
+	{
+		TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
+		if (sbuddy && sbuddy->display_name) {
+			return g_strdup(sbuddy->display_name);
+		}
+	}
+
+	PurpleChatConversation *chat = purple_conversations_find_chat(gc, id);
+	if (chat == NULL) {
+		return NULL;
+	}
+	PurpleChatUser *cb = purple_chat_conversation_find_user(chat, who);
+	if (cb == NULL) {
+		return NULL;
+	}
+	
+	return g_strdup(cb->alias);
 }

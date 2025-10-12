@@ -1924,6 +1924,7 @@ teams_conv_send_typing_to_channel(TeamsAccount *sa, const gchar *channel, Purple
 	// Give a 2 second buffer to first typing event
 	if (sa->last_typing_channel_hash != g_str_hash(channel)) {
 		sa->last_typing_channel_hash = g_str_hash(channel);
+		sa->last_typing_time = 0;
 		return 2;
 	}
 	// If we've already sent a typing event in the last 20 seconds, don't send another one
@@ -2448,15 +2449,6 @@ teams_chat_set_topic(PurpleConnection *pc, int id, const char *topic)
 	g_free(post);
 	json_object_unref(obj);
 }
-
-// TODO
-// char *
-// teams_chat_get_cb_alias(PurpleConnection *gc, int id, const char *who)
-// {
-// 	// Find the friendlyname for the user
-// 	TeamsAccount *sa = purple_connection_get_protocol_data(gc);
-//	return g_strdup(friendlyname);
-// }
 
 void
 teams_get_thread_url(TeamsAccount *sa, const gchar *thread)
