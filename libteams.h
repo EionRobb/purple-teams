@@ -167,6 +167,8 @@
 #define TEAMS_BUDDY_IS_SKYPE(a) G_UNLIKELY((a) != NULL && g_str_has_prefix((a), "8:") && !g_str_has_prefix((a), "8:orgid:"))
 #define TEAMS_BUDDY_IS_TEAMS(a) G_LIKELY((a) != NULL && g_str_has_prefix((a), "8:orgid:"))
 
+#define TEAMS_OOO_STATUS_ID "OutOfOffice"
+
 typedef struct _TeamsAccount TeamsAccount;
 typedef struct _TeamsBuddy TeamsBuddy;
 

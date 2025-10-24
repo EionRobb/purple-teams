@@ -71,24 +71,28 @@ jobs:
           make libteams-personal.dll
 
       - name: archive
-        if: ${{ !env.ACT }}
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
         uses: actions/upload-artifact@v4
         with: 
             name: plugin 
             path: lib*.dll
 
+      - name: Set date
+        id: date
+        run: echo "DATE=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
       - name: release
-        if: ${{ !env.ACT }}
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
         uses: ncipollo/release-action@v1
         with:
           artifacts: lib*.dll
-          tag: nightly-${{ github.sha }}
-          name: Nightly ${{ github.sha }}
+          tag: daily-${{ steps.date.outputs.DATE }}
+          name: Daily ${{ steps.date.outputs.DATE }}
           allowUpdates: true
           makeLatest: true
 
       - name: attest
-        if: ${{ !env.ACT }}
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: lib*.dll

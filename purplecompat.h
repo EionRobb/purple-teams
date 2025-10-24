@@ -231,8 +231,9 @@ purple_chat_user_set_alias(PurpleChatUser *cb, const gchar *alias)
 #define purple_protocol_action_new                     purple_plugin_action_new
 #define purple_protocol_get_id                         purple_plugin_get_id
 
-#define purple_protocol_got_user_status		purple_prpl_got_user_status
-#define purple_protocol_got_user_idle       purple_prpl_got_user_idle
+#define purple_protocol_got_user_status			purple_prpl_got_user_status
+#define purple_protocol_deactivate_user_status	purple_prpl_got_user_status_deactive
+#define purple_protocol_got_user_idle       	purple_prpl_got_user_idle
 
 #define purple_account_privacy_deny_add     purple_privacy_deny_add
 #define purple_account_privacy_deny_remove  purple_privacy_deny_remove

@@ -1701,7 +1701,19 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 				"etag": "A0072086544",
 				"status": 20000
 			*/
-			
+
+			JsonObject *calendarData = json_object_get_object_member(presence, "calendarData");
+			if (calendarData != NULL) {
+				gboolean isOutOfOffice = json_object_get_boolean_member(calendarData, "isOutOfOffice");
+				if (isOutOfOffice) {
+					JsonObject *outOfOfficeNote = json_object_get_object_member(calendarData, "outOfOfficeNote");
+					const gchar *message = json_object_get_string_member(outOfOfficeNote, "message");
+					purple_protocol_got_user_status(sa->account, from, TEAMS_OOO_STATUS_ID, "message", message, NULL);
+				} else {
+					purple_protocol_deactivate_user_status(sa->account, from, TEAMS_OOO_STATUS_ID);
+				}
+			}
+
 			purple_protocol_got_user_status(sa->account, from, availability, NULL);
 
 			gboolean is_idle = strstr(availability, "Idle") != NULL;

@@ -163,6 +163,18 @@ teams_tooltip_text(PurpleBuddy *buddy, PurpleNotifyUserInfo *user_info, gboolean
 			g_free(escaped);
 		}
 #endif // !ENABLE_TEAMS_PERSONAL
+
+		PurpleStatus *out_of_office_status = purple_presence_get_status(presence, TEAMS_OOO_STATUS_ID);
+		if (out_of_office_status && purple_status_is_active(out_of_office_status)) {
+			const gchar *ooo_message = purple_status_get_attr_string(out_of_office_status, "message");
+			if (ooo_message && *ooo_message) {
+				gchar *escaped = g_markup_printf_escaped("%s", ooo_message);
+				purple_notify_user_info_add_pair_html(user_info, _("Out Of Office Note"), escaped);
+				g_free(escaped);
+			} else {
+				purple_notify_user_info_add_pair_html(user_info, _("Out Of Office"), _("Yes"));
+			}
+		}
 	}
 }
 
@@ -221,6 +233,9 @@ teams_status_types(PurpleAccount *account)
 	status = purple_status_type_new_with_attrs(PURPLE_STATUS_OFFLINE, "PresenceUnknown", _("Unknown"), FALSE, FALSE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
 
+	// Independent statuses
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_INVISIBLE, TEAMS_OOO_STATUS_ID, _("Out Of Office"), FALSE, FALSE, TRUE, "message", "Note", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	types = g_list_append(types, status);
 	
 	return types;
 }

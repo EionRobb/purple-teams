@@ -1363,7 +1363,10 @@ teams_got_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	_SKYPE_USER_INFO("tenantName", "Tenant");
 	_SKYPE_USER_INFO("displayName", "Display Name");
 	_SKYPE_USER_INFO("type", "User Type");
-	
+	_SKYPE_USER_INFO("jobTitle", "Job Title");
+	_SKYPE_USER_INFO("department", "Department");
+	_SKYPE_USER_INFO("userLocation", "Location");
+
 	buddy = purple_blist_find_buddy(sa->account, username);
 	if (buddy) {
 		const gchar *firstname = json_object_get_string_member(userobj, "givenName");
