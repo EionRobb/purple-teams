@@ -18,6 +18,7 @@
  
 #include "teams_connection.h"
 
+#include "glib.h"
 #include "http.h"
 
 static void
@@ -167,11 +168,11 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 		
 	} else if (g_str_equal(host, TEAMS_BASE_ORIGIN_HOST)) { // maybe chatsvcagg.teams.microsoft.com too?
 #ifdef ENABLE_TEAMS_PERSONAL
-		if (strstr(url, "/api/csa/") == url) {
+		if (g_str_has_prefix(url, "/api/csa/")) {
 			purple_http_request_header_set(request, "ms-ic3-product", "tfl");
 			purple_http_request_header_set(request, "ms-ic3-additional-product", "Sfl");
 #else
-		if (strstr(url, "/api/csa/") == url && sa->csa_access_token != NULL) {
+		if (g_str_has_prefix(url, "/api/csa/") && sa->csa_access_token != NULL) {
 			purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->csa_access_token);
 #endif
 		} else {

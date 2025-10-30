@@ -115,13 +115,21 @@ teams_get_icon_now(PurpleBuddy *buddy)
 	if (!sbuddy || !sbuddy->sa || !sbuddy->sa->pc)
 		return;
 
+	sa = sbuddy->sa;
+
 	if (sbuddy->avatar_url && sbuddy->avatar_url[0]) {
 		url = g_strdup(sbuddy->avatar_url);
 	} else {
+		const gchar *self = teams_strip_user_prefix(sa->username);
+		const gchar *self_guid = g_str_has_prefix(self, "orgid:") ? self + 6 : self;
 		const gchar *buddy_name = purple_buddy_get_name(buddy);
+
+		gchar *self_guid_escaped = g_strdup(purple_url_encode(self_guid));
 		//https://teams.microsoft.com/api/mt/apac/beta/users/.../profilepicturev2?displayname=Eion%20Robb&size=HR96x96
 		//https://teams.microsoft.com/api/mt/part/au-01/beta/users/...myid.../profilepicturev2/8:orgid:userid?displayname=Eion%20Robb&size=HR196x196&ETag=1704940983743
-		url = g_strdup_printf("https://" TEAMS_BASE_ORIGIN_HOST TEAMS_PROFILES_PREFIX "users/%s%s/profilepicturev2?size=HR128x128", teams_user_url_prefix(buddy_name), purple_url_encode(buddy_name));
+		url = g_strdup_printf("https://" TEAMS_BASE_ORIGIN_HOST TEAMS_PROFILES_PREFIX "users/%s/profilepicturev2/%s%s?size=HR128x128", self_guid_escaped, teams_user_url_prefix(buddy_name), purple_url_encode(buddy_name));
+
+		g_free(self_guid_escaped);
 
 		// alternative
 		//https://aus.loki.delve.office.com/api/v2/personaphoto?AadObjectId=12345678-abcd-4321-1234-123456789abc&AuthToken=eyJ...&ClientType=MicrosoftStream
@@ -131,18 +139,16 @@ teams_get_icon_now(PurpleBuddy *buddy)
 		g_free(url);
 		return;
 	}
-
-	sa = sbuddy->sa;
 	
 	request = purple_http_request_new(url);
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_set_max_redirects(request, 0);
 	purple_http_request_set_timeout(request, 120);
 	
-	// Weirdly uses a cookie instead of the Authorization header
-	if (strstr(url, "https://" TEAMS_BASE_ORIGIN_HOST "/api/mt/") == url && strstr(url, "/profilepicturev2")) {
+	// Uses a cookie instead of the Authorization header cos a browser wouldn't request an image with an auth header
+	if (g_str_has_prefix(url, "https://" TEAMS_BASE_ORIGIN_HOST "/api/mt/") && strstr(url, "/profilepicturev2")) {
 		purple_http_request_header_set(request, "Referer", "https://" TEAMS_BASE_ORIGIN_HOST "/");
-		purple_http_request_header_set_printf(request, "Cookie", "authtoken=Bearer%%3D%s%%26Origin%%3Dhttps%%3A%%2F%%2F" TEAMS_BASE_ORIGIN_HOST, purple_url_encode(sa->id_token));
+		purple_http_request_header_set_printf(request, "Cookie", "authtoken=Bearer%%3D%s%%26Origin%%3Dhttps%%3A%%2F%%2F" TEAMS_BASE_ORIGIN_HOST, sa->id_token);
 	}
 	
 	purple_http_request(sa->pc, request, teams_get_icon_cb, buddy);
@@ -1842,6 +1848,13 @@ teams_get_friend_list_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *id;
 		
 		id = teams_strip_user_prefix(mri);
+
+		if (!display_name && !firstname && !surname && json_object_has_member(contact, "name")) {
+			JsonObject *name = json_object_get_object_member(contact, "name");
+			display_name = json_object_get_string_member(name, "displayName");
+			firstname = json_object_get_string_member(name, "givenName");
+			surname = json_object_get_string_member(name, "surname");
+		}
 		
 		buddy = purple_blist_find_buddy(sa->account, id);
 		if (!buddy)
@@ -2019,6 +2032,10 @@ teams_get_friend_list(TeamsAccount *sa)
 	gchar *search_url = g_strconcat("/api/v1/workingwith?teamsMri=", purple_url_encode(sa->primary_member_name), "&personaType=User&limit=50", NULL);
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "aus.loki.delve.office.com", search_url, NULL, teams_get_workingwith_cb, NULL, TRUE);
 	g_free(search_url);
+
+	// Search the People app
+	url = "/api/mt/beta/contactsv3/";
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_friend_list_cb, NULL, TRUE);
 
 	// Teams personal has a buddy list?!@
 	url = "/api/mt/beta/contacts/buddylist?migrationRequested=true&federatedContactsSupported=true";
