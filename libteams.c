@@ -853,6 +853,9 @@ PurpleConnection *pc
 	act = purple_protocol_action_new(_("Search for Teams Contacts"), teams_search_users);
 	m = g_list_append(m, act);
 
+	act = purple_protocol_action_new(_("Set work location"), teams_set_work_location_action);
+	m = g_list_append(m, act);
+
 	return m;
 }
 

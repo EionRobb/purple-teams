@@ -19,6 +19,7 @@
 
 #include "teams_contacts.h"
 #include "connection.h"
+#include "glib.h"
 #include "glibcompat.h"
 #include "libteams.h"
 #include "purplecompat.h"
@@ -27,6 +28,7 @@
 #include "teams_util.h"
 
 #include "http.h"
+#include "util.h"
 #include "xfer.h"
 #include "image-store.h"
 
@@ -1172,6 +1174,133 @@ teams_search_users(PurpleProtocolAction *action)
 					   purple_request_cpar_from_connection(pc),
 					   sa);
 
+}
+
+static void
+teams_cancel_work_location_response_cb(gpointer user_data, PurpleRequestFields *fields)
+{
+	GHashTable *buildings = user_data;
+	g_dataset_destroy(buildings);
+	g_hash_table_destroy(buildings);
+}
+
+static void
+teams_set_work_location_response_cb(gpointer user_data, PurpleRequestFields *fields)
+{
+	GHashTable *buildings = user_data;
+	TeamsAccount *sa = g_dataset_get_data(buildings, "account");
+	JsonObject *obj;
+	const gchar *selected_location = NULL;
+	gchar *post_data = NULL;
+
+	g_dataset_destroy(buildings);
+	
+	PurpleRequestField *field = purple_request_fields_get_field(fields, "set_work_location");
+	if (field != NULL) {
+		gint choice_value = purple_request_field_choice_get_value(field);
+		GList *labels = purple_request_field_choice_get_labels(field);
+		selected_location = g_list_nth_data(labels, choice_value);
+	}
+	
+	if (selected_location != NULL) {
+		const gchar *buildingId = g_hash_table_lookup(buildings, selected_location);
+		obj = json_object_new();
+		// Create a time string for the end of today
+		gchar *end_of_day = NULL;
+		time_t now = time(NULL);
+		struct tm *tm_info = localtime(&now);
+		tm_info->tm_hour = 23;
+		tm_info->tm_min = 59;
+		tm_info->tm_sec = 59;
+		end_of_day = g_strdup(purple_utf8_strftime("%Y-%m-%dT%H:%M:%S.999Z", tm_info));
+
+		if (buildingId != NULL || purple_strequal(selected_location, _("Office"))) {
+			obj = json_object_new();
+			json_object_set_int_member(obj, "location", 1);
+			json_object_set_string_member(obj, "expirationTime", end_of_day);
+			json_object_set_string_member(obj, "locationId", buildingId);
+			json_object_set_int_member(obj, "locationIdType", 1);
+		
+		} else if (purple_strequal(selected_location, _("Remote"))) {
+			json_object_set_int_member(obj, "location", 2);
+			json_object_set_string_member(obj, "expirationTime", end_of_day);
+		
+		} else {
+			json_object_set_int_member(obj, "location", 0);
+		}
+
+		post_data = teams_jsonobj_to_string(obj);
+		g_free(end_of_day);
+		json_object_unref(obj);
+		
+		// PUT to https://teams.microsoft.com/ups/apac/v1/me/workLocation/
+		const gchar *url = "/ups/apac/v1/me/workLocation/";
+		teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, post_data, NULL, NULL, TRUE);
+		g_free(post_data);
+	}
+	
+	g_hash_table_destroy(buildings);
+}
+
+static void
+teams_swl_got_building_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonObject *obj, *data;
+	JsonArray *places;
+	gint index, length;
+	PurpleRequestFields *fields = purple_request_fields_new();
+	PurpleRequestFieldGroup *field_group = purple_request_field_group_new(NULL);
+	PurpleRequestField *field = purple_request_field_choice_new("set_work_location", _("Work Location"), 0);
+	GHashTable *buildings = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	g_dataset_set_data(buildings, "account", sa);
+
+	purple_request_field_choice_add(field, _("(Unset)"));
+	purple_request_field_choice_add(field, _("Office"));
+	purple_request_field_choice_add(field, _("Remote"));
+
+	if (node != NULL) {
+		obj = json_node_get_object(node);
+		data = json_object_get_object_member(obj, "data");
+		if (data != NULL) {
+				
+			places = json_object_get_array_member(data, "places");
+			if (places != NULL) {
+				length = json_array_get_length(places);
+				
+				for(index = 0; index < length; index++)
+				{
+					JsonObject *place = json_array_get_object_element(places, index);
+					const gchar *buildingName = json_object_get_string_member(place, "name");
+					const gchar *buildingId = json_object_get_string_member(place, "id");
+					purple_request_field_choice_add(field, buildingName);
+					g_hash_table_insert(buildings, g_strdup(buildingName), g_strdup(buildingId));
+				}
+			}
+		}
+	}
+	purple_request_field_group_add_field(field_group, field);
+	purple_request_fields_add_group(fields, field_group);
+
+	purple_request_fields(sa->pc,
+		_("Set Work Location"),
+		_("Select your work location from the options below:"),
+		NULL,
+		fields,
+		_("_Set"), G_CALLBACK(teams_set_work_location_response_cb),
+		_("_Cancel"), G_CALLBACK(teams_cancel_work_location_response_cb),
+		purple_request_cpar_from_connection(sa->pc),
+		buildings);
+}
+
+void
+teams_set_work_location_action(PurpleProtocolAction *action)
+{
+	PurpleConnection *pc = purple_protocol_action_get_connection(action);
+	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
+	
+	// Grab building info from https://teams.microsoft.com/api/mt/part/au-01/v2.0/places/findPlaces?filterQuery=Type%20%3D%20%22Building%22
+	const gchar *url = "/api/mt/part/au-01/v2.0/places/findPlaces?filterQuery=Type%20%3D%20%22Building%22";
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_swl_got_building_info, NULL, TRUE);
 }
 
 static void

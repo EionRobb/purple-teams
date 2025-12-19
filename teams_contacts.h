@@ -48,6 +48,7 @@ PurpleConnection *pc, const gchar *who);
 gboolean teams_chat_can_receive_file(PurpleConnection *pc, int id);
 
 void teams_search_users(PurpleProtocolAction *action);
+void teams_set_work_location_action(PurpleProtocolAction *action);
 
 void teams_received_contacts(TeamsAccount *sa, PurpleXmlNode *contacts);
 
