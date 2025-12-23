@@ -1679,9 +1679,21 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 				"presence": {
 					"sourceNetwork": "SameEnterprise",
 					"note": {
-						"message": "",
-						"publishTime": "2021-06-01T00:48:30.6948824Z",
-						"expiry": "9999-12-30T14:00:00Z"
+						"message": "<p>hi :)</p>",
+						"publishTime": "2025-12-23T08:59:24.2293971Z",
+						"expiry": "2025-12-23T10:59:59.999Z"
+					},
+					"workLocation": {
+						"location": "Office",
+						"expiry": "2025-12-23T10:59:59.9999999Z",
+						"isForced": true,
+						"locationSource": "ForcedLocation",
+						"approximateDetails": {
+							"id": "12345678-1234-4321-abcd-1234567890ab",
+							"name": "Building A - Floor 3",
+							"idType": "Directory"
+						},
+						"maxShared": "Specific"
 					},
 					"calendarData": {
 						"outOfOfficeNote": {
@@ -1714,7 +1726,29 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 				}
 			}
 
-			purple_protocol_got_user_status(sa->account, from, availability, NULL);
+			JsonObject *workLocation = json_object_get_object_member(presence, "workLocation");
+			if (workLocation != NULL) {
+				const gchar *location_name = NULL;
+				const gchar *location = json_object_get_string_member(workLocation, "location");
+				JsonObject *approximateDetails = json_object_get_object_member(workLocation, "approximateDetails");
+				if (approximateDetails != NULL) {
+					const gchar *name = json_object_get_string_member(approximateDetails, "name");
+					if (name != NULL && *name) {
+						location_name = name;
+					}
+				}
+				purple_protocol_got_user_status(sa->account, from, TEAMS_WORK_LOCATION_STATUS_ID, "location", location, "location_name", location_name, NULL);
+			} else {
+				purple_protocol_deactivate_user_status(sa->account, from, TEAMS_WORK_LOCATION_STATUS_ID);
+			}
+
+			JsonObject *note = json_object_get_object_member(presence, "note");
+			const gchar *status_message = NULL;
+			if (note != NULL) {
+				status_message = json_object_get_string_member(note, "message");
+			}
+
+			purple_protocol_got_user_status(sa->account, from, availability, "message", status_message, NULL);
 
 			gboolean is_idle = strstr(availability, "Idle") != NULL;
 			purple_prpl_got_user_idle(sa->account, from, is_idle, 0);

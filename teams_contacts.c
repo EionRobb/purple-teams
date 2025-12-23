@@ -2527,11 +2527,13 @@ teams_set_mood_message(TeamsAccount *sa, const gchar *mood)
 	
 	obj = json_object_new();
 	
+	// mood should be HTML
 	json_object_set_string_member(obj, "message", mood ? mood : "");
 	json_object_set_string_member(obj, "expiry", "9999-12-31T00:00:00.000Z");
 	
 	post = teams_jsonobj_to_string(obj);
 	
+	// TODO maybe url changed? https://teams.microsoft.com/ups/apac/v1/me/publishnote
 	teams_post_or_get(sa, TEAMS_METHOD_PUT | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, "/v1/me/publishnote", post, NULL, NULL, TRUE);
 	
 	g_free(post);

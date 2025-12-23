@@ -168,6 +168,7 @@
 #define TEAMS_BUDDY_IS_TEAMS(a) G_LIKELY((a) != NULL && g_str_has_prefix((a), "8:orgid:"))
 
 #define TEAMS_OOO_STATUS_ID "OutOfOffice"
+#define TEAMS_WORK_LOCATION_STATUS_ID "WorkLocation"
 
 typedef struct _TeamsAccount TeamsAccount;
 typedef struct _TeamsBuddy TeamsBuddy;

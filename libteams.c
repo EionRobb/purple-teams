@@ -122,58 +122,77 @@ void
 teams_tooltip_text(PurpleBuddy *buddy, PurpleNotifyUserInfo *user_info, gboolean full)
 {
 	TeamsBuddy *sbuddy = purple_buddy_get_protocol_data(buddy);
-	
-	if (sbuddy)
-	{
-		PurplePresence *presence;
-		PurpleStatus *status;
+	PurplePresence *presence;
+	PurpleStatus *status;
 
-		presence = purple_buddy_get_presence(buddy);
-		status = purple_presence_get_active_status(presence);
-		purple_notify_user_info_add_pair_html(user_info, _("Status"), purple_status_get_name(status));
-		if (sbuddy->mood && *sbuddy->mood) {
-			gchar *stripped = purple_markup_strip_html(sbuddy->mood);
-			gchar *escaped = g_markup_printf_escaped("%s", stripped);
-			
+	presence = purple_buddy_get_presence(buddy);
+	status = purple_presence_get_active_status(presence);
+	purple_notify_user_info_add_pair_html(user_info, _("Status"), purple_status_get_name(status));
+	if (sbuddy && sbuddy->mood && *sbuddy->mood) {
+		gchar *stripped = purple_markup_strip_html(sbuddy->mood);
+		gchar *escaped = g_markup_printf_escaped("%s", stripped);
+		
+		purple_notify_user_info_add_pair_html(user_info, _("Message"), escaped);
+		
+		g_free(stripped);
+		g_free(escaped);
+	} else {
+		const gchar *note = purple_status_get_attr_string(status, "message");
+		if (note && *note) {
+			gchar *escaped = g_markup_printf_escaped("%s", note);
 			purple_notify_user_info_add_pair_html(user_info, _("Message"), escaped);
-			
-			g_free(stripped);
 			g_free(escaped);
 		}
-			
-		if (sbuddy->display_name && *sbuddy->display_name) {
-			gchar *escaped = g_markup_printf_escaped("%s", sbuddy->display_name);
-			purple_notify_user_info_add_pair_html(user_info, _("Alias"), escaped);
-			g_free(escaped);
-		}
-		if (sbuddy->fullname && *sbuddy->fullname) {
-			gchar *escaped = g_markup_printf_escaped("%s", sbuddy->fullname);
-			purple_notify_user_info_add_pair_html(user_info, _("Full Name"), escaped);
-			g_free(escaped);
-		}
-		if (sbuddy->tenant && *sbuddy->tenant) {
-			gchar *escaped = g_markup_printf_escaped("%s", sbuddy->tenant);
-			purple_notify_user_info_add_pair_html(user_info, _("Tenant"), escaped);
-			g_free(escaped);
-		}
+	}
+		
+	if (sbuddy && sbuddy->display_name && *sbuddy->display_name) {
+		gchar *escaped = g_markup_printf_escaped("%s", sbuddy->display_name);
+		purple_notify_user_info_add_pair_html(user_info, _("Alias"), escaped);
+		g_free(escaped);
+	}
+	if (sbuddy && sbuddy->fullname && *sbuddy->fullname) {
+		gchar *escaped = g_markup_printf_escaped("%s", sbuddy->fullname);
+		purple_notify_user_info_add_pair_html(user_info, _("Full Name"), escaped);
+		g_free(escaped);
+	}
+	if (sbuddy && sbuddy->tenant && *sbuddy->tenant) {
+		gchar *escaped = g_markup_printf_escaped("%s", sbuddy->tenant);
+		purple_notify_user_info_add_pair_html(user_info, _("Tenant"), escaped);
+		g_free(escaped);
+	}
 #ifndef ENABLE_TEAMS_PERSONAL
-		if (sbuddy->user_type && *sbuddy->user_type) {
-			gchar *escaped = g_markup_printf_escaped("%s", sbuddy->user_type);
-			purple_notify_user_info_add_pair_html(user_info, _("User Type"), escaped);
-			g_free(escaped);
-		}
+	if (sbuddy && sbuddy->user_type && *sbuddy->user_type) {
+		gchar *escaped = g_markup_printf_escaped("%s", sbuddy->user_type);
+		purple_notify_user_info_add_pair_html(user_info, _("User Type"), escaped);
+		g_free(escaped);
+	}
 #endif // !ENABLE_TEAMS_PERSONAL
 
-		PurpleStatus *out_of_office_status = purple_presence_get_status(presence, TEAMS_OOO_STATUS_ID);
-		if (out_of_office_status && purple_status_is_active(out_of_office_status)) {
-			const gchar *ooo_message = purple_status_get_attr_string(out_of_office_status, "message");
-			if (ooo_message && *ooo_message) {
-				gchar *escaped = g_markup_printf_escaped("%s", ooo_message);
-				purple_notify_user_info_add_pair_html(user_info, _("Out Of Office Note"), escaped);
-				g_free(escaped);
-			} else {
-				purple_notify_user_info_add_pair_html(user_info, _("Out Of Office"), _("Yes"));
-			}
+	PurpleStatus *out_of_office_status = purple_presence_get_status(presence, TEAMS_OOO_STATUS_ID);
+	if (out_of_office_status && purple_status_is_active(out_of_office_status)) {
+		const gchar *ooo_message = purple_status_get_attr_string(out_of_office_status, "message");
+		if (ooo_message && *ooo_message) {
+			gchar *escaped = g_markup_printf_escaped("%s", ooo_message);
+			purple_notify_user_info_add_pair_html(user_info, _("Out Of Office Note"), escaped);
+			g_free(escaped);
+		} else {
+			purple_notify_user_info_add_pair_html(user_info, _("Out Of Office"), _("Yes"));
+		}
+	}
+
+	PurpleStatus *work_location_status = purple_presence_get_status(presence, TEAMS_WORK_LOCATION_STATUS_ID);
+	if (work_location_status && purple_status_is_active(work_location_status)) {
+		const gchar *work_location = purple_status_get_attr_string(work_location_status, "location");
+		if (work_location && *work_location) {
+			gchar *escaped = g_markup_printf_escaped("%s", work_location);
+			purple_notify_user_info_add_pair_html(user_info, _("Work Location"), escaped);
+			g_free(escaped);
+		}
+		const gchar *work_location_name = purple_status_get_attr_string(work_location_status, "location_name");
+		if (work_location_name && *work_location_name) {
+			gchar *escaped = g_markup_printf_escaped("%s", work_location_name);
+			purple_notify_user_info_add_pair_html(user_info, _("Work Location Name"), escaped);
+			g_free(escaped);
 		}
 	}
 }
@@ -211,30 +230,33 @@ teams_status_types(PurpleAccount *account)
 	status = purple_status_type_new_full(PURPLE_STATUS_OFFLINE, NULL, NULL, FALSE, FALSE, FALSE);
 	types = g_list_append(types, status);
 	
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AVAILABLE, "Available", _("Available"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AVAILABLE, "Available", _("Available"), TRUE, TRUE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AWAY, "Away", _("Away"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AWAY, "Away", _("Away"), TRUE, TRUE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_EXTENDED_AWAY, "BeRightBack", _("Be Right Back"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_EXTENDED_AWAY, "BeRightBack", _("Be Right Back"), TRUE, TRUE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "Busy", _("Busy"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "Busy", _("Busy"), TRUE, TRUE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "DoNotDisturb", _("Do Not Disturb"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "DoNotDisturb", _("Do Not Disturb"), TRUE, TRUE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	// status = purple_status_type_new_with_attrs(PURPLE_STATUS_INVISIBLE, "Offline", _("Appear offline"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	// status = purple_status_type_new_with_attrs(PURPLE_STATUS_INVISIBLE, "Offline", _("Appear offline"), TRUE, TRUE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	// types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_OFFLINE, "Offline", _("Offline"), TRUE, TRUE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_OFFLINE, "Offline", _("Offline"), TRUE, TRUE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
 
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AVAILABLE, "AvailableIdle", _("Available (Idle)"), FALSE, FALSE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	// User unsettable but still over the wire
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AVAILABLE, "AvailableIdle", _("Available (Idle)"), FALSE, FALSE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "BusyIdle", _("Busy (Idle)"), FALSE, FALSE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_UNAVAILABLE, "BusyIdle", _("Busy (Idle)"), FALSE, FALSE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_OFFLINE, "PresenceUnknown", _("Unknown"), FALSE, FALSE, FALSE, "message", "Mood", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_OFFLINE, "PresenceUnknown", _("Unknown"), FALSE, FALSE, FALSE, "message", _("Message"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
 
 	// Independent statuses
-	status = purple_status_type_new_with_attrs(PURPLE_STATUS_INVISIBLE, TEAMS_OOO_STATUS_ID, _("Out Of Office"), FALSE, FALSE, TRUE, "message", "Note", purple_value_new(PURPLE_TYPE_STRING), NULL);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_INVISIBLE, TEAMS_OOO_STATUS_ID, _("Out Of Office"), FALSE, FALSE, TRUE, "message", _("Note"), purple_value_new(PURPLE_TYPE_STRING), NULL);
+	types = g_list_append(types, status);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_TUNE, TEAMS_WORK_LOCATION_STATUS_ID, _("Work Location"), FALSE, FALSE, TRUE, "location", _("Location"), purple_value_new(PURPLE_TYPE_STRING), "location_name", _("Name"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
 	
 	return types;
