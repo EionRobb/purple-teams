@@ -1138,7 +1138,7 @@ teams_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
 
 #ifdef ENABLE_TEAMS_PERSONAL
 	plugin->info->id = TEAMS_PERSONAL_PLUGIN_ID;
-	plugin->info->name = "Teams (Personal)";
+	plugin->info->name = "Teams (Personal/Free)";
 	prpl_info->list_icon = teams_personal_list_icon;
 #endif // ENABLE_TEAMS_PERSONAL
 

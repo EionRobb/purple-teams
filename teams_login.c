@@ -254,7 +254,7 @@ teams_login_get_api_skypetoken(TeamsAccount *sa, const gchar *url, const gchar *
 #define TEAMS_OAUTH_RESOURCE "https://api.spaces.skype.com"
 #ifdef ENABLE_TEAMS_PERSONAL
 #	define TEAMS_OAUTH_CLIENT_ID TEAMS_PERSONAL_OAUTH_CLIENT_ID
-#	define TEAMS_OAUTH_SERVICE "service::api.fl.teams.microsoft.com::MBI_SSL"
+#	define TEAMS_OAUTH_SERVICE "https://mtsvc.fl.teams.microsoft.com/teams.mt.readwrite"
 #	define TEAMS_SKYPETOKEN_SERVICE "service::api.fl.spaces.skype.com::MBI_SSL"
 #else
 #	define TEAMS_OAUTH_CLIENT_ID TEAMS_WORK_OAUTH_CLIENT_ID

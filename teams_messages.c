@@ -1814,6 +1814,44 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 	json_array_unref(contacts_array);
 }
 
+static gboolean
+teams_subscribe_to_contact_status_delay(gpointer contacts_ptr)
+{
+	GSList *contacts = (GSList *)contacts_ptr;
+	if (contacts == NULL) {
+		return FALSE;
+	}
+
+	TeamsAccount *sa = g_dataset_get_data(contacts, "teams_account");
+	if (sa == NULL || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
+		g_slist_free_full(contacts, g_free);
+		g_dataset_destroy(contacts);
+		return FALSE;
+	}
+
+	gint attempt_count = GPOINTER_TO_INT(g_dataset_get_data(contacts, "attempt_count"));
+	if (attempt_count >= 5) {
+		// Websocket not ready after 5 attempts, try the old way
+		teams_lookup_contact_statuses(sa, contacts);
+
+		g_slist_free_full(contacts, g_free);
+		g_dataset_destroy(contacts);
+		return FALSE;
+	}
+
+	if (sa->trouter_surl != NULL) {
+		teams_subscribe_to_contact_status(sa, contacts);
+
+		g_slist_free_full(contacts, g_free);
+		g_dataset_destroy(contacts);
+		return FALSE;
+	}
+	
+	g_dataset_set_data(contacts, "attempt_count", GINT_TO_POINTER(attempt_count + 1));
+
+	return TRUE;
+}
+
 void
 teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 {
@@ -1823,8 +1861,10 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 
 	if (sa->trouter_surl == NULL) {
 		purple_debug_info("teams", "No trouter surl yet\n");
-		// Websocket not ready yet, try the old way
-		teams_lookup_contact_statuses(sa, contacts);
+		GSList *contacts_clone = g_slist_copy_deep(contacts, (GCopyFunc) g_strdup, NULL);
+		g_dataset_set_data(contacts_clone, "teams_account", sa);
+		g_dataset_set_data(contacts_clone, "attempt_count", GINT_TO_POINTER(0));
+		g_timeout_add_seconds(2, teams_subscribe_to_contact_status_delay, contacts_clone);
 		return;
 	}
 
@@ -1846,7 +1886,11 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		id = g_strconcat(teams_user_url_prefix(cur->data), cur->data, NULL);
 		json_object_set_string_member(contact, "mri", id);
 		json_array_add_object_element(subscriptionsToAdd, contact);
+#ifdef ENABLE_TEAMS_PERSONAL
+		if (g_str_has_prefix(cur->data, "orgid:")) {
+#else
 		if (!g_str_has_prefix(cur->data, "orgid:")) {
+#endif
 			// Might be an old skype contact that we dont get the realtime presence for
 			fallback_contacts = g_slist_prepend(fallback_contacts, g_strdup(cur->data));
 		}
@@ -1898,6 +1942,7 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 	g_free(trouterUri);
 
 	if (fallback_contacts != NULL) {
+		//TODO we should be polling for the status of these users
 		teams_lookup_contact_statuses(sa, fallback_contacts);
 		g_slist_free_full(fallback_contacts, g_free);
 	}

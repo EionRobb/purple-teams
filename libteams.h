@@ -154,7 +154,11 @@
 #define TEAMS_VDMS_TTL 300
 
 #define TEAMS_CLIENTINFO_NAME "skypeteams"
-#define TEAMS_CLIENTINFO_VERSION "49/24062722442"
+#ifdef ENABLE_TEAMS_PERSONAL
+#	define TEAMS_CLIENTINFO_VERSION "1415/26010401241"
+#else
+#	define TEAMS_CLIENTINFO_VERSION "49/25113001312"
+#endif
 #define TEAMS_USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0 Teams/24165.1410.2974.6689/49"
 
 
@@ -246,7 +250,7 @@ struct _TeamsBuddy {
 	gboolean authorized;
 	gboolean blocked;
 	gchar *tenant;
-	gchar *user_type; // "Federated", "ADUser", "BOT",
+	gchar *user_type; // "Federated", "ADUser", "BOT", "TFLUser", "SkypeUser"
 	
 	/** Profile info */
 	gchar *avatar_url;

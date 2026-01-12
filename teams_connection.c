@@ -122,7 +122,8 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 #endif
 	purple_http_request_header_set(request, "User-Agent", TEAMS_USER_AGENT);
 	
-	if (g_str_equal(host, TEAMS_CONTACTS_HOST) || g_str_equal(host, TEAMS_VIDEOMAIL_HOST) || g_str_equal(host, TEAMS_NEW_CONTACTS_HOST)) {
+	if ((g_str_equal(host, TEAMS_CONTACTS_HOST) || g_str_equal(host, TEAMS_VIDEOMAIL_HOST) || g_str_equal(host, TEAMS_NEW_CONTACTS_HOST)) &&
+		(!g_str_equal(host, TEAMS_BASE_ORIGIN_HOST) || g_str_has_prefix(url, "/api/chatsvc"))) {
 #ifdef ENABLE_TEAMS_PERSONAL
 		purple_http_request_header_set_printf(request, "Authentication", "skypetoken=%s", sa->skype_token);
 		purple_http_request_header_set(request, "ms-ic3-product", "tfl");
