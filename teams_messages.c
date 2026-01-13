@@ -1861,7 +1861,7 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 
 	if (sa->trouter_surl == NULL) {
 		purple_debug_info("teams", "No trouter surl yet\n");
-		GSList *contacts_clone = g_slist_copy_deep(contacts, (GCopyFunc) g_strdup, NULL);
+		GSList *contacts_clone = g_slist_copy_deep(contacts, (GCopyFunc)(GCallback) g_strdup, NULL);
 		g_dataset_set_data(contacts_clone, "teams_account", sa);
 		g_dataset_set_data(contacts_clone, "attempt_count", GINT_TO_POINTER(0));
 		g_timeout_add_seconds(2, teams_subscribe_to_contact_status_delay, contacts_clone);
