@@ -17,6 +17,7 @@
  */
  
 #include "teams_messages.h"
+#include "connection.h"
 #include "glib.h"
 #include "purplecompat.h"
 #include "teams_util.h"
@@ -304,6 +305,25 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					// }]
 				// }]
 		}
+
+		if (json_object_has_member(properties, "botCitations")) {
+			// "botCitations": [{
+				// "id": 1,
+				// "title": "cited document.docx",
+				// "excerpt": "this is the part of text that has been cited"
+			// }]
+		}
+
+		// other properties:
+		// * mentions
+		// * cards
+		// * importance
+		// * subject
+		// * title
+		// * links
+		// * files
+		// * botPoweredByAI true/false
+		// * botFeedbackLoopEnabled true/false
 	}
 	
 	if (json_object_has_member(resource, "content")) {

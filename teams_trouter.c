@@ -22,6 +22,7 @@
 #include "teams_contacts.h"
 #include "teams_messages.h"
 #include "teams_util.h"
+#include "util.h"
 
 #define TEAMS_TROUTER_TTL 86400
 #define TEAMS_TROUTER_TCCV "2024.23.01.2"
@@ -330,6 +331,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 						convbuddyname = toId;
 						message = "Outgoing call";
 					}
+					convbuddyname = teams_strip_user_prefix(convbuddyname);
 
 					purple_serv_got_im(sa->pc, convbuddyname, message, PURPLE_MESSAGE_RECV | PURPLE_MESSAGE_SYSTEM, time(NULL));
 				}
@@ -491,7 +493,15 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 	json_object_set_array_member(transports, "TROUTER", trouter);
 
 	json_object_set_object_member(reg_obj, "clientDescription", clientDescription);
-	json_object_set_string_member(reg_obj, "registrationId", sa->endpoint);
+	gchar *regId = NULL;
+	if (purple_strequal("TeamsCDLWebWorker", appId)) {
+		regId = g_strdup(sa->endpoint);
+	} else {
+		regId = purple_uuid_random();
+	}
+	json_object_set_string_member(reg_obj, "registrationId", regId);
+	g_free(regId);
+
 	json_object_set_string_member(reg_obj, "nodeId", "");
 	json_object_set_object_member(reg_obj, "transports", transports);
 
@@ -562,12 +572,15 @@ teams_trouter_register(gpointer user_data)
 	teams_trouter_register_one(sa, "SkypeSpacesWeb", "SkypeSpacesWeb_2.3", ssw_path, NULL);
 	g_free(ssw_path);
 
+	//teams_trouter_register_one(sa, "com.microsoft.calendar", "Calendar_2.0", sa->trouter_surl, NULL);
+
 #ifdef ENABLE_TEAMS_PERSONAL
 	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.3", sa->trouter_surl, "");
 	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.6", sa->trouter_surl, "TFL");
 #else
 	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.1", sa->trouter_surl, NULL);
 #endif
+
 
 	return TRUE;
 }
