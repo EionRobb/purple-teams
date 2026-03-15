@@ -2517,6 +2517,9 @@ teams_buddy_unblock(PurpleConnection *pc, const char *name)
 // {
 //	"add": ["8:orgid:...."]
 //}
+// or is it
+// POST https://teams.live.com/api/mt/beta/contacts/buddylist/TflContacts/managebuddies?migrationRequested=true&federatedContactsSupported=true&ggEnabled=true&skipBuddylistFetch=true
+// {"add":[{"mri":"8:live:....","displayName":"...."}]}
 
 
 void

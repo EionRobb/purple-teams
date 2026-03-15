@@ -494,7 +494,11 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 
 	json_object_set_object_member(reg_obj, "clientDescription", clientDescription);
 	gchar *regId = NULL;
-	if (purple_strequal("TeamsCDLWebWorker", appId)) {
+	if (purple_strequal("TeamsCDLWebWorker", appId)
+#ifdef ENABLE_TEAMS_PERSONAL
+		&& purple_strequal(productContext, "TFL")
+#endif
+	) {
 		regId = g_strdup(sa->endpoint);
 	} else {
 		regId = purple_uuid_random();
@@ -575,8 +579,8 @@ teams_trouter_register(gpointer user_data)
 	//teams_trouter_register_one(sa, "com.microsoft.calendar", "Calendar_2.0", sa->trouter_surl, NULL);
 
 #ifdef ENABLE_TEAMS_PERSONAL
-	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.3", sa->trouter_surl, "");
 	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.6", sa->trouter_surl, "TFL");
+	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.3", sa->trouter_surl, "");
 #else
 	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.1", sa->trouter_surl, NULL);
 #endif
