@@ -1687,6 +1687,17 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 		JsonObject *chat = json_array_get_object_element(chats, index);
 		const gchar *id = json_object_get_string_member(chat, "id");
 		gboolean is_one_on_one = json_object_get_boolean_member(chat, "isOneOnOne");
+		JsonObject *relationshipState = json_object_get_object_member(chat, "relationshipState");
+
+		if (relationshipState) {
+			gboolean inQuarantine = json_object_get_boolean_member(relationshipState, "inQuarantine");
+			const gchar *blockTime = json_object_get_string_member(relationshipState, "blockTime");
+
+			if (inQuarantine || blockTime != NULL) {
+				// Probably spam, or pending spam
+				continue;
+			}
+		}
 		
 		if (is_one_on_one) {
 			JsonArray *members = json_object_get_array_member(chat, "members");
