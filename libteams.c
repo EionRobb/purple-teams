@@ -630,12 +630,20 @@ teams_close(PurpleConnection *pc)
 		g_source_remove(sa->subscription_flush_timer);
 		sa->subscription_flush_timer = 0;
 	}
-	g_queue_free_full(sa->pending_subscription_contacts, g_free);
+	while (!g_queue_is_empty(sa->pending_subscription_contacts)) {
+		GSList *l = g_queue_pop_head(sa->pending_subscription_contacts);
+		g_slist_free_full(l, g_free);
+	}
+	g_queue_free(sa->pending_subscription_contacts);
 	if (sa->presence_drain_source != 0) {
 		g_source_remove(sa->presence_drain_source);
 		sa->presence_drain_source = 0;
 	}
-	g_queue_free_full(sa->pending_presences, (GDestroyNotify) json_object_unref);
+	while (!g_queue_is_empty(sa->pending_presences)) {
+		gpointer presence = g_queue_pop_head(sa->pending_presences);
+		g_free(presence);
+	}
+	g_queue_free(sa->pending_presences);
 	g_hash_table_destroy(sa->presence_mri_index);
 	
 	g_free(sa->login_device_code);

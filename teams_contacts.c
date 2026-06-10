@@ -1420,7 +1420,7 @@ teams_process_profile_batch(gpointer user_data)
 {
 	TeamsBatchProfileData *data = user_data;
 
-	if (!PURPLE_IS_CONNECTION(data->pc)) {
+	if (!PURPLE_IS_CONNECTION(data->pc) || !purple_connection_get_protocol_data(data->pc)) {
 		// Connection was dropped while we were idle, clean up and stop
 		json_array_unref(data->contacts);
 		g_free(data);
@@ -1828,7 +1828,7 @@ teams_purge_meeting_chats_from_blist(TeamsAccount *sa)
 			if (purple_chat_get_account(chat) == sa->account) {
 				GHashTable *components = purple_chat_get_components(chat);
 				const gchar *chat_id = g_hash_table_lookup(components, "chatname");
-				if (chat_id && g_str_has_prefix(chat_id, "19:meeting_")) {
+				if (TEAMS_CHAT_IS_MEETING(chat_id)) {
 					purple_blist_remove_chat(chat);
 				}
 			}
@@ -1929,7 +1929,7 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 			const gchar *title = json_object_get_string_member(chat, "title");
 			PurpleChat *purple_chat = teams_find_chat(sa->account, id);
 			
-			if (g_str_has_prefix(id, "19:meeting_") && purple_account_get_bool(sa->account, "hide_meeting_chats", FALSE)) {
+			if (TEAMS_CHAT_IS_MEETING(id) && purple_account_get_bool(sa->account, "hide_meeting_chats", FALSE)) {
 				continue;
 			}
 			
@@ -1945,7 +1945,7 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 				
 			}
 			
-			if (!g_str_has_prefix(id, "19:meeting_")) {
+			if (!TEAMS_CHAT_IS_MEETING(id)) {
 				JsonArray *members = json_object_get_array_member(chat, "members");
 				guint members_index, members_length = json_array_get_length(members);
 
