@@ -171,6 +171,8 @@
 #define TEAMS_BUDDY_IS_SKYPE(a) G_UNLIKELY((a) != NULL && g_str_has_prefix((a), "8:") && !g_str_has_prefix((a), "8:orgid:"))
 #define TEAMS_BUDDY_IS_TEAMS(a) G_LIKELY((a) != NULL && g_str_has_prefix((a), "8:orgid:"))
 
+#define TEAMS_CHAT_IS_MEETING(a) G_LIKELY((a) != NULL && g_str_has_prefix((a), "19:meeting_"))
+
 #define TEAMS_OOO_STATUS_ID "OutOfOffice"
 #define TEAMS_WORK_LOCATION_STATUS_ID "WorkLocation"
 
@@ -225,6 +227,14 @@ struct _TeamsAccount {
 	GHashTable *calendar_reminder_timeouts;
 	guint calendar_poll_timeout;
 	GQueue *processed_event_messages;
+	GHashTable *subscribed_contacts;
+	GHashTable *fetched_profiles;
+	GHashTable *presence_etag_cache;
+	GQueue *pending_subscription_contacts;
+	guint subscription_flush_timer;
+	GQueue *pending_presences;
+	guint presence_drain_source;
+	GHashTable *presence_mri_index;
 	
 	struct _PurpleWebsocket *trouter_socket;
 	gchar *trouter_surl;

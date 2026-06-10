@@ -1414,6 +1414,7 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	gint length, index;
 	PurpleGroup *group = teams_get_blist_group(sa);
 	GSList *users_to_fetch = NULL;
+	//gboolean is_meeting_chat = g_str_has_prefix(chatname, "19:meeting_");
 	
 	chatconv = purple_conversations_find_chat_with_account(chatname, sa->account);
 	g_free(chatname);
@@ -1477,7 +1478,6 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	}
 	
 	teams_get_friend_profiles(sa, users_to_fetch);
-	teams_subscribe_to_contact_status(sa, users_to_fetch);
 	g_slist_free_full(users_to_fetch, g_free);
 }
 
@@ -1526,6 +1526,147 @@ teams_get_conversation_history_since(TeamsAccount *sa, const gchar *convname, gi
 	
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_conv_history, GINT_TO_POINTER(since), TRUE);
 	
+	g_free(url);
+}
+
+#define TEAMS_HISTORY_PAGE_SIZE 30
+#define TEAMS_HISTORY_MAX_PAGES 20
+
+typedef struct {
+	gchar  *convname;
+	gint    since;        /* original earliest timestamp (seconds) */
+	gint    end_before;   /* exclusive upper bound (seconds); 0 = no limit */
+	gint    page_count;   /* safety counter */
+	GSList *all_messages; /* json_object_ref'd JsonObject*, accumulated across pages */
+} TeamsHistoryFetchData;
+
+static gint
+compare_message_composetime(gconstpointer a, gconstpointer b)
+{
+	const gchar *ta = json_object_get_string_member((JsonObject *) a, "composetime");
+	const gchar *tb = json_object_get_string_member((JsonObject *) b, "composetime");
+	time_t tsa = purple_str_to_time(ta, TRUE, NULL, NULL, NULL);
+	time_t tsb = purple_str_to_time(tb, TRUE, NULL, NULL, NULL);
+
+	if (tsa < tsb) return -1;
+	if (tsa > tsb) return  1;
+	return 0;
+}
+
+// Fetch message history using paginated/batched requests to fetch the complete requested time-window
+static void
+teams_got_conv_history_paginated(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	TeamsHistoryFetchData *fetch = user_data;
+	JsonObject *obj;
+	JsonArray  *messages;
+	gint index, length;
+	gint oldest_ts = 0;
+	gboolean fetch_next = FALSE;
+
+	if (node != NULL && json_node_get_node_type(node) == JSON_NODE_OBJECT) {
+		obj      = json_node_get_object(node);
+		messages = json_object_get_array_member(obj, "messages");
+		length   = json_array_get_length(messages);
+
+		// Accumulate this page's messages (API is newest-first; index 0 = newest).
+		for (index = 0; index < length; index++) {
+			JsonObject  *message          = json_array_get_object_element(messages, index);
+			const gchar *composetime      = json_object_get_string_member(message, "composetime");
+			gint         composetimestamp = (gint) purple_str_to_time(composetime, TRUE, NULL, NULL, NULL);
+
+			// The last element (highest index) is the oldest in a newest-first array.
+			if (index == length - 1)
+				oldest_ts = composetimestamp;
+
+			if (composetimestamp > fetch->since) {
+				json_object_ref(message);
+				fetch->all_messages = g_slist_prepend(fetch->all_messages, message);
+			}
+		}
+
+		 // Request the next (older) page when:
+		 // - we received a full page (more messages likely exist)
+		 // - the oldest message is still within our target window
+		 // - we haven't hit the safety page limit
+		 // - we're making progress (oldest_ts < end_before, so we're not stuck on
+		 //    the same window. If the server ignores endTime it will return the
+		 //    same page and oldest_ts won't be less than the end_before we sent,
+		 //    stopping the loop cleanly)
+		fetch_next = (length == TEAMS_HISTORY_PAGE_SIZE
+				&& oldest_ts > fetch->since
+				&& fetch->page_count < TEAMS_HISTORY_MAX_PAGES
+				&& (fetch->end_before == 0 || oldest_ts < fetch->end_before));
+
+		if (fetch_next) {
+			TeamsHistoryFetchData *next = g_new0(TeamsHistoryFetchData, 1);
+			gchar *url;
+
+			next->convname     = g_strdup(fetch->convname);
+			next->since        = fetch->since;
+			next->end_before   = oldest_ts;
+			next->page_count   = fetch->page_count + 1;
+			next->all_messages = fetch->all_messages; /* transfer ownership */
+			fetch->all_messages = NULL;
+
+			url = g_strdup_printf(
+				TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations/%s/messages"
+				"?startTime=%d000&endTime=%d000&pageSize=%d"
+				"&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent",
+				purple_url_encode(next->convname),
+				next->since,
+				next->end_before - 1,
+				TEAMS_HISTORY_PAGE_SIZE);
+
+			teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL,
+					TEAMS_CONTACTS_HOST, url, NULL,
+					teams_got_conv_history_paginated, next, TRUE);
+			g_free(url);
+			g_free(fetch->convname);
+			g_free(fetch);
+			return;
+		}
+	}
+
+	//
+	// All pages received (or an error occurred). Sort the accumulated messages
+	// by composetime ascending (oldest first) so they appear in the correct
+	// order in the chat window, regardless of the order the pages arrived.
+	//
+	fetch->all_messages = g_slist_sort(fetch->all_messages, compare_message_composetime);
+	GSList *l;
+	for (l = fetch->all_messages; l; l = l->next) {
+		process_message_resource(sa, (JsonObject *) l->data);
+		json_object_unref((JsonObject *) l->data);
+	}
+	g_slist_free(fetch->all_messages);
+
+	g_free(fetch->convname);
+	g_free(fetch);
+}
+
+void
+teams_fetch_conv_history_paginated(TeamsAccount *sa, const gchar *convname, gint since)
+{
+	TeamsHistoryFetchData *fetch = g_new0(TeamsHistoryFetchData, 1);
+	gchar *url;
+
+	fetch->convname   = g_strdup(convname);
+	fetch->since      = since;
+	fetch->end_before = 0;
+	fetch->page_count = 0;
+
+	url = g_strdup_printf(
+		TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations/%s/messages"
+		"?startTime=%d000&pageSize=%d"
+		"&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent",
+		purple_url_encode(convname),
+		since,
+		TEAMS_HISTORY_PAGE_SIZE);
+
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL,
+			TEAMS_CONTACTS_HOST, url, NULL,
+			teams_got_conv_history_paginated, fetch, TRUE);
 	g_free(url);
 }
 
@@ -1664,121 +1805,281 @@ teams_unsubscribe_from_contact_status(TeamsAccount *sa, const gchar *who)
 	g_free(url);
 }
 
-void
-teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+// Number of presence entries to process per idle tick before yielding to the
+// GTK main loop. This keeps the UI responsive during large snapshot updates.
+#define TEAMS_PRESENCE_BATCH_SIZE 20
+
+// Drains up to TEAMS_PRESENCE_BATCH_SIZE entries from the shared presence queue
+// per idle tick.
+//
+// Because all incoming responses feed into one queue there is only a single
+// idle callback active at a time. Therefore, the main loop will always regain
+// control after processing up to TEAMS_PRESENCE_BATCH_SIZE status updates
+// regardless of how many API responses arrive concurrently.
+static gboolean
+teams_drain_presence_queue(gpointer user_data)
 {
+	TeamsAccount *sa = user_data;
+
+	if (!PURPLE_IS_CONNECTION(sa->pc)) {
+		// If the connection has dropped discard all pending messages and stop.
+		while (!g_queue_is_empty(sa->pending_presences)) {
+			json_object_unref(g_queue_pop_head(sa->pending_presences));
+		}
+		sa->presence_drain_source = 0;
+		return G_SOURCE_REMOVE;
+	}
+
 	PurpleGroup *group = teams_get_blist_group(sa);
-	JsonArray *responses = json_node_get_array(node);
 	GSList *users_to_fetch = NULL;
-	
-	if (responses != NULL) {
-		const gchar *from;
-		guint length = json_array_get_length(responses);
-		gint index;
-		
-		for(index = length - 1; index >= 0; index--)
-		{
-			JsonObject *response = json_array_get_object_element(responses, index);
-			JsonObject *presence = json_object_get_object_member(response, "presence");
-			const gchar *mri = json_object_get_string_member(response, "mri");
-			const gchar *availability = json_object_get_string_member(presence, "availability");
-			
-			from = teams_strip_user_prefix(mri);
-			g_return_if_fail(from);
-			
-			if (!purple_blist_find_buddy(sa->account, from))
-			{
-				if (!teams_is_user_self(sa, from)) {
-					purple_blist_add_buddy(purple_buddy_new(sa->account, from, NULL), NULL, group, NULL);
-					users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(from));
-				}
+	gint count = 0;
+
+	// Time box the drain so that the GTK main loop always gets back control
+	// within ~20 ms.  Buddy-list redraws are expensive when the list is large.
+	// The time box prevents the 50 ms timer from queuing up faster than it drains.
+	gint64 deadline = g_get_monotonic_time() + 20000; // 20 ms from now
+
+	while (!g_queue_is_empty(sa->pending_presences) && count < TEAMS_PRESENCE_BATCH_SIZE) {
+		JsonObject *response = g_queue_pop_head(sa->pending_presences);
+		count++;
+
+		// Remove from the deduplication index now that we are processing this entry.
+		const gchar *index_mri = json_object_get_string_member(response, "mri");
+		if (index_mri) {
+			g_hash_table_remove(sa->presence_mri_index, index_mri);
+		}
+
+		JsonObject *presence = json_object_get_object_member(response, "presence");
+		const gchar *mri = json_object_get_string_member(response, "mri");
+
+		if (presence == NULL || mri == NULL) {
+			json_object_unref(response);
+			continue;
+		}
+
+		// Skip PSTN (telephone) contacts
+		// MRI prefix "4:" means phone number
+		// It is impossible to send or recieve IMs from these contacts, so they
+		// should not be added to the buddy list.
+		if (g_str_has_prefix(mri, "4:")) {
+			json_object_unref(response);
+			continue;
+		}
+
+		const gchar *availability = json_object_get_string_member(presence, "availability");
+		const gchar *from = teams_strip_user_prefix(mri);
+
+		if (!from || !*from || !availability) {
+			json_object_unref(response);
+			continue;
+		}
+
+		if (!purple_blist_find_buddy(sa->account, from)) {
+			if (!teams_is_user_self(sa, from)) {
+				purple_blist_add_buddy(purple_buddy_new(sa->account, from, NULL), NULL, group, NULL);
+				users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(from));
 			}
-			
-			//TODO note/OOOnote -> status message
-			/* 
-				"presence": {
-					"sourceNetwork": "SameEnterprise",
-					"note": {
-						"message": "<p>hi :)</p>",
-						"publishTime": "2025-12-23T08:59:24.2293971Z",
-						"expiry": "2025-12-23T10:59:59.999Z"
-					},
-					"workLocation": {
-						"location": "Office",
-						"expiry": "2025-12-23T10:59:59.9999999Z",
-						"isForced": true,
-						"locationSource": "ForcedLocation",
-						"approximateDetails": {
-							"id": "12345678-1234-4321-abcd-1234567890ab",
-							"name": "Building A - Floor 3",
-							"idType": "Directory"
-						},
-						"maxShared": "Specific"
-					},
-					"calendarData": {
-						"outOfOfficeNote": {
-							"message": "I am on leave - returning 19th April",
-							"publishTime": "2022-04-14T08:02:23.5053937Z",
-							"expiry": "2022-04-19T07:00:00Z"
-						},
-						"isOutOfOffice": true
-					},
-					"capabilities": [],
-					"availability": "Away",
-					"activity": "Away",
-					"lastActiveTime": "2022-04-14T04:41:35.67Z",
-					"deviceType": "Desktop"
+		}
+		//TODO note/OOOnote -> status message
+		/*
+			"presence": {
+				"sourceNetwork": "SameEnterprise",
+				"note": {
+					"message": "<p>hi :)</p>",
+					"publishTime": "2025-12-23T08:59:24.2293971Z",
+					"expiry": "2025-12-23T10:59:59.999Z"
 				},
-				"etagMatch": false,
-				"etag": "A0072086544",
-				"status": 20000
-			*/
+				"workLocation": {
+					"location": "Office",
+					"expiry": "2025-12-23T10:59:59.9999999Z",
+					"isForced": true,
+					"locationSource": "ForcedLocation",
+					"approximateDetails": {
+						"id": "12345678-1234-4321-abcd-1234567890ab",
+						"name": "Building A - Floor 3",
+						"idType": "Directory"
+					},
+					"maxShared": "Specific"
+				},
+				"calendarData": {
+					"outOfOfficeNote": {
+						"message": "I am on leave - returning 19th April",
+						"publishTime": "2022-04-14T08:02:23.5053937Z",
+						"expiry": "2022-04-19T07:00:00Z"
+					},
+					"isOutOfOffice": true
+				},
+				"capabilities": [],
+				"availability": "Away",
+				"activity": "Away",
+				"lastActiveTime": "2022-04-14T04:41:35.67Z",
+				"deviceType": "Desktop"
+			},
+			"etagMatch": false,
+			"etag": "A0072086544",
+			"status": 20000
+		*/
 
-			JsonObject *calendarData = json_object_get_object_member(presence, "calendarData");
-			if (calendarData != NULL) {
-				gboolean isOutOfOffice = json_object_get_boolean_member(calendarData, "isOutOfOffice");
-				if (isOutOfOffice) {
-					JsonObject *outOfOfficeNote = json_object_get_object_member(calendarData, "outOfOfficeNote");
-					const gchar *message = json_object_get_string_member(outOfOfficeNote, "message");
-					purple_protocol_got_user_status(sa->account, from, TEAMS_OOO_STATUS_ID, "message", message, NULL);
-				} else {
-					purple_protocol_deactivate_user_status(sa->account, from, TEAMS_OOO_STATUS_ID);
-				}
+		// Skip status updates whose presence hasn't changed since we last
+		// processed them. Each entry carries an etag that the server increments
+		// whenever the contact's presence changes.
+		const gchar *etag = json_object_get_string_member(response, "etag");
+		if (etag && *etag) {
+			const gchar *cached_etag = g_hash_table_lookup(sa->presence_etag_cache, mri);
+			if (cached_etag && g_str_equal(cached_etag, etag)) {
+				json_object_unref(response);
+				continue;
 			}
+			g_hash_table_insert(sa->presence_etag_cache, g_strdup(mri), g_strdup(etag));
+		}
 
-			JsonObject *workLocation = json_object_get_object_member(presence, "workLocation");
-			if (workLocation != NULL) {
-				const gchar *location_name = NULL;
-				const gchar *location = json_object_get_string_member(workLocation, "location");
-				JsonObject *approximateDetails = json_object_get_object_member(workLocation, "approximateDetails");
-				if (approximateDetails != NULL) {
-					const gchar *name = json_object_get_string_member(approximateDetails, "name");
-					if (name != NULL && *name) {
-						location_name = name;
-					}
-				}
-				purple_protocol_got_user_status(sa->account, from, TEAMS_WORK_LOCATION_STATUS_ID, "location", location, "location_name", location_name, NULL);
+		JsonObject *calendarData = json_object_get_object_member(presence, "calendarData");
+		if (calendarData != NULL) {
+			gboolean isOutOfOffice = json_object_get_boolean_member(calendarData, "isOutOfOffice");
+			if (isOutOfOffice) {
+				JsonObject *outOfOfficeNote = json_object_get_object_member(calendarData, "outOfOfficeNote");
+				const gchar *message = json_object_get_string_member(outOfOfficeNote, "message");
+				purple_protocol_got_user_status(sa->account, from, TEAMS_OOO_STATUS_ID, "message", message, NULL);
 			} else {
-				purple_protocol_deactivate_user_status(sa->account, from, TEAMS_WORK_LOCATION_STATUS_ID);
+				purple_protocol_deactivate_user_status(sa->account, from, TEAMS_OOO_STATUS_ID);
 			}
+		}
 
-			JsonObject *note = json_object_get_object_member(presence, "note");
-			const gchar *status_message = NULL;
-			if (note != NULL) {
-				status_message = json_object_get_string_member(note, "message");
+		JsonObject *workLocation = json_object_get_object_member(presence, "workLocation");
+		if (workLocation != NULL) {
+			const gchar *location_name = NULL;
+			const gchar *location = json_object_get_string_member(workLocation, "location");
+			JsonObject *approximateDetails = json_object_get_object_member(workLocation, "approximateDetails");
+			if (approximateDetails != NULL) {
+				const gchar *name = json_object_get_string_member(approximateDetails, "name");
+				if (name != NULL && *name) {
+					location_name = name;
+				}
 			}
+			purple_protocol_got_user_status(sa->account, from, TEAMS_WORK_LOCATION_STATUS_ID, "location", location, "location_name", location_name, NULL);
+		} else {
+			purple_protocol_deactivate_user_status(sa->account, from, TEAMS_WORK_LOCATION_STATUS_ID);
+		}
 
+		JsonObject *note = json_object_get_object_member(presence, "note");
+		const gchar *status_message = NULL;
+		if (note != NULL) {
+			status_message = json_object_get_string_member(note, "message");
+		}
+
+		// Skip the expensive purple_protocol_got_user_status() and buddy-list
+		// redraw when the visible state won't change.  libpurple's
+		// purple_prpl_got_user_status() always fires "buddy-status-changed" even
+		// for no-op transitions (ex: offline -> offline), triggering a full GTK
+		// buddy-list re-sort.  At startup with "Show Offline Buddies" enabled, this
+		// could otherwise fire hundreds of times for contacts that remain offline,
+		// locking the UI.
+		gboolean should_update_availability = TRUE;
+		PurpleBuddy *existing = purple_blist_find_buddy(sa->account, from);
+		if (existing != NULL) {
+			PurplePresence *epres = purple_buddy_get_presence(existing);
+			gboolean currently_online = purple_presence_is_online(epres);
+			gboolean new_is_offline = (purple_strequal(availability, "Offline") ||
+			                          purple_strequal(availability, "PresenceUnknown"));
+			if (!currently_online && new_is_offline) {
+				// Both old and new are offline. Only push the update if the
+				// buddy status actually changed.
+				PurpleStatus *estat = purple_presence_get_active_status(epres);
+				const gchar *current_msg = estat ?
+				    purple_status_get_attr_string(estat, "message") : NULL;
+				if (g_strcmp0(current_msg, status_message) == 0) {
+					should_update_availability = FALSE;
+				}
+			}
+		}
+
+		if (should_update_availability) {
 			purple_protocol_got_user_status(sa->account, from, availability, "message", status_message, NULL);
 
 			gboolean is_idle = strstr(availability, "Idle") != NULL;
 			purple_prpl_got_user_idle(sa->account, from, is_idle, 0);
 		}
+
+		json_object_unref(response);
+
+		// Yield if we have been in this callback for more than 20 ms so that
+		// the GTK main loop can process paint and input events before the next
+		// batch is processed.
+		if (g_get_monotonic_time() > deadline)
+			break;
 	}
 
-	if (users_to_fetch)
-	{
+	if (users_to_fetch) {
 		teams_get_friend_profiles(sa, users_to_fetch);
 		g_slist_free_full(users_to_fetch, g_free);
+	}
+
+	if (g_queue_is_empty(sa->pending_presences)) {
+		sa->presence_drain_source = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	return G_SOURCE_CONTINUE;
+}
+
+void
+teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonArray *responses = json_node_get_array(node);
+
+	if (responses == NULL || json_array_get_length(responses) == 0) {
+		return;
+	}
+
+	// Enqueue all entries onto the shared presence queue, deduplicating by MRI.
+	// If an entry for the same MRI is already waiting in the queue, overwrite
+	// it with the newer payload since only the most recent status matters.
+	// This caps queue depth at the number of unique contacts rather than at the
+	// number of incoming API responses, preventing unbounded queue growth when
+	// updates arrive faster than the drain can process them.
+	guint i, len = json_array_get_length(responses);
+	for (i = 0; i < len; i++) {
+		JsonObject *resp = json_array_get_object_element(responses, i);
+		if (resp == NULL) continue;
+
+		const gchar *mri = json_object_get_string_member(resp, "mri");
+		if (!mri || !*mri) continue;
+
+		// PSTN (4:) contacts are telephone numbers, not IM buddies.
+		if (g_str_has_prefix(mri, "4:")) continue;
+
+		// Skip if the etag is unchanged since the last drain.
+		// The server resends all subscribed contacts' presence on reconnect
+		// even when nothing changed; this avoids queuing the entire buddy
+		// list when there are no actual status changes.
+		const gchar *etag = json_object_get_string_member(resp, "etag");
+		if (etag && *etag) {
+			const gchar *cached_etag = g_hash_table_lookup(sa->presence_etag_cache, mri);
+			if (cached_etag && g_str_equal(cached_etag, etag)) continue;
+		}
+
+		// If an entry for this MRI is already queued, overwrite its data in-place.
+		// The GList node stays at its current position in the FIFO so ordering is
+		// preserved, only the payload is updated.
+		GList *existing_node = g_hash_table_lookup(sa->presence_mri_index, mri);
+		if (existing_node != NULL) {
+			json_object_unref(existing_node->data);
+			existing_node->data = json_object_ref(resp);
+		} else {
+			g_queue_push_tail(sa->pending_presences, json_object_ref(resp));
+			// Store the tail GList node for O(1) future in-place updates.
+			g_hash_table_insert(sa->presence_mri_index, g_strdup(mri),
+			                    sa->pending_presences->tail);
+		}
+	}
+
+	// Start the drain callback only if it isn't already running.
+	// Use g_timeout_add() instead of g_idle_add() so the drain
+	// makes progress even when the GLib main loop is continuously
+	// occupied with I/O events (a common occurance during login),
+	// which would starve an idle source indefinitely.
+	if (sa->presence_drain_source == 0) {
+		sa->presence_drain_source = g_timeout_add(50, teams_drain_presence_queue, sa);
 	}
 }
 
@@ -1832,6 +2133,64 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 		g_free(post);
 	}
 	json_array_unref(contacts_array);
+}
+
+// Drains sa->pending_subscription_contacts at a rate of 100 contacts per 50 ms.
+// Called by a recurring g_timeout_add timer. Returns G_SOURCE_REMOVE when the
+// queue is empty and G_SOURCE_CONTINUE to reschedule for the next batch.
+//
+// Spacing the HTTP calls out prevents the server from receiving all
+// subscription requests simultaneously, which could cause it to return the
+// presence of all subscribed contacts via the Trouter WebSocket all at once.
+static gboolean
+teams_send_subscription_batch(gpointer user_data)
+{
+	TeamsAccount *sa = user_data;
+
+	if (!PURPLE_CONNECTION_IS_VALID(sa->pc) || sa->trouter_surl == NULL ||
+			g_queue_is_empty(sa->pending_subscription_contacts)) {
+		sa->subscription_flush_timer = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	JsonArray *subscriptionsToAdd = json_array_new();
+	JsonArray *subscriptionsToRemove = json_array_new();
+	gchar *trouterUri = g_strconcat(sa->trouter_surl, "/TeamsUnifiedPresenceService", NULL);
+	gchar *url = g_strdup_printf("/v1/pubsub/subscriptions/%s", purple_url_encode(sa->endpoint));
+	guint count = 0;
+
+	while (!g_queue_is_empty(sa->pending_subscription_contacts) && count < 100) {
+		gchar *contact_id = g_queue_pop_head(sa->pending_subscription_contacts);
+
+		JsonObject *contact = json_object_new();
+		gchar *id = g_strconcat(teams_user_url_prefix(contact_id), contact_id, NULL);
+		json_object_set_string_member(contact, "mri", id);
+		json_array_add_object_element(subscriptionsToAdd, contact);
+		g_free(id);
+		g_free(contact_id);
+		count++;
+	}
+
+	JsonObject *obj = json_object_new();
+	json_object_set_string_member(obj, "trouterUri", trouterUri);
+	json_object_set_array_member(obj, "subscriptionsToAdd", subscriptionsToAdd);
+	json_object_set_array_member(obj, "subscriptionsToRemove", subscriptionsToRemove);
+	json_object_set_boolean_member(obj, "shouldPurgePreviousSubscriptions", FALSE);
+	gchar *post = teams_jsonobj_to_string(obj);
+
+	teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, url, post, NULL, NULL, TRUE);
+
+	g_free(post);
+	json_object_unref(obj);
+	g_free(url);
+	g_free(trouterUri);
+
+	if (g_queue_is_empty(sa->pending_subscription_contacts)) {
+		sa->subscription_flush_timer = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	return G_SOURCE_CONTINUE;
 }
 
 static gboolean
@@ -1888,24 +2247,24 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		return;
 	}
 
-	JsonArray *subscriptionsToAdd = json_array_new();
-	JsonArray *subscriptionsToRemove = json_array_new();
-	gchar *trouterUri = g_strconcat(sa->trouter_surl, "/TeamsUnifiedPresenceService", NULL);
-	gchar *url = g_strdup_printf("/v1/pubsub/subscriptions/%s", purple_url_encode(sa->endpoint));
 	GSList *fallback_contacts = NULL;
-
-	gchar *post;
 	GSList *cur = contacts;
-	guint count = 0;
+
 	do {
-		JsonObject *contact;
-		gchar *id;
+		// Skip PSTN (telephone) contacts
+		// These start with "+" after the "4:" prefix is stripped. The presence
+		// service has no useful status data for them.
+		if (g_str_has_prefix(cur->data, "+")) {
+			continue;
+		}
 
-		contact = json_object_new();
+		// Skip contacts we've already subscribed to avoid duplicate subscriptions
+		// and the server-side snapshot storm they cause.
+		if (g_hash_table_lookup(sa->subscribed_contacts, (gconstpointer) cur->data) != NULL) {
+			continue;
+		}
+		g_hash_table_insert(sa->subscribed_contacts, g_strdup(cur->data), GUINT_TO_POINTER(TRUE));
 
-		id = g_strconcat(teams_user_url_prefix(cur->data), cur->data, NULL);
-		json_object_set_string_member(contact, "mri", id);
-		json_array_add_object_element(subscriptionsToAdd, contact);
 #ifdef ENABLE_TEAMS_PERSONAL
 		if (g_str_has_prefix(cur->data, "orgid:")) {
 #else
@@ -1914,52 +2273,16 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 			// Might be an old skype contact that we dont get the realtime presence for
 			fallback_contacts = g_slist_prepend(fallback_contacts, g_strdup(cur->data));
 		}
-		g_free(id);
 
-		if (++count >= 100) {
-			JsonObject *obj = json_object_new();
+		g_queue_push_tail(sa->pending_subscription_contacts, g_strdup(cur->data));
 
-			// Send off the current batch and continue
-			json_object_set_string_member(obj, "trouterUri", trouterUri);
-			json_object_set_array_member(obj, "subscriptionsToAdd", subscriptionsToAdd);
-			json_object_set_array_member(obj, "subscriptionsToRemove", subscriptionsToRemove);
-			json_object_set_boolean_member(obj, "shouldPurgePreviousSubscriptions", FALSE);
-			post = teams_jsonobj_to_string(obj);
+	} while ((cur = g_slist_next(cur)));
 
-			teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, url, post, NULL, NULL, TRUE);
-
-			g_free(post);
-			json_object_unref(obj);
-
-			subscriptionsToAdd = json_array_new();
-			subscriptionsToRemove = json_array_new();
-			count = 0;
-		}
-	} while((cur = g_slist_next(cur)));
-
-	if (json_array_get_length(subscriptionsToAdd)) {
-		JsonObject *obj = json_object_new();
-
-		// Send off the current batch and continue
-		json_object_set_string_member(obj, "trouterUri", trouterUri);
-		json_object_set_array_member(obj, "subscriptionsToAdd", subscriptionsToAdd);
-		json_object_set_array_member(obj, "subscriptionsToRemove", subscriptionsToRemove);
-		json_object_set_boolean_member(obj, "shouldPurgePreviousSubscriptions", FALSE);
-		post = teams_jsonobj_to_string(obj);
-
-		teams_post_or_get(sa, TEAMS_METHOD_POST | TEAMS_METHOD_SSL, TEAMS_PRESENCE_HOST, url, post, NULL, NULL, TRUE);
-
-		g_free(post);
-		json_object_unref(obj);
-
-	} else {
-		// Would normally be unref'd when obj is unref'd
-		json_array_unref(subscriptionsToAdd);
-		json_array_unref(subscriptionsToRemove);
+	// Start the rate-limited flush timer if it isn't already running.
+	if (sa->subscription_flush_timer == 0 &&
+			!g_queue_is_empty(sa->pending_subscription_contacts)) {
+		sa->subscription_flush_timer = g_timeout_add(50, teams_send_subscription_batch, sa);
 	}
-
-	g_free(url);
-	g_free(trouterUri);
 
 	if (fallback_contacts != NULL) {
 		//TODO we should be polling for the status of these users

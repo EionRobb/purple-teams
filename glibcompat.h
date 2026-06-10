@@ -3,6 +3,14 @@
 
 #include <glib.h>
 
+#ifndef G_SOURCE_REMOVE
+#define G_SOURCE_REMOVE 0
+#endif /* G_SOURCE_REMOVE */
+
+#ifndef G_SOURCE_CONTINUE
+#define G_SOURCE_CONTINUE 1
+#endif /* G_SOURCE_CONTINUE */
+
 #if !GLIB_CHECK_VERSION(2, 68, 0)
 #define g_memdup2(mem, size) g_memdup((mem), (size))
 #endif /* 2.68.0 */

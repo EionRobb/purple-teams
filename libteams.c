@@ -423,6 +423,49 @@ teams_node_menu(PurpleBlistNode *node)
 
 static gulong conversation_updated_signal = 0;
 static gulong chat_conversation_typing_signal = 0;
+static gulong im_conversation_created_signal = 0;
+
+static void
+teams_im_conversation_created(PurpleConversation *conv)
+{
+	PurpleConnection *pc;
+	TeamsAccount *sa;
+	PurpleAccount *account;
+	const gchar *buddyname;
+	const gchar *convname;
+	gint history_days;
+	gint since;
+
+	if (!PURPLE_IS_IM_CONVERSATION(conv))
+		return;
+
+	pc = purple_conversation_get_connection(conv);
+	if (!PURPLE_CONNECTION_IS_CONNECTED(pc))
+		return;
+
+	if (!purple_strequal(purple_protocol_get_id(purple_connection_get_protocol(pc)), TEAMS_PLUGIN_ID))
+		return;
+
+	account = purple_connection_get_account(pc);
+
+	if (!purple_account_get_bool(account, "fetch-history", TRUE))
+		return;
+
+	history_days = purple_account_get_int(account, "history-days", 7);
+	if (history_days <= 0)
+		return;
+
+	sa = purple_connection_get_protocol_data(pc);
+
+	buddyname = purple_conversation_get_name(conv);
+	convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, buddyname);
+
+	if (convname == NULL || *convname == '\0')
+		return;
+
+	since = (gint)(time(NULL) - (time_t)history_days * 86400);
+	teams_fetch_conv_history_paginated(sa, convname, since);
+}
 
 static void
 teams_login(PurpleAccount *account)
@@ -449,6 +492,14 @@ teams_login(PurpleAccount *account)
 	sa->buddy_to_chat_lookup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	sa->chat_to_buddy_lookup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	sa->calendar_reminder_timeouts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	sa->subscribed_contacts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	sa->fetched_profiles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	sa->presence_etag_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	sa->pending_subscription_contacts = g_queue_new();
+	sa->subscription_flush_timer = 0;
+	sa->pending_presences = g_queue_new();
+	sa->presence_drain_source = 0;
+	sa->presence_mri_index = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 	sa->keepalive_pool = purple_http_keepalive_pool_new();
 	purple_http_keepalive_pool_set_limit_per_host(sa->keepalive_pool, TEAMS_MAX_CONNECTIONS);
 	sa->conns = purple_http_connection_set_new();
@@ -476,6 +527,13 @@ teams_login(PurpleAccount *account)
 	}
 	if (!chat_conversation_typing_signal) {
 		chat_conversation_typing_signal = purple_signal_connect(purple_conversations_get_handle(), "chat-conversation-typing", purple_connection_get_protocol(pc), PURPLE_CALLBACK(teams_conv_send_typing), NULL);
+		if (!chat_conversation_typing_signal) {
+			// Typing signal doesn't exist in this libpurple version
+			chat_conversation_typing_signal = G_MAXULONG;
+		}
+	}
+	if (!im_conversation_created_signal) {
+		im_conversation_created_signal = purple_signal_connect(purple_conversations_get_handle(), "conversation-created", purple_connection_get_protocol(pc), PURPLE_CALLBACK(teams_im_conversation_created), NULL);
 	}
 	// Setup callbacks for the preferences.
 	// handle = purple_proxy_get_handle();
@@ -505,15 +563,22 @@ teams_close(PurpleConnection *pc)
 	
 	sa = purple_connection_get_protocol_data(pc);
 	g_return_if_fail(sa != NULL);
-	
-	g_source_remove(sa->calendar_poll_timeout);
-	g_source_remove(sa->authcheck_timeout);
-	g_source_remove(sa->poll_timeout);
-	g_source_remove(sa->watchdog_timeout);
-	g_source_remove(sa->refresh_token_timeout);
-	g_source_remove(sa->idle_timeout);
-	g_source_remove(sa->login_device_code_expires_timeout);
-	g_source_remove(sa->login_device_code_timeout);
+
+	// Flush pending icon downloads for this account before cancelling
+	// HTTP connections. Otherwise the queue timer may fire after sa is
+	// freed and dereference a dangling sbuddy->sa pointer.
+	teams_flush_icon_queue_for_account(sa->account);
+
+	if (sa->calendar_poll_timeout)            g_source_remove(sa->calendar_poll_timeout);
+	if (sa->authcheck_timeout)                g_source_remove(sa->authcheck_timeout);
+	if (sa->poll_timeout)                     g_source_remove(sa->poll_timeout);
+	if (sa->watchdog_timeout)                 g_source_remove(sa->watchdog_timeout);
+	if (sa->refresh_token_timeout)            g_source_remove(sa->refresh_token_timeout);
+	if (sa->idle_timeout)                     g_source_remove(sa->idle_timeout);
+	if (sa->login_device_code_expires_timeout) g_source_remove(sa->login_device_code_expires_timeout);
+	if (sa->login_device_code_timeout)        g_source_remove(sa->login_device_code_timeout);
+	if (sa->presence_drain_source)            { g_source_remove(sa->presence_drain_source); sa->presence_drain_source = 0; }
+	if (sa->subscription_flush_timer)         { g_source_remove(sa->subscription_flush_timer); sa->subscription_flush_timer = 0; }
 	// Trouter timeouts handled in teams_trouter_stop()
 
 	teams_logout(sa);
@@ -558,6 +623,28 @@ teams_close(PurpleConnection *pc)
 	g_hash_table_destroy(sa->buddy_to_chat_lookup);
 	g_hash_table_destroy(sa->chat_to_buddy_lookup);
 	g_hash_table_destroy(sa->calendar_reminder_timeouts);
+	g_hash_table_destroy(sa->subscribed_contacts);
+	g_hash_table_destroy(sa->fetched_profiles);
+	g_hash_table_destroy(sa->presence_etag_cache);
+	if (sa->subscription_flush_timer != 0) {
+		g_source_remove(sa->subscription_flush_timer);
+		sa->subscription_flush_timer = 0;
+	}
+	while (!g_queue_is_empty(sa->pending_subscription_contacts)) {
+		GSList *l = g_queue_pop_head(sa->pending_subscription_contacts);
+		g_slist_free_full(l, g_free);
+	}
+	g_queue_free(sa->pending_subscription_contacts);
+	if (sa->presence_drain_source != 0) {
+		g_source_remove(sa->presence_drain_source);
+		sa->presence_drain_source = 0;
+	}
+	while (!g_queue_is_empty(sa->pending_presences)) {
+		gpointer presence = g_queue_pop_head(sa->pending_presences);
+		g_free(presence);
+	}
+	g_queue_free(sa->pending_presences);
+	g_hash_table_destroy(sa->presence_mri_index);
 	
 	g_free(sa->login_device_code);
 	g_free(sa->substrate_access_token);
@@ -952,7 +1039,16 @@ teams_protocol_init(PurpleProtocol *prpl_info)
 	opt = purple_account_option_bool_new(_("Collapse Teams threads into a single chat window"), "should_collapse_threads", TRUE);
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 	
+	opt = purple_account_option_bool_new(_("Hide meeting chats from buddy list"), "hide_meeting_chats", FALSE);
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+	
 	opt = purple_account_option_int_new(_("Notify me before meeting begins (minutes)"), "calendar_notify_minutes", -1);
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+	
+	opt = purple_account_option_bool_new(_("Fetch conversation history when opening IM window"), "fetch-history", TRUE);
+	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
+	
+	opt = purple_account_option_int_new(_("Days of history to fetch"), "history-days", 7);
 	TEAMS_PRPL_APPEND_ACCOUNT_OPTION(opt);
 
 #undef TEAMS_PRPL_APPEND_ACCOUNT_OPTION
