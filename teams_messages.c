@@ -1414,7 +1414,7 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	gint length, index;
 	PurpleGroup *group = teams_get_blist_group(sa);
 	GSList *users_to_fetch = NULL;
-	gboolean is_meeting_chat = g_str_has_prefix(chatname, "19:meeting_");
+	//gboolean is_meeting_chat = g_str_has_prefix(chatname, "19:meeting_");
 	
 	chatconv = purple_conversations_find_chat_with_account(chatname, sa->account);
 	g_free(chatname);
@@ -1634,7 +1634,8 @@ teams_got_conv_history_paginated(TeamsAccount *sa, JsonNode *node, gpointer user
 	// order in the chat window, regardless of the order the pages arrived.
 	//
 	fetch->all_messages = g_slist_sort(fetch->all_messages, compare_message_composetime);
-	for (GSList *l = fetch->all_messages; l; l = l->next) {
+	GSList *l;
+	for (l = fetch->all_messages; l; l = l->next) {
 		process_message_resource(sa, (JsonObject *) l->data);
 		json_object_unref((JsonObject *) l->data);
 	}
@@ -2036,8 +2037,8 @@ teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	// This caps queue depth at the number of unique contacts rather than at the
 	// number of incoming API responses, preventing unbounded queue growth when
 	// updates arrive faster than the drain can process them.
-	guint len = json_array_get_length(responses);
-	for (guint i = 0; i < len; i++) {
+	guint i, len = json_array_get_length(responses);
+	for (i = 0; i < len; i++) {
 		JsonObject *resp = json_array_get_object_element(responses, i);
 		if (resp == NULL) continue;
 

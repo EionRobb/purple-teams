@@ -3,6 +3,14 @@
 
 #include <glib.h>
 
+#ifndef G_SOURCE_REMOVE
+#define G_SOURCE_REMOVE 0
+#endif /* G_SOURCE_REMOVE */
+
+#ifndef G_SOURCE_CONTINUE
+#define G_SOURCE_CONTINUE 1
+#endif /* G_SOURCE_CONTINUE */
+
 #if !GLIB_CHECK_VERSION(2, 68, 0)
 #define g_memdup2(mem, size) g_memdup((mem), (size))
 #endif /* 2.68.0 */
@@ -25,6 +33,16 @@ g_slist_copy_deep(GSList *list, GCopyFunc copy_func, gpointer user_data)
 
 #if !GLIB_CHECK_VERSION(2, 32, 0)
 #define g_hash_table_contains(hash_table, key) g_hash_table_lookup_extended((hash_table), (key), NULL, NULL)
+
+static inline void
+g_queue_free_full(GQueue *queue, GDestroyNotify free_func)
+{
+	while (!g_queue_is_empty(queue)) {
+		gpointer item = g_queue_pop_head(queue);
+		free_func(item);
+	}
+	g_queue_free(queue);
+}
 #endif /* 2.32.0 */
 
 #if !GLIB_CHECK_VERSION(2, 28, 0)

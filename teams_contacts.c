@@ -79,6 +79,7 @@ static guint active_icon_downloads = 0;
 
 static void teams_get_icon_now(PurpleBuddy *buddy);
 
+static GHashTable *icon_queue_set = NULL;
 static GQueue *icon_download_queue = NULL;
 static guint   icon_queue_timer_id = 0;
 
