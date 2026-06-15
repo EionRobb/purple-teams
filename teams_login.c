@@ -688,6 +688,16 @@ teams_devicecode_login_poll(gpointer user_data)
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
+	purple_http_request_header_set(request, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0");
+	purple_http_request_header_set(request, "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8");
+	purple_http_request_header_set(request, "Accept-Language", "en-US,en;q=0.5");
+	purple_http_request_header_set(request, "Connection", "keep-alive");
+	purple_http_request_header_set(request, "Upgrade-Insecure-Requests", "1");
+	purple_http_request_header_set(request, "Sec-Fetch-Dest", "document");
+	purple_http_request_header_set(request, "Sec-Fetch-Mode", "navigate");
+	purple_http_request_header_set(request, "Sec-Fetch-Site", "none");
+	purple_http_request_header_set(request, "Sec-Fetch-User", "?1");
+	purple_http_request_header_set(request, "Priority", "u=0, i");
 	purple_http_request_set_contents(request, postdata->str, postdata->len);
 
 	purple_http_request(pc, request, teams_devicecode_login_poll_cb, sa);
@@ -812,6 +822,16 @@ teams_do_devicecode_login(TeamsAccount *sa)
 	purple_http_request_set_cookie_jar(request, sa->cookie_jar);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
+	purple_http_request_header_set(request, "User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0");
+	purple_http_request_header_set(request, "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8");
+	purple_http_request_header_set(request, "Accept-Language", "en-US,en;q=0.5");
+	purple_http_request_header_set(request, "Connection", "keep-alive");
+	purple_http_request_header_set(request, "Upgrade-Insecure-Requests", "1");
+	purple_http_request_header_set(request, "Sec-Fetch-Dest", "document");
+	purple_http_request_header_set(request, "Sec-Fetch-Mode", "navigate");
+	purple_http_request_header_set(request, "Sec-Fetch-Site", "none");
+	purple_http_request_header_set(request, "Sec-Fetch-User", "?1");
+	purple_http_request_header_set(request, "Priority", "u=0, i");
 	purple_http_request_set_contents(request, postdata->str, postdata->len);
 
 	purple_http_request(pc, request, teams_devicecode_login_cb, sa);
