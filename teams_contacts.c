@@ -2499,6 +2499,15 @@ teams_skype_contacts_before_login_cb(TeamsAccount *sa, JsonNode *node, gpointer 
 	teams_do_all_the_things(sa);
 }
 
+/* teams_post_or_get invokes NEITHER callback when it receives a non-empty but
+ * unparseable body (e.g. an HTML proxy/auth error page). Without an error callback
+ * that would stall login forever, so advance login regardless. */
+static void
+teams_skype_contacts_before_login_err_cb(TeamsAccount *sa, const gchar *data, gssize len, gpointer user_data)
+{
+	teams_do_all_the_things(sa);
+}
+
 static void
 teams_get_skype_contacts_before_login(TeamsAccount *sa)
 {
@@ -2508,7 +2517,7 @@ teams_get_skype_contacts_before_login(TeamsAccount *sa)
 	}
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST,
 		"/contacts/v2/users/SELF?delta=&reason=default", NULL,
-		teams_skype_contacts_before_login_cb, NULL, TRUE);
+		teams_skype_contacts_before_login_cb, teams_skype_contacts_before_login_err_cb, TRUE);
 }
 #endif /* ENABLE_TEAMS_PERSONAL */
 

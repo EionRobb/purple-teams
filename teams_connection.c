@@ -37,10 +37,10 @@ teams_post_or_get_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 	
 	data = purple_http_response_get_data(response, &len);
 
-	/* Personal/TFL: diagnostic — log HTTP status + a body snippet for every
-	 * response so we can see WHY the consumer roster endpoints (contactsv3,
-	 * contacts/buddylist, users/searchV2) come back empty. Remove/quiet once the
-	 * personal contact-sync path is understood. */
+#ifdef TEAMS_DEBUG_HTTP_BODIES
+	/* Opt-in diagnostic (never on by default): logs HTTP status plus a body snippet.
+	 * Response bodies can carry names, MRIs and tokens, so this must not ship enabled
+	 * — build with -DTEAMS_DEBUG_HTTP_BODIES only when debugging the contact-sync path. */
 	{
 		int code = purple_http_response_get_code(response);
 		const gchar *errmsg = purple_http_response_get_error(response);
@@ -48,6 +48,7 @@ teams_post_or_get_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 			conn->url ? conn->url : "(null)", code, (unsigned)len,
 			errmsg ? errmsg : "-", (len && data) ? data : "");
 	}
+#endif
 
 	if (conn->callback != NULL) {
 		if (!len)

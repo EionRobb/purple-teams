@@ -132,6 +132,12 @@ teams_load_refresh_token_password(PurpleAccount *account)
 	const gchar *password = purple_account_get_password(account);
 	if (password == NULL || *password == '\0')
 		return NULL;
+	/* The "devicecode" and "webauth:<url>" sentinels are login-flow selectors, not
+	 * refresh tokens. Return NULL for them so the caller falls through to the
+	 * device-code / auth-code paths instead of POSTing the sentinel to the token
+	 * endpoint. */
+	if (purple_strequal(password, "devicecode") || g_str_has_prefix(password, "webauth:"))
+		return NULL;
 	return g_strdup(password); /* caller frees */
 }
 
@@ -643,7 +649,7 @@ teams_do_web_auth(TeamsAccount *sa)
 	purple_notify_uri(pc, auth_url);
 	purple_request_input(pc, _("Authorization Code"), auth_url,
 		_("Please login in your browser"),
-		_("and then paste the URL of the blank page here (should contain 'nativeclient')"), FALSE, FALSE, NULL, 
+		_("and then paste the URL of the blank page here (it will contain '" TEAMS_OAUTH_REDIRECT_URI "')"), FALSE, FALSE, NULL,
 		_("OK"), G_CALLBACK(teams_authcode_input_cb), 
 		_("Cancel"), G_CALLBACK(teams_authcode_input_cancel_cb), 
 		purple_request_cpar_from_connection(pc), sa);
