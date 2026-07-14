@@ -274,6 +274,44 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		g_strfreev(messagetype_parts);
 		return;
 	}
+
+	/* Personal/TFL: dedup so the periodic message poll (and offline-history
+	 * catch-up) never re-delivers a message the user has already seen. Consumer
+	 * (Teams-for-Life) messages carry no usable top-level "id" — they are keyed by a
+	 * numeric "sequenceId" — so we build the dedup key from sequenceId (falling back
+	 * to "id"). The key includes an edit marker (skypeeditedid / properties.edittime)
+	 * so genuine edits still get through as fresh updates. */
+	{
+		gchar *dedup_id = NULL;
+		if (json_object_has_member(resource, "sequenceId")) {
+			gint64 seq = json_object_get_int_member(resource, "sequenceId");
+			if (seq != 0)
+				dedup_id = g_strdup_printf("%" G_GINT64_FORMAT, seq);
+		}
+		if (dedup_id == NULL && json_object_has_member(resource, "id")) {
+			const gchar *sid = json_object_get_string_member(resource, "id");
+			if (sid && *sid)
+				dedup_id = g_strdup(sid);
+		}
+		if (dedup_id != NULL) {
+			const gchar *edit_marker = NULL;
+			if (json_object_has_member(resource, "skypeeditedid"))
+				edit_marker = json_object_get_string_member(resource, "skypeeditedid");
+			if ((!edit_marker || !*edit_marker) && json_object_has_member(resource, "properties")) {
+				JsonObject *dedup_props = json_object_get_object_member(resource, "properties");
+				if (dedup_props && json_object_has_member(dedup_props, "edittime"))
+					edit_marker = json_object_get_string_member(dedup_props, "edittime");
+			}
+			gchar *dedup_key = g_strdup_printf("%s|%s", dedup_id, edit_marker ? edit_marker : "");
+			g_free(dedup_id);
+			if (g_hash_table_contains(sa->received_messages_hash, dedup_key)) {
+				g_free(dedup_key);
+				g_strfreev(messagetype_parts);
+				return;
+			}
+			g_hash_table_add(sa->received_messages_hash, dedup_key);
+		}
+	}
 	
 	if (json_object_has_member(resource, "skypeeditedid")) {
 		skypeeditedid = json_object_get_string_member(resource, "skypeeditedid");
@@ -2405,19 +2443,17 @@ teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState s
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 
-#ifdef ENABLE_TEAMS_PERSONAL
-	if (G_UNLIKELY(strchr(name, ':') == NULL)) {
-		// Send Skype messages without using a thread
-		g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(name), g_strconcat("8:", name, NULL));
-	}
-#endif
-	
+	/* Personal/TFL: do NOT inject a legacy "8:<user>" mapping here. Consumer 1:1s
+	 * are threads (19:uni01_...), and poisoning buddy_to_chat_lookup with "8:<user>"
+	 * would also break teams_send_im (it 404s on the consumer backend). Only send a
+	 * typing indicator if we already know the real thread; otherwise skip it (typing
+	 * is best-effort and the thread gets learned/created on the first real send). */
 	const gchar *channel = g_hash_table_lookup(sa->buddy_to_chat_lookup, name);
-	
+
 	if (channel) {
 		return teams_conv_send_typing_to_channel(sa, channel, state);
 	}
-	
+
 	return 0;
 }
 
@@ -2674,20 +2710,18 @@ const gchar *who, const gchar *message, PurpleMessageFlags flags)
 	
 	if (TEAMS_BUDDY_IS_NOTIFICATIONS(who)) {
 		convname = who;
-#ifdef ENABLE_TEAMS_PERSONAL
-	} else if (G_UNLIKELY(strchr(who, ':') == NULL)) {
-		// Send Skype messages without using a thread
-		gchar *direct_convname = g_strconcat("8:", who, NULL);
-		g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(who), direct_convname);
-		convname = direct_convname;
-#endif
 	} else {
+		/* Personal/TFL: consumer/TFL 1:1 chats flow through the Teams THREAD model
+		 * (19:uni01_...@thread.v2), same as corporate — NOT the legacy Skype peer-to-peer
+		 * "8:<user>" form, which the consumer backend (chatsvc/consumer) 404s. Resolve the
+		 * buddy to its known 1:1 thread; if we haven't learned it yet, fall through to
+		 * teams_initiate_chat() below, which creates/redirects to the uniquerosterthread. */
 		convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, who);
 	}
-	
+
 	//convname should be like
 	//19:{guid of user1}_{guid of user2}@unq.gpl.spaces
-	
+
 	if (!convname) {
 		teams_initiate_chat(sa, who, TRUE, message);
 		return 0;

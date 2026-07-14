@@ -23,6 +23,28 @@
 #include "teams_util.h"
 #include "teams_trouter.h"
 
+#ifdef ENABLE_TEAMS_PERSONAL
+/* Personal/TFL: real-time message delivery via Trouter push does not work for
+ * consumer (Teams-for-Life) accounts — new messages arrive as neither a /messaging
+ * EventMessage nor a trouter.message_loss (only presence pushes route through). So we
+ * poll for new messages on a timer; teams_get_offline_history() fetches conversations
+ * since the advancing cursor, and process_message_resource() dedups by server id so
+ * re-fetched messages are never re-delivered. */
+static gboolean
+teams_poll_messages(gpointer user_data)
+{
+	TeamsAccount *sa = user_data;
+
+	if (!PURPLE_CONNECTION_IS_VALID(sa->pc)) {
+		sa->poll_timeout = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	teams_get_offline_history(sa);
+	return G_SOURCE_CONTINUE;
+}
+#endif /* ENABLE_TEAMS_PERSONAL */
+
 void
 teams_do_all_the_things(TeamsAccount *sa)
 {
@@ -44,16 +66,30 @@ teams_do_all_the_things(TeamsAccount *sa)
 	} else {
 		teams_get_self_details(sa);
 		
-		if (sa->authcheck_timeout) 
+		if (sa->authcheck_timeout)
 			g_source_remove(sa->authcheck_timeout);
 		teams_check_authrequests(sa);
 		sa->authcheck_timeout = g_timeout_add_seconds(120, (GSourceFunc)teams_check_authrequests, sa);
 		purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
+		/* Personal/TFL: mark full setup done so the async teams_get_self_details
+		 * callback below (teams_got_self_details) does not recurse into this function
+		 * again. Replaces the old IS_CONNECTED re-entry guard, which our early-connect
+		 * fix would otherwise have tripped early (skipping this whole block). */
+		sa->logged_in = TRUE;
 
 		teams_get_friend_list(sa);
 		teams_trouter_begin(sa);
 		
 		teams_get_offline_history(sa);
+
+#ifdef ENABLE_TEAMS_PERSONAL
+		/* Personal/TFL: periodic message poll (real-time Trouter push is
+		 * dead for consumer accounts). Dedup in process_message_resource() keeps
+		 * re-fetches from duplicating already-shown messages. */
+		if (sa->poll_timeout)
+			g_source_remove(sa->poll_timeout);
+		sa->poll_timeout = g_timeout_add_seconds(TEAMS_MESSAGE_POLL_SECONDS, teams_poll_messages, sa);
+#endif /* ENABLE_TEAMS_PERSONAL */
 
 		teams_set_status(sa->account, purple_account_get_active_status(sa->account));
 		teams_idle_update(sa);
@@ -489,6 +525,7 @@ teams_login(PurpleAccount *account)
 	sa->pc = pc;
 	sa->cookie_jar = purple_http_cookie_jar_new();
 	sa->sent_messages_hash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	sa->received_messages_hash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 	sa->buddy_to_chat_lookup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	sa->chat_to_buddy_lookup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	sa->calendar_reminder_timeouts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -514,12 +551,36 @@ teams_login(PurpleAccount *account)
 		sa->tenant = g_strdup(tenant);
 	}
 	
-	if (password && *password) {
+	if (password && *password && !purple_strequal(password, "devicecode")
+			&& !g_str_has_prefix(password, "webauth:")) {
 		sa->refresh_token = g_strdup(password);
 		purple_connection_update_progress(pc, _("Authenticating"), 1, 3);
 		teams_oauth_refresh_token(sa);
 	} else {
-		teams_do_devicecode_login(sa);
+		/* Credential is the "devicecode" sentinel, empty, or a "webauth:<redirect
+		 * URL>" captured by an embedding OAuth browser. (Some transports reject an
+		 * EMPTY stored password before login is even called, so accounts may store a
+		 * non-empty sentinel instead.)
+		 *
+		 * Personal/TFL priority: (1) a refresh_token persisted from a previous
+		 * successful login -> silent refresh (this also means a one-shot "webauth:"
+		 * auth code is never replayed after it has been exchanged once); else
+		 * (2) a "webauth:" auth-code URL -> exchange it for tokens; else
+		 * (3) the interactive device-code flow. */
+		gchar *saved_refresh = teams_load_refresh_token_password(account);
+		if (saved_refresh && *saved_refresh) {
+			sa->refresh_token = saved_refresh; /* take ownership */
+			purple_debug_info("teams", "Using persisted refresh_token for silent login\n");
+			purple_connection_update_progress(pc, _("Authenticating"), 1, 3);
+			teams_oauth_refresh_token(sa);
+		} else if (password && g_str_has_prefix(password, "webauth:")) {
+			g_free(saved_refresh);
+			purple_debug_info("teams", "Using webauth auth-code from OAuth browser\n");
+			teams_do_authcode_login(sa, password + strlen("webauth:"));
+		} else {
+			g_free(saved_refresh);
+			teams_do_devicecode_login(sa);
+		}
 	}
 	
 	if (!conversation_updated_signal) {
@@ -620,6 +681,7 @@ teams_close(PurpleConnection *pc)
 	g_queue_free(sa->processed_event_messages);
 	
 	g_hash_table_destroy(sa->sent_messages_hash);
+	g_hash_table_destroy(sa->received_messages_hash);
 	g_hash_table_destroy(sa->buddy_to_chat_lookup);
 	g_hash_table_destroy(sa->chat_to_buddy_lookup);
 	g_hash_table_destroy(sa->calendar_reminder_timeouts);
@@ -1233,7 +1295,13 @@ teams_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
 	plugin->info = info;
 
 #ifdef ENABLE_TEAMS_PERSONAL
-	plugin->info->id = TEAMS_PERSONAL_PLUGIN_ID;
+	/* Personal/TFL: build the personal/consumer flavour (Skype/live.com
+	 * endpoints + personal OAuth client id) for personal Microsoft accounts —
+	 * the work/school build hits "Guest user OID is missing. User is not
+	 * redeemed." at teams.microsoft.com for these. Keep the prpl id as
+	 * TEAMS_PLUGIN_ID ("prpl-teams") so existing accounts still resolve to this
+	 * plugin; only the display name/icon reflect the personal flavour. */
+	plugin->info->id = TEAMS_PLUGIN_ID;
 	plugin->info->name = "Teams (Personal/Free)";
 	prpl_info->list_icon = teams_personal_list_icon;
 #endif // ENABLE_TEAMS_PERSONAL

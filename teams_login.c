@@ -18,6 +18,7 @@
 
 #include "teams_login.h"
 #include "teams_util.h"
+#include "teams_contacts.h"	/* Personal/TFL: teams_get_friend_list (mt-token re-fetch) */
 #include "http.h"
 
 
@@ -122,11 +123,25 @@ save_bitlbee_password(PurpleAccount *account, const gchar *password)
 
 
 
+/* Personal/TFL: the OAuth refresh_token is persisted as the account password so
+ * steady-state logins take the silent refresh path (teams_oauth_refresh_token)
+ * with no device code. teams_load_refresh_token_password() reads it back at login. */
+gchar *
+teams_load_refresh_token_password(PurpleAccount *account)
+{
+	const gchar *password = purple_account_get_password(account);
+	if (password == NULL || *password == '\0')
+		return NULL;
+	return g_strdup(password); /* caller frees */
+}
+
 static void
 teams_save_refresh_token_password(PurpleAccount *account, const gchar *password)
 {
+	/* NULL/empty clears it, e.g. on invalid_grant so the next login cleanly
+	 * falls back to the device-code flow. */
 	purple_account_set_password(account, password, NULL, NULL);
-	
+
 	if (g_strcmp0(purple_core_get_ui(), "BitlBee") == 0) {
 		save_bitlbee_password(account, password);
 	}
@@ -262,7 +277,15 @@ teams_login_get_api_skypetoken(TeamsAccount *sa, const gchar *url, const gchar *
 #	define TEAMS_SKYPETOKEN_SERVICE TEAMS_OAUTH_SERVICE
 #endif // ENABLE_TEAMS_PERSONAL
 #	define TEAMS_OAUTH_SCOPE TEAMS_OAUTH_SERVICE " openid profile offline_access"
+#ifdef ENABLE_TEAMS_PERSONAL
+/* Personal/MSA: v2.0 for this Teams client only accepts the NATIVE app redirect (web redirects get
+ * invalid_request). The embedding browser intercepts the msauth...://auth?code= navigation and returns the
+ * code; this MUST match the redirect_uri the app put in the authorize request, and is sent again here
+ * at the /oauth2/v2.0/token exchange (AAD requires authorize/redeem redirect_uri to match). */
+#define TEAMS_OAUTH_REDIRECT_URI "msauth.com.microsoft.teams://auth"
+#else
 #define TEAMS_OAUTH_REDIRECT_URI "https://login.microsoftonline.com/common/oauth2/nativeclient"
+#endif
 
 // Personal client id maybe: 4b3e8f46-56d3-427f-b1e2-d239b2ea6bca
 // Personal tenant id: 9188040d-6c67-4c5b-b112-36a304b66dad
@@ -417,6 +440,36 @@ teams_substrate_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 	json_object_unref(obj);
 }
 
+/* Personal/TFL: fetch a token for the personal mt/beta endpoints (which reject
+ * the mtsvc-audience id_token with 401). Store it and re-run the friend-list fetch
+ * now that the correct token is available (the first fetch, kicked off by
+ * teams_do_all_the_things, likely raced ahead of this token and 401'd). */
+static void
+teams_mt_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
+{
+	TeamsAccount *sa = user_data;
+	JsonObject *obj;
+	const gchar *raw_response;
+	gsize response_len;
+
+	raw_response = purple_http_response_get_data(response, &response_len);
+	obj = json_decode_object(raw_response, response_len);
+
+	if (purple_http_response_is_successful(response) && obj)
+	{
+		const gchar *tok = json_object_get_string_member(obj, "access_token");
+		g_free(sa->mt_access_token);
+		sa->mt_access_token = g_strdup(tok);
+		purple_debug_info("teams", "MT-TOKEN acquired for mt/beta; re-fetching friend list\n");
+		teams_get_friend_list(sa);
+	} else {
+		purple_debug_info("teams", "MT-TOKEN fetch failed (code %d)\n",
+			purple_http_response_get_code(response));
+	}
+
+	if (obj) json_object_unref(obj);
+}
+
 static void
 teams_oauth_refresh_token_for_scope(TeamsAccount *sa, const gchar *scope, PurpleHttpCallback callback) 
 {
@@ -472,6 +525,15 @@ teams_oauth_refresh_services(TeamsAccount *sa)
 	teams_oauth_refresh_token_for_scope(sa, "service::api.fl.spaces.skype.com::MBI_SSL openid profile offline_access", teams_oauth_refreshed_skypetoken_access);
 	teams_oauth_refresh_token_for_scope(sa, "https://substrate.office.com/M365.Access openid profile offline_access", teams_substrate_oauth_cb);
 
+	/* Personal/TFL: dedicated Bearer for the consumer mt/beta endpoints
+	 * (teams.live.com/api/mt/beta/…). VERIFIED live against MS: mt/beta needs
+	 * Bearer<mtsvc> + X-Skypetoken together (see teams_connection.c). The correct
+	 * audience is the MT read/write service — the SAME scope the browser login used
+	 * (https://mtsvc.fl.teams.microsoft.com/teams.mt.readwrite). teams_mt_oauth_cb
+	 * stores it as sa->mt_access_token and re-fetches the friend list.
+	 * (The earlier api.spaces.skype.com audience was wrong and always 401'd.) */
+	teams_oauth_refresh_token_for_scope(sa, "https://mtsvc.fl.teams.microsoft.com/teams.mt.readwrite openid profile offline_access", teams_mt_oauth_cb);
+
 	// TODO do we need to register these?
 	(void) teams_presence_oauth_cb;
 	(void) teams_csa_oauth_cb;
@@ -503,27 +565,23 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 	const gchar *tenant_host;
 	gchar *auth_url;
 	
-	if (strstr(auth_code, "nativeclient")) {
-		gchar *tmp = strchr(auth_code, '?');
-		if (tmp == NULL) {
-			//todo error
-			return;
+	/* If handed a full redirect URL rather than a bare code, extract the code. Covers BOTH the work
+	 * "...nativeclient?code=<code>&..." web redirect AND the personal/MSA native scheme
+	 * "msauth.com.microsoft.teams://auth?code=<code>&..." (captured by the embedding browser's navigation hook).
+	 * A bare code has no "code=" substring, so it passes through untouched. Work on a private copy so
+	 * we never mutate the caller's credential string. */
+	gchar *code_copy = NULL;
+	{
+		const gchar *cp = strstr(auth_code, "code=");
+		if (cp != NULL) {
+			code_copy = g_strdup(cp + 5);
+			gchar *amp = strchr(code_copy, '&');
+			if (amp != NULL) {
+				*amp = '\0';
+			}
+			/* purple_url_decode returns a static-buffer pointer valid until the next call */
+			auth_code = purple_url_decode(code_copy);
 		}
-		auth_code = tmp + 1;
-		
-		tmp = strstr(auth_code, "code=");
-		if (tmp == NULL) {
-			//todo error
-			return;
-		}
-		auth_code = tmp + 5;
-		
-		tmp = strchr(auth_code, '&');
-		if (tmp != NULL) {
-			*tmp = '\0';
-		}
-		
-		auth_code = purple_url_decode(auth_code);
 	}
 
 	postdata = g_string_new(NULL);
@@ -546,9 +604,10 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 
 	purple_http_request(pc, request, teams_oauth_with_code_cb, sa);
 	purple_http_request_unref(request);
-	
+
 	g_string_free(postdata, TRUE);
 	g_free(auth_url);
+	g_free(code_copy);
 }
 
 static void
@@ -590,6 +649,21 @@ teams_do_web_auth(TeamsAccount *sa)
 		purple_request_cpar_from_connection(pc), sa);
 	
 	g_free(auth_url);
+}
+
+/* Personal/TFL: headless auth-code login. An embedding browser
+ * signs the user in and captures the redirect to
+ * .../oauth2/nativeclient?code=<code>; the Teams app stores that redirect URL as
+ * the account credential ("webauth:<url>"). Here we hand it straight to
+ * teams_oauth_with_code (which strips everything up to "code=") — no interactive
+ * purple_request_input (which the headless transport can't service, unlike
+ * teams_do_web_auth). On success teams_oauth_with_code_cb persists the
+ * refresh_token, so the next login takes the silent refresh path. */
+void
+teams_do_authcode_login(TeamsAccount *sa, const gchar *code_or_url)
+{
+	purple_connection_update_progress(sa->pc, _("Authenticating"), 1, 3);
+	teams_oauth_with_code(sa, code_or_url);
 }
 
 static gboolean
@@ -755,9 +829,14 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		purple_notify_message(sa->pc, PURPLE_NOTIFY_MSG_INFO, _("Authorization Code"),
 			message, NULL, NULL, NULL);
 
-		if (g_strcmp0(purple_core_get_ui(), "spectrum") == 0) {
-			purple_serv_got_im(sa->pc, "TeamsLogin", message, PURPLE_MESSAGE_RECV, time(NULL));
-		}
+		/* Personal/TFL: headless UIs (e.g. transports) implement no interactive
+		 * purple_notify UI, so the notify_message/notify_uri above are invisible to
+		 * the user. Also deliver the sign-in instructions (verification URL + user
+		 * code) as an incoming IM from a synthetic "TeamsLogin" buddy so they surface
+		 * through the conversation uiops. Upstream only did this for the "spectrum"
+		 * UI; do it for every UI. Also log it for retrieval from the debug log. */
+		purple_debug_info("teams", "DEVICE-CODE-LOGIN: %s\n", message);
+		purple_serv_got_im(sa->pc, "TeamsLogin", message, PURPLE_MESSAGE_RECV, time(NULL));
 		
 		g_free(message);
 		
@@ -768,10 +847,23 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 			g_source_remove(sa->login_device_code_timeout);
 		sa->login_device_code_timeout = g_timeout_add_seconds(interval, (GSourceFunc)teams_devicecode_login_poll, sa);
 		
-		if (sa->login_device_code_expires_timeout) 
+		if (sa->login_device_code_expires_timeout)
 			g_source_remove(sa->login_device_code_expires_timeout);
 		sa->login_device_code_expires_timeout = g_timeout_add_seconds(expires_in, (GSourceFunc)teams_devicecode_login_expires_cb, sa);
-		
+
+		/* Personal/TFL: some UIs/transports run a login watchdog that calls
+		 * purple_account_disconnect if the account has not signed on within a short
+		 * window. The device-code flow needs the user to authorise in a browser,
+		 * which takes minutes -> the watchdog could kill the connection (and the
+		 * in-memory device_code) before it completes. Mark the connection CONNECTED
+		 * now so such a watchdog stands down and the poll loop can run the full
+		 * expires_in window. The real login (token success -> libteams.c set_state
+		 * CONNECTED) still runs and re-asserts CONNECTED, so this only pre-empts the
+		 * watchdog; it does not skip any setup. First-time bootstrap only: once the
+		 * refresh_token is saved as the password, subsequent logins take the fast
+		 * refresh path with no device code. */
+		purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
+
 	} else {
 		if (obj != NULL) {
 			if (json_object_has_member(obj, "error")) {
