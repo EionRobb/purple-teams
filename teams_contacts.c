@@ -2516,9 +2516,9 @@ teams_get_skype_contacts_before_login(TeamsAccount *sa)
 		teams_do_all_the_things(sa);
 		return;
 	}
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST,
+	teams_post_or_get_with_error(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST,
 		"/contacts/v2/users/SELF?delta=&reason=default", NULL,
-		teams_skype_contacts_before_login_cb, teams_skype_contacts_before_login_err_cb, TRUE);
+		teams_skype_contacts_before_login_cb, teams_skype_contacts_before_login_err_cb, NULL, TRUE);
 }
 #endif /* ENABLE_TEAMS_PERSONAL */
 
@@ -2563,6 +2563,28 @@ teams_get_friend_list(TeamsAccount *sa)
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "aus.loki.delve.office.com", search_url, NULL, teams_get_workingwith_cb, NULL, TRUE);
 	g_free(search_url);
 
+	// The mt/beta endpoints need the MT bearer token, which may not have arrived yet
+	// on the first pass; teams_mt_oauth_cb() re-runs just these once it has.
+	teams_get_mt_beta_contacts(sa);
+
+	// Look up all the contacts in the buddy list
+	teams_lookup_buddy_list_contacts(sa);
+
+	return FALSE;
+}
+
+/* The two mt/beta contact endpoints (People app contactsv3 + the personal buddy
+ * list) are the only friend-list calls that depend on sa->mt_access_token. Split
+ * them out so teams_mt_oauth_cb() can retry ONLY these when the MT token arrives,
+ * instead of re-running the whole ~7-call teams_get_friend_list() pipeline. */
+void
+teams_get_mt_beta_contacts(TeamsAccount *sa)
+{
+	const gchar *url;
+
+	if (!PURPLE_IS_CONNECTION(sa->pc))
+		return;
+
 	// Search the People app
 	url = "/api/mt/beta/contactsv3/";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_friend_list_cb, NULL, TRUE);
@@ -2570,11 +2592,6 @@ teams_get_friend_list(TeamsAccount *sa)
 	// Teams personal has a buddy list?!@
 	url = "/api/mt/beta/contacts/buddylist?migrationRequested=true&federatedContactsSupported=true";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_buddylist_cb, NULL, TRUE);
-
-	// Look up all the contacts in the buddy list
-	teams_lookup_buddy_list_contacts(sa);
-
-	return FALSE;
 }
 
 typedef struct {

@@ -76,10 +76,10 @@ teams_post_or_get_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 	teams_destroy_connection(conn);
 }
 
-TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
+TeamsConnection *teams_post_or_get_with_error(TeamsAccount *sa, TeamsMethod method,
 		const gchar *host, const gchar *url, const gchar *postdata,
-		TeamsProxyCallbackFunc callback_func, gpointer user_data,
-		gboolean keepalive)
+		TeamsProxyCallbackFunc callback_func, TeamsProxyCallbackErrorFunc error_callback_func,
+		gpointer user_data, gboolean keepalive)
 {
 	TeamsConnection *conn;
 	PurpleHttpRequest *request;
@@ -231,13 +231,26 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 	conn->user_data = user_data;
 	conn->url = real_url;
 	conn->callback = callback_func;
-	
+	conn->error_callback = error_callback_func;
+
 	conn->http_conn = purple_http_request(sa->pc, request, teams_post_or_get_cb, conn);
 	if (conn->http_conn != NULL) {
 		purple_http_connection_set_add(sa->conns, conn->http_conn);
 	}
 	
 	purple_http_request_unref(request);
-	
+
 	return conn;
+}
+
+/* Back-compat wrapper: most callers don't need a distinct error callback (the parse
+ * failure is just logged). Those that must advance state even on an unparseable body
+ * call teams_post_or_get_with_error() directly. */
+TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
+		const gchar *host, const gchar *url, const gchar *postdata,
+		TeamsProxyCallbackFunc callback_func, gpointer user_data,
+		gboolean keepalive)
+{
+	return teams_post_or_get_with_error(sa, method, host, url, postdata,
+			callback_func, NULL, user_data, keepalive);
 }

@@ -466,8 +466,10 @@ teams_mt_oauth_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response,
 		const gchar *tok = json_object_get_string_member(obj, "access_token");
 		g_free(sa->mt_access_token);
 		sa->mt_access_token = g_strdup(tok);
-		purple_debug_info("teams", "MT-TOKEN acquired for mt/beta; re-fetching friend list\n");
-		teams_get_friend_list(sa);
+		purple_debug_info("teams", "MT-TOKEN acquired for mt/beta; re-fetching mt/beta contacts\n");
+		/* Only the mt/beta endpoints depend on this token — retry just those, not the
+		 * whole friend-list pipeline (which already ran from teams_do_all_the_things). */
+		teams_get_mt_beta_contacts(sa);
 	} else {
 		purple_debug_info("teams", "MT-TOKEN fetch failed (code %d)\n",
 			purple_http_response_get_code(response));

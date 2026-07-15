@@ -40,6 +40,14 @@ teams_poll_messages(gpointer user_data)
 		return G_SOURCE_REMOVE;
 	}
 
+	/* Don't stack fetches: if the previous poll's conversations request hasn't
+	 * completed (slow network), skip this tick. teams_got_all_convs() and the fetch
+	 * error callback clear the flag, so a failed request can't wedge polling. */
+	if (sa->poll_in_flight) {
+		purple_debug_info("teams", "poll: previous fetch still in flight, skipping tick\n");
+		return G_SOURCE_CONTINUE;
+	}
+	sa->poll_in_flight = TRUE;
 	teams_get_offline_history(sa);
 	return G_SOURCE_CONTINUE;
 }

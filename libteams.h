@@ -118,6 +118,9 @@
 #define TEAMS_MESSAGE_POLL_SECONDS 8
 #define TEAMS_MAX_MSG_RETRY 2
 #define TEAMS_MAX_PROCESSED_EVENT_BUFFER 10
+/* Cap the in-session received-message dedup cache. The poll only re-fetches recent
+ * messages, so keys past this many are never queried again — bounding memory. */
+#define TEAMS_MAX_DEDUP_CACHE 4096
 
 /* Keep the established plugin ids so existing accounts keep resolving and the
  * work/personal builds can run side by side. Both are overridable at build time
@@ -209,6 +212,7 @@ struct _TeamsAccount {
 	 * message. See process_message_resource() and teams_poll_messages(). */
 	GHashTable *received_messages_hash;
 	guint poll_timeout;
+	gboolean poll_in_flight; /* a poll's conversations fetch is outstanding; skip overlapping ticks */
 	guint watchdog_timeout;
 	
 	guint authcheck_timeout;

@@ -309,6 +309,11 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				g_strfreev(messagetype_parts);
 				return;
 			}
+			/* Bound the cache: the poll advances its cursor, so keys older than the
+			 * current re-fetch window are never looked up again. Once it grows past the
+			 * cap, drop the lot — worst case a very old message could be re-shown once. */
+			if (g_hash_table_size(sa->received_messages_hash) >= TEAMS_MAX_DEDUP_CACHE)
+				g_hash_table_remove_all(sa->received_messages_hash);
 			g_hash_table_add(sa->received_messages_hash, dedup_key);
 		}
 	}
@@ -1717,18 +1722,31 @@ teams_get_conversation_history(TeamsAccount *sa, const gchar *convname)
 }
 
 static void
+teams_poll_convs_err_cb(TeamsAccount *sa, const gchar *data, gssize len, gpointer user_data)
+{
+	/* Conversations fetch failed (no parseable body) — release the poll guard so the
+	 * next tick can retry instead of the poll wedging forever. */
+	sa->poll_in_flight = FALSE;
+}
+
+static void
 teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
 	gint since = GPOINTER_TO_INT(user_data);
 	JsonObject *obj;
 	JsonArray *conversations;
 	gint index, length;
-	
+
+	/* The (possibly poll-driven) conversations fetch has returned — release the guard. */
+	sa->poll_in_flight = FALSE;
+
 	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT)
 		return;
 	obj = json_node_get_object(node);
-	
+
 	conversations = json_object_get_array_member(obj, "conversations");
+	if (conversations == NULL)
+		return;
 	length = json_array_get_length(conversations);
 	for(index = 0; index < length; index++) {
 		JsonObject *conversation = json_array_get_object_element(conversations, index);
@@ -1755,8 +1773,8 @@ teams_get_all_conversations_since(TeamsAccount *sa, gint since)
 	gchar *url;
 	url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations?startTime=%d000&pageSize=100&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent", since);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_all_convs, GINT_TO_POINTER(since), TRUE);
-	
+	teams_post_or_get_with_error(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_all_convs, teams_poll_convs_err_cb, GINT_TO_POINTER(since), TRUE);
+
 	g_free(url);
 }
 
