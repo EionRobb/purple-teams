@@ -377,8 +377,38 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		chatname = teams_thread_url_to_name(conversationLink);
 		convname = g_strdup(chatname);
 	}
-	
-	if (chatname && !g_hash_table_lookup(sa->chat_to_buddy_lookup, chatname) 
+
+#ifdef TEAMS_WEBOS
+	/* webOS Teams port: cross-login dedup. received_messages_hash (the in-session
+	 * dedup above) is rebuilt empty on every login, so the offline-history / history-days
+	 * re-fetch that runs at each login would re-insert every already-seen message into
+	 * the webOS Messaging DB (each with a fresh arrival time). Persist a per-conversation
+	 * high-water mark on the monotonic per-conversation "sequenceId" and drop any non-edit
+	 * message at or below it. Edits (skypeeditedid / properties.edittime set) always pass
+	 * through so genuine message updates still appear. Stored as a string to survive
+	 * sequenceId values beyond 32 bits. */
+	if (convname && (!skypeeditedid || !*skypeeditedid)
+			&& json_object_has_member(resource, "sequenceId")) {
+		gint64 seq = json_object_get_int_member(resource, "sequenceId");
+		if (seq != 0) {
+			gchar *seqkey = g_strdup_printf("%s_lastseq", convname);
+			gint64 prev_seq = g_ascii_strtoll(
+				purple_account_get_string(sa->account, seqkey, "0"), NULL, 10);
+			if (seq <= prev_seq) {
+				g_free(seqkey);
+				g_free(convname);
+				g_strfreev(messagetype_parts);
+				return;
+			}
+			gchar *seqval = g_strdup_printf("%" G_GINT64_FORMAT, seq);
+			purple_account_set_string(sa->account, seqkey, seqval);
+			g_free(seqval);
+			g_free(seqkey);
+		}
+	}
+#endif /* TEAMS_WEBOS */
+
+	if (chatname && !g_hash_table_lookup(sa->chat_to_buddy_lookup, chatname)
 			&& !strstr(chatname, "@unq.gbl.spaces") && !strstr(chatname, "@oneToOne.skype")) {
 		// This is a Thread/Group chat message
 		const gchar *topic;
