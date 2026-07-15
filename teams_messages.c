@@ -1811,7 +1811,19 @@ teams_get_all_conversations_since(TeamsAccount *sa, gint since)
 void
 teams_get_offline_history(TeamsAccount *sa)
 {
-	teams_get_all_conversations_since(sa, purple_account_get_int(sa->account, "last_message_timestamp", ((gint) time(NULL))));
+	/* The poll cursor. It MUST be seeded once to a fixed value: if we let it
+	 * default to time(NULL) on every call, each poll tick asks for messages since
+	 * "now", an always-forward-empty window, so a live message lands in the gap
+	 * between its send time and the next tick's cursor and is never fetched (the
+	 * cursor only advances when a message is received -> bootstrapping deadlock).
+	 * Seed it to now on first use so subsequent polls query [seed, now] and catch
+	 * new messages; process_message_resource() dedups re-fetched ones by server id. */
+	gint since = purple_account_get_int(sa->account, "last_message_timestamp", 0);
+	if (since == 0) {
+		since = (gint) time(NULL);
+		purple_account_set_int(sa->account, "last_message_timestamp", since);
+	}
+	teams_get_all_conversations_since(sa, since);
 }
 
 
