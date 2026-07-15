@@ -37,18 +37,16 @@ teams_post_or_get_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 	
 	data = purple_http_response_get_data(response, &len);
 
-#ifdef TEAMS_DEBUG_HTTP_BODIES
-	/* Opt-in diagnostic (never on by default): logs HTTP status plus a body snippet.
-	 * Response bodies can carry names, MRIs and tokens, so this must not ship enabled
-	 * — build with -DTEAMS_DEBUG_HTTP_BODIES only when debugging the contact-sync path. */
-	{
+	/* Opt-in diagnostic: response bodies can carry names, MRIs and tokens, so only
+	 * emit them when the user has explicitly enabled verbose + unsafe debugging
+	 * (purple_debug -U / -V), never at the default level. */
+	if (purple_debug_is_verbose() && purple_debug_is_unsafe()) {
 		int code = purple_http_response_get_code(response);
 		const gchar *errmsg = purple_http_response_get_error(response);
 		purple_debug_info("teams", "HTTP-DIAG url=%s code=%d len=%u err=%s body=%.240s\n",
 			conn->url ? conn->url : "(null)", code, (unsigned)len,
 			errmsg ? errmsg : "-", (len && data) ? data : "");
 	}
-#endif
 
 	if (conn->callback != NULL) {
 		if (!len)

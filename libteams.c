@@ -1298,10 +1298,10 @@ teams_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
 	/* Personal/TFL: build the personal/consumer flavour (Skype/live.com
 	 * endpoints + personal OAuth client id) for personal Microsoft accounts —
 	 * the work/school build hits "Guest user OID is missing. User is not
-	 * redeemed." at teams.microsoft.com for these. Keep the prpl id as
-	 * TEAMS_PLUGIN_ID ("prpl-teams") so existing accounts still resolve to this
-	 * plugin; only the display name/icon reflect the personal flavour. */
-	plugin->info->id = TEAMS_PLUGIN_ID;
+	 * redeemed." at teams.microsoft.com for these. Use the distinct personal
+	 * prpl id so this can run side by side with the work build; downstreams that
+	 * need a specific id (e.g. webOS) override TEAMS_PERSONAL_PLUGIN_ID at build time. */
+	plugin->info->id = TEAMS_PERSONAL_PLUGIN_ID;
 	plugin->info->name = "Teams (Personal/Free)";
 	prpl_info->list_icon = teams_personal_list_icon;
 #endif // ENABLE_TEAMS_PERSONAL

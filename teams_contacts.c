@@ -1046,12 +1046,13 @@ teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		return;
 	userobj = json_node_get_object(node);
 	
-	/* Personal/TFL: consumer/personal (Teams-for-Life) self-details have NO
-	 * skypeName — only primaryMemberName (the MSA MRI, e.g. "live:.cid.<hex>").
-	 * The stock code bailed here, so teams_do_all_the_things() never ran and the
-	 * login never completed (stayed offline). Fall back to primaryMemberName as our
-	 * identity when skypeName is absent so the consumer login can finish and fetch
-	 * the buddy list. */
+	/* Personal/TFL: only accounts migrated from a classic Skype account carry a
+	 * skypeName; personal accounts created later (MSN/Microsoft, post-merger) have
+	 * none and expose only primaryMemberName (the MSA MRI, e.g. "live:.cid.<hex>").
+	 * The stock code bailed when skypeName was absent, so teams_do_all_the_things()
+	 * never ran and login never completed (stayed offline). Fall back to
+	 * primaryMemberName when skypeName is absent so those accounts can finish login
+	 * and fetch the buddy list. */
 	if (json_object_has_member(userobj, "skypeName")) {
 		username = json_object_get_string_member(userobj, "skypeName");
 	} else if (json_object_has_member(userobj, "primaryMemberName")) {

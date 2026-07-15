@@ -835,15 +835,23 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		purple_notify_message(sa->pc, PURPLE_NOTIFY_MSG_INFO, _("Authorization Code"),
 			message, NULL, NULL, NULL);
 
-		/* Personal/TFL: headless UIs (e.g. transports) implement no interactive
-		 * purple_notify UI, so the notify_message/notify_uri above are invisible to
-		 * the user. Also deliver the sign-in instructions (verification URL + user
-		 * code) as an incoming IM from a synthetic "TeamsLogin" buddy so they surface
-		 * through the conversation uiops. Upstream only did this for the "spectrum"
-		 * UI; do it for every UI. Also log it for retrieval from the debug log. */
+		/* Personal/TFL: headless UIs (transports such as spectrum and the webOS
+		 * "adapter") implement no interactive purple_notify UI, so the notify_message/
+		 * notify_uri above are invisible to the user. Only for those UIs, also deliver
+		 * the sign-in instructions (verification URL + user code) as an incoming IM from
+		 * a synthetic "TeamsLogin" buddy so they surface through the conversation uiops.
+		 * Interactive UIs (Pidgin, bitlbee) already showed the notify and must not get a
+		 * duplicate. Detect headless by the absence of a notify_message uiop (with a
+		 * known-headless UI-id fallback). Always log it for retrieval from the debug log. */
+		PurpleNotifyUiOps *notify_ops = purple_notify_get_ui_ops();
+		const gchar *core_ui = purple_core_get_ui();
+		gboolean headless_ui = (notify_ops == NULL || notify_ops->notify_message == NULL)
+			|| purple_strequal(core_ui, "spectrum") || purple_strequal(core_ui, "adapter");
+
 		purple_debug_info("teams", "DEVICE-CODE-LOGIN: %s\n", message);
-		purple_serv_got_im(sa->pc, "TeamsLogin", message, PURPLE_MESSAGE_RECV, time(NULL));
-		
+		if (headless_ui)
+			purple_serv_got_im(sa->pc, "TeamsLogin", message, PURPLE_MESSAGE_RECV, time(NULL));
+
 		g_free(message);
 		
 		if (sa->login_device_code) g_free(sa->login_device_code);
@@ -867,8 +875,11 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		 * CONNECTED) still runs and re-asserts CONNECTED, so this only pre-empts the
 		 * watchdog; it does not skip any setup. First-time bootstrap only: once the
 		 * refresh_token is saved as the password, subsequent logins take the fast
-		 * refresh path with no device code. */
-		purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
+		 * refresh path with no device code. Headless UIs only: an interactive UI has
+		 * no such watchdog and marking it CONNECTED early would let it flush buffered
+		 * messages before login truly completes. */
+		if (headless_ui)
+			purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
 
 	} else {
 		if (obj != NULL) {

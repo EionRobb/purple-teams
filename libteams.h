@@ -119,10 +119,18 @@
 #define TEAMS_MAX_MSG_RETRY 2
 #define TEAMS_MAX_PROCESSED_EVENT_BUFFER 10
 
-#define TEAMS_PLUGIN_ID "prpl-teams"
+/* Keep the established plugin ids so existing accounts keep resolving and the
+ * work/personal builds can run side by side. Both are overridable at build time
+ * (e.g. the webOS transport derives the prpl id from the service name and expects
+ * "prpl-teams", so that port builds with -DTEAMS_PERSONAL_PLUGIN_ID='"prpl-teams"'). */
+#ifndef TEAMS_PLUGIN_ID
+#define TEAMS_PLUGIN_ID "prpl-eionrobb-msteams"
+#endif
 #define TEAMS_PLUGIN_VERSION "1.0"
 
+#ifndef TEAMS_PERSONAL_PLUGIN_ID
 #define TEAMS_PERSONAL_PLUGIN_ID "prpl-eionrobb-msteams-personal"
+#endif
 
 #define TEAMS_LOCKANDKEY_APPID "msmsgs@msnmsgr.com"
 #define TEAMS_LOCKANDKEY_SECRET "Q1P7W2E4J9R8U3S5"
