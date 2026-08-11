@@ -28,6 +28,10 @@
 //TODO remove this when dx adds this to the PurpleMessageFlags enum
 #define PURPLE_MESSAGE_REMOTE_SEND  0x10000
 
+#ifndef PURPLE_MESSAGE_WHISPER
+#define PURPLE_MESSAGE_WHISPER 0x0080
+#endif
+
 #else /*!PURPLE_VERSION_CHECK(3, 0, 0)*/
 
 #include "connection.h"

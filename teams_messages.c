@@ -245,6 +245,82 @@ teams_clean_chat_name(TeamsAccount *sa, gchar *chatname)
 	return chatname;
 }
 
+static gboolean
+teams_message_check_whisper(JsonObject *resource, JsonObject *properties)
+{
+	if (properties != NULL) {
+		if (json_object_has_member(properties, "targetedMessageInfo") ||
+			json_object_has_member(properties, "targetedmessageinfo") ||
+			json_object_has_member(properties, "targetedMessage") ||
+			json_object_has_member(properties, "targetedmessage"))
+		{
+			return TRUE;
+		}
+
+		if (json_object_has_member(properties, "isTargeted")) {
+			if (json_object_get_boolean_member(properties, "isTargeted"))
+				return TRUE;
+		} else if (json_object_has_member(properties, "istargeted")) {
+			if (json_object_get_boolean_member(properties, "istargeted"))
+				return TRUE;
+		}
+
+		if (json_object_has_member(properties, "entities")) {
+			JsonNode *entities_node = json_object_get_member(properties, "entities");
+			if (entities_node && json_node_get_node_type(entities_node) == JSON_NODE_ARRAY) {
+				JsonArray *entities = json_node_get_array(entities_node);
+				guint i, len = json_array_get_length(entities);
+				for (i = 0; i < len; i++) {
+					JsonObject *entity = json_array_get_object_element(entities, i);
+					if (entity && json_object_has_member(entity, "type")) {
+						const gchar *type = json_object_get_string_member(entity, "type");
+						if (type && g_ascii_strcasecmp(type, "targetedMessageInfo") == 0) {
+							return TRUE;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (resource != NULL) {
+		if (json_object_has_member(resource, "targetedMessageInfo") ||
+			json_object_has_member(resource, "targetedmessageinfo") ||
+			json_object_has_member(resource, "targetedMessage") ||
+			json_object_has_member(resource, "targetedmessage"))
+		{
+			return TRUE;
+		}
+
+		if (json_object_has_member(resource, "isTargeted")) {
+			if (json_object_get_boolean_member(resource, "isTargeted"))
+				return TRUE;
+		} else if (json_object_has_member(resource, "istargeted")) {
+			if (json_object_get_boolean_member(resource, "istargeted"))
+				return TRUE;
+		}
+
+		if (json_object_has_member(resource, "entities")) {
+			JsonNode *entities_node = json_object_get_member(resource, "entities");
+			if (entities_node && json_node_get_node_type(entities_node) == JSON_NODE_ARRAY) {
+				JsonArray *entities = json_node_get_array(entities_node);
+				guint i, len = json_array_get_length(entities);
+				for (i = 0; i < len; i++) {
+					JsonObject *entity = json_array_get_object_element(entities, i);
+					if (entity && json_object_has_member(entity, "type")) {
+						const gchar *type = json_object_get_string_member(entity, "type");
+						if (type && g_ascii_strcasecmp(type, "targetedMessageInfo") == 0) {
+							return TRUE;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return FALSE;
+}
+
 static void
 process_message_resource(TeamsAccount *sa, JsonObject *resource)
 {
@@ -261,6 +337,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 	gchar *convname = NULL;
 	const gchar *chatname = NULL;
 	JsonObject *properties = NULL;
+	gboolean is_whisper = FALSE;
 	
 	g_return_if_fail(messagetype != NULL);
 	
@@ -325,6 +402,8 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		// * botPoweredByAI true/false
 		// * botFeedbackLoopEnabled true/false
 	}
+	
+	is_whisper = teams_message_check_whisper(resource, properties);
 	
 	if (json_object_has_member(resource, "content")) {
 		content = json_object_get_string_member(resource, "content");
@@ -524,7 +603,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 							html = g_strconcat("<b>", _("Call recording"), "</b>: ", recordingStatusValue, NULL);
 						}
 
-						purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV, html, composetimestamp);
+						purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV | (is_whisper ? PURPLE_MESSAGE_WHISPER : 0), html, composetimestamp);
 						g_free(html);
 						html = NULL;
 					}
@@ -536,7 +615,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				return;
 			} else if (purple_strequal(messagetype, "RichText/Media_CallTranscript")) {
 				html = g_strdup(_("Transcript is available"));
-				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV, html, composetimestamp);
+				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV | (is_whisper ? PURPLE_MESSAGE_WHISPER : 0), html, composetimestamp);
 				g_free(html);
 				html = NULL;
 			}
@@ -601,7 +680,7 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			if (html != NULL && *html) {
 				teams_find_incoming_img(sa, conv, composetimestamp, from, &html);
 				
-				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
+				purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, (teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV) | (is_whisper ? PURPLE_MESSAGE_WHISPER : 0), html, composetimestamp);
 				
 				g_free(html);
 			}
@@ -959,14 +1038,14 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 					if (!g_str_has_prefix(html, "?OTR")) {
 						PurpleMessage *msg;
 						
-						msg = purple_message_new_outgoing(modified_convbuddyname, html, PURPLE_MESSAGE_SEND);
+						msg = purple_message_new_outgoing(modified_convbuddyname, html, PURPLE_MESSAGE_SEND | (is_whisper ? PURPLE_MESSAGE_WHISPER : 0));
 						purple_message_set_time(msg, composetimestamp);
 						purple_conversation_write_message(conv, msg);
 						purple_message_destroy(msg);
 					}
 					
 				} else {
-					purple_serv_got_im(sa->pc, from, html, PURPLE_MESSAGE_RECV, composetimestamp);
+					purple_serv_got_im(sa->pc, from, html, PURPLE_MESSAGE_RECV | (is_whisper ? PURPLE_MESSAGE_WHISPER : 0), composetimestamp);
 				}
 				g_free(html);
 			}
