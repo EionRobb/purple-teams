@@ -4,8 +4,16 @@ on:
   - pull_request
 jobs:
   build:
-    name: build
-    runs-on: macos-latest
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x86_64
+          - runner: macos-14
+            arch: arm64
     permissions:
       id-token: write
       contents: write
@@ -21,17 +29,52 @@ jobs:
 
       - name: make
         run: |
-          make CFLAGS="-O2 -g -pipe -arch x86_64 -arch arm64" LDFLAGS="-arch x86_64 -arch arm64"
+          make
           file libteams.so
-          mv libteams.so libteams_macos.so
-          mv libteams-personal.so libteams-personal_macos.so
+          mv libteams.so libteams_macos_${{ matrix.arch }}.so
+          mv libteams-personal.so libteams-personal_macos_${{ matrix.arch }}.so
+
+      - name: archive
+        uses: actions/upload-artifact@v4
+        with: 
+          name: plugin-macos-${{ matrix.arch }}
+          path: lib*.so
+
+  universal:
+    name: universal binary
+    needs: build
+    runs-on: macos-latest
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+
+    steps:
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: plugin-macos-x86_64
+          path: x86_64
+
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: plugin-macos-arm64
+          path: arm64
+
+      - name: Create universal binaries with lipo
+        run: |
+          lipo -create x86_64/libteams_macos_x86_64.so arm64/libteams_macos_arm64.so -output libteams_macos.so
+          lipo -create x86_64/libteams-personal_macos_x86_64.so arm64/libteams-personal_macos_arm64.so -output libteams-personal_macos.so
+          file libteams_macos.so
+          file libteams-personal_macos.so
 
       - name: archive
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
         uses: actions/upload-artifact@v4
         with: 
-            name: plugin 
-            path: lib*.so
+          name: plugin-macos-universal
+          path: lib*.so
 
       - name: Set date
         id: date
