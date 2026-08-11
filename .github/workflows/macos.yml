@@ -59,7 +59,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with: 
             name: plugin 
-            path: lib*.so
+            path: lib*_macos.so
 
       - name: Set date
         id: date
@@ -69,7 +69,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
         uses: ncipollo/release-action@v1
         with:
-          artifacts: lib*.so
+          artifacts: lib*_macos.so
           tag: daily-${{ steps.date.outputs.DATE }}
           name: Daily ${{ steps.date.outputs.DATE }}
           allowUpdates: true
@@ -79,4 +79,4 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: lib*.so
+          subject-path: lib*_macos.so
