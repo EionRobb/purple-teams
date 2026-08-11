@@ -1,0 +1,55 @@
+name: macOS
+on:
+  - push
+  - pull_request
+jobs:
+  build:
+    name: build
+    runs-on: macos-latest
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install deps
+        run: |
+          brew update || true
+          brew install pidgin json-glib gettext pkg-config
+          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$(brew --prefix)/opt/pidgin/lib/pkgconfig:$(brew --prefix)/opt/gettext/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
+      - name: make
+        run: |
+          make
+          file libteams.so
+          mv libteams.so libteams_macos.so
+          mv libteams-personal.so libteams-personal_macos.so
+
+      - name: archive
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
+        uses: actions/upload-artifact@v4
+        with: 
+            name: plugin 
+            path: lib*.so
+
+      - name: Set date
+        id: date
+        run: echo "DATE=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: lib*.so
+          tag: daily-${{ steps.date.outputs.DATE }}
+          name: Daily ${{ steps.date.outputs.DATE }}
+          allowUpdates: true
+          makeLatest: true
+
+      - name: attest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: lib*.so
