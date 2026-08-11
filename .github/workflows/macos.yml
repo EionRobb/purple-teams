@@ -18,7 +18,15 @@ jobs:
         run: |
           brew install pidgin json-glib gettext pkg-config
 
+      - name: Cache x86_64 Homebrew & deps
+        id: cache-x64-brew
+        uses: actions/cache@v4
+        with:
+          path: /usr/local
+          key: macos-x86_64-brew-pidgin-v1
+
       - name: install rosetta x86_64 brew & deps
+        if: steps.cache-x64-brew.outputs.cache-hit != 'true'
         run: |
           if [ ! -f /usr/local/bin/brew ]; then
             arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
