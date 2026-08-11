@@ -19,6 +19,7 @@
 #define PIDGIN_MARKDOWN
 
 #include "teams_cards.h"
+#include "teams_util.h"
 #include "markdown.h"
 
 // See https://learn.microsoft.com/en-us/outlook/actionable-messages/message-card-reference
@@ -237,26 +238,97 @@ teams_adaptive_card_item_to_html(GString *html, JsonObject *item)
                 }
 
                 gchar *escaped = markdown_convert_markdown(text, TRUE, FALSE);
-                g_string_append_printf(html, "<span style=\"%s\">%s</p>", style->str, escaped);
+                g_string_append_printf(html, "<span style=\"%s\">%s</span>", style->str, escaped);
                 g_free(escaped);
                 g_string_free(style, TRUE);
             } else {
                 purple_debug_error("teams", "Unhandled adaptive card inline type: %s\n", inline_type);
             }
         }
+    } else if (purple_strequal(type, "Container")) {
+        JsonArray *items = json_object_get_array_member(item, "items");
+        if (items) {
+            guint j, len2 = json_array_get_length(items);
+            for (j = 0; j < len2; j++) {
+                JsonObject *container_item = json_array_get_object_element(items, j);
+                teams_adaptive_card_item_to_html(html, container_item);
+            }
+        }
+    } else if (purple_strequal(type, "Table")) {
+        JsonArray *rows = json_object_get_array_member(item, "rows");
+        if (rows) {
+            guint j, len2 = json_array_get_length(rows);
+            g_string_append(html, "<table>");
+            for (j = 0; j < len2; j++) {
+                JsonObject *row = json_array_get_object_element(rows, j);
+                teams_adaptive_card_item_to_html(html, row);
+            }
+            g_string_append(html, "</table>");
+        }
+    } else if (purple_strequal(type, "TableRow")) {
+        JsonArray *cells = json_object_get_array_member(item, "cells");
+        if (cells) {
+            guint j, len2 = json_array_get_length(cells);
+            g_string_append(html, "<tr>");
+            for (j = 0; j < len2; j++) {
+                JsonObject *cell = json_array_get_object_element(cells, j);
+                teams_adaptive_card_item_to_html(html, cell);
+            }
+            g_string_append(html, "</tr>");
+        }
+    } else if (purple_strequal(type, "TableCell")) {
+        JsonArray *items = json_object_get_array_member(item, "items");
+        if (items) {
+            guint j, len2 = json_array_get_length(items);
+            g_string_append(html, "<td>");
+            for (j = 0; j < len2; j++) {
+                JsonObject *cell_item = json_array_get_object_element(items, j);
+                teams_adaptive_card_item_to_html(html, cell_item);
+            }
+            g_string_append(html, "</td>");
+        }
+    } else if (purple_strequal(type, "FactSet")) {
+        JsonArray *facts = json_object_get_array_member(item, "facts");
+        if (facts) {
+            guint j, len2 = json_array_get_length(facts);
+            for (j = 0; j < len2; j++) {
+                JsonObject *fact = json_array_get_object_element(facts, j);
+                const gchar *title = json_object_get_string_member(fact, "title");
+                const gchar *value = json_object_get_string_member(fact, "value");
+                if (title && value) {
+                    gchar *escaped_title = markdown_convert_markdown(title, TRUE, FALSE);
+                    gchar *escaped_value = markdown_convert_markdown(value, TRUE, FALSE);
+                    g_string_append_printf(html, "<b>%s:</b> %s<br/>", escaped_title, escaped_value);
+                    g_free(escaped_title);
+                    g_free(escaped_value);
+                }
+            }
+        }
     } else if (purple_strequal(type, "Image")) {
         const gchar *url = json_object_get_string_member(item, "url");
-        //const gchar *size = json_object_get_string_member(item, "size");
+        const gchar *altText = json_object_get_string_member(item, "altText");
+        JsonObject *selectAction = json_object_get_object_member(item, "selectAction");
 
         if (url) {
-            //GString *style = g_string_new("");
-            //if (size) {
-            //    g_string_append_printf(style, "width: %s;", size);
-            //}
-
-            //g_string_append_printf(html, "<img src=\"%s\" style=\"%s\" />", url, style->str);
-            g_string_append_printf(html, "Image: %s<br/>", url);
-            //g_string_free(style, TRUE);
+            const gchar *action_url = NULL;
+            if (selectAction) {
+                const gchar *action_type = json_object_get_string_member(selectAction, "type");
+                if (purple_strequal(action_type, "Action.OpenUrl")) {
+                    action_url = json_object_get_string_member(selectAction, "url");
+                }
+            }
+            if (action_url) {
+                g_string_append_printf(html, "<a href=\"%s\">", action_url);
+            }
+            if (altText && *altText) {
+                g_string_append_printf(html, "Image: %s (%s)", url, altText);
+            } else {
+                g_string_append_printf(html, "Image: %s", url);
+            }
+            if (action_url) {
+                g_string_append(html, "</a>");
+            }
+            g_string_append(html, "<br/>");
         }
     } else if (purple_strequal(type, "Media")) {
         const gchar *poster = json_object_get_string_member(item, "poster");
@@ -475,3 +547,80 @@ teams_convert_card_to_html(JsonObject *content, const gchar *content_type)
 
     return NULL;
 }
+
+gchar *
+teams_parse_media_card_content(const gchar *content)
+{
+    PurpleXmlNode *uriobject;
+    const gchar *uriobject_type;
+    PurpleXmlNode *swift;
+    const gchar *swift_b64;
+    gsize swift_b64_len;
+    guchar *swift_data;
+    JsonObject *swift_json;
+    JsonArray *swift_attachments;
+    guint i, len;
+    GString *cards_html;
+    gchar *res = NULL;
+
+    if (content == NULL || *content == '\0') {
+        return NULL;
+    }
+
+    uriobject = purple_xmlnode_from_str(content, -1);
+    if (uriobject == NULL) {
+        return NULL;
+    }
+
+    uriobject_type = purple_xmlnode_get_attrib(uriobject, "type");
+    if (purple_strequal(purple_xmlnode_get_name(uriobject), "URIObject") && purple_strequal(uriobject_type, "SWIFT.1")) {
+        swift = purple_xmlnode_get_child(uriobject, "Swift");
+        if (swift != NULL) {
+            swift_b64 = purple_xmlnode_get_attrib(swift, "b64");
+            if (swift_b64 != NULL) {
+                swift_data = purple_base64_decode(swift_b64, &swift_b64_len);
+                if (swift_data != NULL) {
+                    swift_json = json_decode_object((const gchar *)swift_data, swift_b64_len);
+                    if (swift_json != NULL) {
+                        swift_attachments = json_object_get_array_member(swift_json, "attachments");
+                        if (swift_attachments != NULL) {
+                            len = json_array_get_length(swift_attachments);
+                            cards_html = g_string_new(NULL);
+
+                            for (i = 0; i < len; i++) {
+                                JsonObject *attachment = json_array_get_object_element(swift_attachments, i);
+                                JsonObject *card_content = json_object_get_object_member(attachment, "content");
+                                const gchar *contentType = json_object_get_string_member(attachment, "contentType");
+
+                                gchar *html = teams_convert_card_to_html(card_content, contentType);
+                                if (html == NULL) {
+                                    html = teams_jsonobj_to_string(card_content);
+                                }
+                                if (html != NULL) {
+                                    if (cards_html->len > 0) {
+                                        g_string_append(cards_html, "<br/>");
+                                    }
+                                    g_string_append(cards_html, html);
+                                    g_free(html);
+                                }
+                            }
+
+                            if (cards_html->len > 0) {
+                                res = g_string_free(cards_html, FALSE);
+                            } else {
+                                g_string_free(cards_html, TRUE);
+                            }
+
+                            json_object_unref(swift_json);
+                        }
+                    }
+                    g_free(swift_data);
+                }
+            }
+        }
+    }
+
+    purple_xmlnode_free(uriobject);
+    return res;
+}
+

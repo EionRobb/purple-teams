@@ -523,52 +523,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				return;
 				
 			} else if (purple_strequal(messagetype, "RichText/Media_Card")) {
-				gboolean message_processed = FALSE;
-				PurpleXmlNode *uriobject = purple_xmlnode_from_str(content, -1);
-				const gchar *uriobject_type = purple_xmlnode_get_attrib(uriobject, "type");
-				
-				if (purple_strequal(purple_xmlnode_get_name(uriobject), "URIObject") && purple_strequal(uriobject_type, "SWIFT.1")) {
-					PurpleXmlNode *swift = purple_xmlnode_get_child(uriobject, "Swift");
-					const gchar *swift_b64 = purple_xmlnode_get_attrib(swift, "b64");
-					gsize swift_b64_len;
-					guchar *swift_data = purple_base64_decode(swift_b64, &swift_b64_len);
-					JsonObject *swift_json = json_decode_object((const gchar *)swift_data, swift_b64_len);
-					JsonArray *swift_attachments = json_object_get_array_member(swift_json, "attachments");
-					guint i, len = json_array_get_length(swift_attachments);
-
-					//Process JSON blob of a Card into something vaguely HTML
-					
-					if (swift_json == NULL || swift_attachments == NULL) {
-						// Couldn't process, dump the raw data
-						html = purple_markup_escape_text((gchar *)swift_data, swift_b64_len);
-						purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
-						g_free(html);
-					} else {
-						for(i = 0; i < len; i++) {
-							JsonObject *attachment = json_array_get_object_element(swift_attachments, i);
-							JsonObject *content = json_object_get_object_member(attachment, "content");
-							const gchar *contentType = json_object_get_string_member(attachment, "contentType");
-
-							html = teams_convert_card_to_html(content, contentType);
-							if (html == NULL) {
-								// Couldn't process or unknown content type, dump the raw data
-								html = teams_jsonobj_to_string(content);
-							}
-					
-							purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV, html, composetimestamp);
-							
-							g_free(html);
-						}
-					}
-					
-					html = NULL;
-					g_free(swift_data);
-					json_object_unref(swift_json);
-					message_processed = TRUE;
-				}
-				
-				purple_xmlnode_free(uriobject);
-				if (message_processed) {
+				gchar *card_html = teams_parse_media_card_content(content);
+				if (card_html != NULL) {
+					purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, (teams_is_user_self(sa, from) ? PURPLE_MESSAGE_SEND : PURPLE_MESSAGE_RECV) | (is_whisper ? PURPLE_MESSAGE_WHISPER : 0), card_html, composetimestamp);
+					g_free(card_html);
 					g_free(convname);
 					g_strfreev(messagetype_parts);
 					return;
@@ -939,12 +897,17 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			}
 			
 			if (content && *content) {
-				if (g_str_equal(messagetype, "Text")) {
-					gchar *temp = teams_meify(content, skypeemoteoffset);
-					html = purple_markup_escape_text(temp, -1);
-					g_free(temp);
-				} else {
-					html = teams_meify(content, skypeemoteoffset);
+				if (purple_strequal(messagetype, "RichText/Media_Card")) {
+					html = teams_parse_media_card_content(content);
+				}
+				if (html == NULL) {
+					if (g_str_equal(messagetype, "Text")) {
+						gchar *temp = teams_meify(content, skypeemoteoffset);
+						html = purple_markup_escape_text(temp, -1);
+						g_free(temp);
+					} else {
+						html = teams_meify(content, skypeemoteoffset);
+					}
 				}
 
 				if (skypeeditedid && *skypeeditedid) {

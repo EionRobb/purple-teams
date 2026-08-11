@@ -22,5 +22,6 @@
 #include "libteams.h"
 
 gchar *teams_convert_card_to_html(JsonObject *content, const gchar *content_type);
+gchar *teams_parse_media_card_content(const gchar *content);
 
 #endif
