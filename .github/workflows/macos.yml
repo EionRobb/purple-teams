@@ -4,16 +4,8 @@ on:
   - pull_request
 jobs:
   build:
-    name: build (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-13
-            arch: x86_64
-          - runner: macos-14
-            arch: arm64
+    name: build
+    runs-on: macos-latest
     permissions:
       id-token: write
       contents: write
@@ -22,50 +14,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: install deps
+      - name: install native arm64 deps
         run: |
           brew install pidgin json-glib gettext pkg-config
-          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$(brew --prefix)/opt/pidgin/lib/pkgconfig:$(brew --prefix)/opt/gettext/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
-      - name: make
+      - name: install rosetta x86_64 brew & deps
         run: |
-          make
-          file libteams.so
-          mv libteams.so libteams_macos_${{ matrix.arch }}.so
-          mv libteams-personal.so libteams-personal_macos_${{ matrix.arch }}.so
+          if [ ! -f /usr/local/bin/brew ]; then
+            arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          arch -x86_64 /usr/local/bin/brew install pidgin json-glib gettext pkg-config
 
-      - name: archive
-        uses: actions/upload-artifact@v4
-        with: 
-          name: plugin-macos-${{ matrix.arch }}
-          path: lib*.so
-
-  universal:
-    name: universal binary
-    needs: build
-    runs-on: macos-latest
-    permissions:
-      id-token: write
-      contents: write
-      attestations: write
-
-    steps:
-      - name: Download x86_64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: plugin-macos-x86_64
-          path: x86_64
-
-      - name: Download arm64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: plugin-macos-arm64
-          path: arm64
-
-      - name: Create universal binaries with lipo
+      - name: build universal binaries
         run: |
-          lipo -create x86_64/libteams_macos_x86_64.so arm64/libteams_macos_arm64.so -output libteams_macos.so
-          lipo -create x86_64/libteams-personal_macos_x86_64.so arm64/libteams-personal_macos_arm64.so -output libteams-personal_macos.so
+          # 1. Build arm64
+          ARM64_PKG="$(brew --prefix)/lib/pkgconfig:$(brew --prefix)/opt/pidgin/lib/pkgconfig:$(brew --prefix)/opt/gettext/lib/pkgconfig"
+          PKG_CONFIG_PATH="$ARM64_PKG" make CFLAGS="-O2 -g -pipe -arch arm64" LDFLAGS="-arch arm64"
+          mv libteams.so libteams_arm64.so
+          mv libteams-personal.so libteams-personal_arm64.so
+          make clean
+
+          # 2. Build x86_64 under Rosetta
+          X86_PKG="/usr/local/lib/pkgconfig:/usr/local/opt/pidgin/lib/pkgconfig:/usr/local/opt/gettext/lib/pkgconfig"
+          PKG_CONFIG_PATH="$X86_PKG" arch -x86_64 make CFLAGS="-O2 -g -pipe -arch x86_64" LDFLAGS="-arch x86_64"
+          mv libteams.so libteams_x86_64.so
+          mv libteams-personal.so libteams-personal_x86_64.so
+
+          # 3. Create universal fat binaries with lipo
+          lipo -create libteams_x86_64.so libteams_arm64.so -output libteams_macos.so
+          lipo -create libteams-personal_x86_64.so libteams-personal_arm64.so -output libteams-personal_macos.so
           file libteams_macos.so
           file libteams-personal_macos.so
 
@@ -73,8 +50,8 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
         uses: actions/upload-artifact@v4
         with: 
-          name: plugin-macos-universal
-          path: lib*.so
+            name: plugin 
+            path: lib*.so
 
       - name: Set date
         id: date
