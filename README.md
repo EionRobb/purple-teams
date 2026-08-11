@@ -87,6 +87,14 @@ Something else!
 ---------------
 Feel free to [open an issue](https://github.com/EionRobb/purple-teams/issues) and hopefully find a reasonable outcome :)
 
+Similar projects
+----------------
+* [Squads](https://github.com/IanTerzo/Squads)
+* [OperCom](https://github.com/BrianStadnicki/opercom-web-app)
+* [OST client](https://github.com/eisbaw/ost)
+* [teams-cli](https://github.com/fossteams/teams-cli)
+* [Squads app](https://github.com/kernoeb/squads-app)
+
 Say thanks
 ----------
 Did this plugin bring you joy?  If so, send $1 to say thanks :)
