@@ -321,6 +321,85 @@ teams_message_check_whisper(JsonObject *resource, JsonObject *properties)
 	return FALSE;
 }
 
+static gchar *
+teams_parse_media_call_recording_content(const gchar *content)
+{
+	PurpleXmlNode *blob;
+	PurpleXmlNode *recordingStatus;
+	gchar *html = NULL;
+
+	if (content == NULL || !*content)
+		return NULL;
+
+	blob = purple_xmlnode_from_str(content, -1);
+	if (blob == NULL)
+		return NULL;
+
+	recordingStatus = purple_xmlnode_get_child(blob, "RecordingStatus");
+	if (recordingStatus) {
+		const gchar *recordingStatusValue = purple_xmlnode_get_attrib(recordingStatus, "status");
+		if (recordingStatusValue && *recordingStatusValue) {
+			if (purple_strequal(recordingStatusValue, "Initial")) {
+				html = g_strconcat("<b>", _("Call recording"), "</b>: ", _("Started"), NULL);
+			} else if (purple_strequal(recordingStatusValue, "ChunkFinished")) {
+				html = g_strconcat("<b>", _("Call recording"), "</b>: ", _("Processing"), NULL);
+			} else if (purple_strequal(recordingStatusValue, "Success")) {
+				PurpleXmlNode *title = purple_xmlnode_get_child(blob, "Title");
+				PurpleXmlNode *link = purple_xmlnode_get_child(blob, "a");
+				PurpleXmlNode *originalName = purple_xmlnode_get_child(blob, "OriginalName");
+				gchar *titleValue = purple_xmlnode_get_data(title);
+				const gchar *linkHref = purple_xmlnode_get_attrib(link, "href");
+				const gchar *originalNameValue = purple_xmlnode_get_attrib(originalName, "v");
+				const gchar *transcript_href = NULL;
+				const gchar *onedrive_transcript_href = NULL;
+				const gchar *ams_transcript_href = NULL;
+				const gchar *other_transcript_href = NULL;
+				PurpleXmlNode *recordingContent = purple_xmlnode_get_child(blob, "RecordingContent");
+
+				if (recordingContent) {
+					PurpleXmlNode *item;
+					for (item = purple_xmlnode_get_child(recordingContent, "item"); item; item = purple_xmlnode_get_next_twin(item)) {
+						const gchar *item_type = purple_xmlnode_get_attrib(item, "type");
+						const gchar *item_uri = purple_xmlnode_get_attrib(item, "uri");
+
+						if (item_type && item_uri && *item_uri) {
+							if (purple_strequal(item_type, "onedriveForBusinessTranscript")) {
+								onedrive_transcript_href = item_uri;
+							} else if (purple_strequal(item_type, "amsTranscript")) {
+								ams_transcript_href = item_uri;
+							} else if (g_str_has_suffix(item_type, "Transcript") || strstr(item_type, "Transcript") || strstr(item_type, "transcript")) {
+								other_transcript_href = item_uri;
+							}
+						}
+					}
+				}
+
+				if (onedrive_transcript_href && *onedrive_transcript_href) {
+					transcript_href = onedrive_transcript_href;
+				} else if (ams_transcript_href && *ams_transcript_href) {
+					transcript_href = ams_transcript_href;
+				} else if (other_transcript_href && *other_transcript_href) {
+					transcript_href = other_transcript_href;
+				}
+
+				if (transcript_href && *transcript_href) {
+					html = g_strconcat("<h2>", titleValue ? titleValue : "", "</h2><br/><b>", _("Call recording"), "</b>: ", _("Success"), " - <a href=\"", linkHref ? linkHref : "#", "\">", originalNameValue ? originalNameValue : "Recording.mp4", "</a> - <a href=\"", transcript_href, "\">", _("Transcript"), "</a>", NULL);
+				} else {
+					html = g_strconcat("<h2>", titleValue ? titleValue : "", "</h2><br/><b>", _("Call recording"), "</b>: ", _("Success"), " - <a href=\"", linkHref ? linkHref : "#", "\">", originalNameValue ? originalNameValue : "Recording.mp4", "</a>", NULL);
+				}
+
+				g_free(titleValue);
+			} else {
+				purple_debug_error("teams", "Unknown recording status: %s\n", recordingStatusValue);
+				html = g_strconcat("<b>", _("Call recording"), "</b>: ", recordingStatusValue, NULL);
+			}
+		}
+	}
+
+	purple_xmlnode_free(blob);
+	return html;
+}
+
 static void
 process_message_resource(TeamsAccount *sa, JsonObject *resource)
 {
@@ -533,41 +612,13 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 			} else if (purple_strequal(messagetype, "RichText/Media_CallRecording") ||
 						purple_strequal(messagetype, "RichText/Media_LocalRecording")) {
-				PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
-				PurpleXmlNode *recordingStatus = purple_xmlnode_get_child(blob, "RecordingStatus");
-
-				if (recordingStatus) {
-					const gchar *recordingStatusValue = purple_xmlnode_get_attrib(recordingStatus, "status");
-					if (recordingStatusValue && *recordingStatusValue) {
-						if (purple_strequal(recordingStatusValue, "Initial")) {
-							html = g_strconcat("<b>", _("Call recording"), "</b>: ", _("Started"), NULL);
-
-						} else if (purple_strequal(recordingStatusValue, "ChunkFinished")) {
-							html = g_strconcat("<b>", _("Call recording"), "</b>: ", _("Processing"), NULL);
-
-						} else if (purple_strequal(recordingStatusValue, "Success")) {
-							PurpleXmlNode *title = purple_xmlnode_get_child(blob, "Title");
-							PurpleXmlNode *link = purple_xmlnode_get_child(blob, "a");
-							PurpleXmlNode *originalName = purple_xmlnode_get_child(blob, "OriginalName");
-							gchar *titleValue = purple_xmlnode_get_data(title);
-							const gchar *linkHref = purple_xmlnode_get_attrib(link, "href");
-							const gchar *originalNameValue = purple_xmlnode_get_attrib(originalName, "v");
-
-							html = g_strconcat("<h2>", titleValue ? titleValue : "", "</h2><br/><b>", _("Call recording"), "</b>: ", _("Success"), " - <a href=\"", linkHref ? linkHref : "#", "\">", originalNameValue ? originalNameValue : "Recording.mp4", "</a>", NULL);
-
-							g_free(titleValue);
-						} else {
-							purple_debug_error("teams", "Unknown recording status: %s\n", recordingStatusValue);
-							html = g_strconcat("<b>", _("Call recording"), "</b>: ", recordingStatusValue, NULL);
-						}
-
-						purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV | (is_whisper ? PURPLE_MESSAGE_WHISPER : 0), html, composetimestamp);
-						g_free(html);
-						html = NULL;
-					}
+				html = teams_parse_media_call_recording_content(content);
+				if (html != NULL) {
+					purple_serv_got_chat_in(sa->pc, g_str_hash(chatname), from, PURPLE_MESSAGE_RECV | (is_whisper ? PURPLE_MESSAGE_WHISPER : 0), html, composetimestamp);
+					g_free(html);
+					html = NULL;
 				}
-				purple_xmlnode_free(blob);
-				
+
 				g_free(convname);
 				g_strfreev(messagetype_parts);
 				return;
@@ -899,6 +950,9 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			if (content && *content) {
 				if (purple_strequal(messagetype, "RichText/Media_Card")) {
 					html = teams_parse_media_card_content(content);
+				} else if (purple_strequal(messagetype, "RichText/Media_CallRecording") ||
+							purple_strequal(messagetype, "RichText/Media_LocalRecording")) {
+					html = teams_parse_media_call_recording_content(content);
 				}
 				if (html == NULL) {
 					if (g_str_equal(messagetype, "Text")) {
@@ -1040,10 +1094,6 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				teams_present_uri_as_filetransfer(sa, uri, from);
 			}
 			purple_xmlnode_free(blob);
-		} else if (g_str_equal(messagetype, "RichText/Media_CallRecording")) {
-			//TODO
-			//"content": "<URIObject format_version=\"1.1\" type=\"Video.2/CallRecording.1\" url_thumbnail=\"https://au-prod.asyncgw.teams.microsoft.com/v1/objects/.../views/thumbnail\" uri=\"\" version=\"1.0\"><RecordingStatus status=\"Success\" code=\"200\"><amsErrorResult /></RecordingStatus><SessionEndReason value=\"CallEnded\" /><ChunkEndReason value=\"SessionEnded\" /><Title>...</Title><a href=\"https://...-my.sharepoint.com/:v:/g/personal/..._com/...\">Play</a><OriginalName v=\"...-20240114_232119-Meeting Recording.mp4\" /><MeetingOrganizerId value=\"8:orgid:...\" /><MeetingOrganizerTenantId value=\"...\" /><RecordingInitiatorId value=\"8:orgid:...\" /><ICalUid value=\"...\" /><Identifiers><Id type=\"callId\" value=\"...\" /><Id type=\"callLegId\" value=\"...\" /><Id type=\"chunkIndex\" value=\"0\" /><Id type=\"AMSDocumentID\" value=\"...\" /><Id type=\"StreamVideoId\" value=\"\" /><Id type=\"OriginatorParticipantId\" value=\"...\" /></Identifiers><RecordingContent contentTypes=\"Recording\" timestamp=\"2024-01-14T22:59:54.6362911Z\" duration=\"0:20:21.16\" canVideoExpire=\"True\"><item type=\"video\" uri=\"\" /><item type=\"amsVideo\" uri=\"https://au-prod.asyncgw.teams.microsoft.com/v1/objects/.../views/video\" /><item type=\"amsTranscript\" uri=\"https://au-prod.asyncgw.teams.microsoft.com/v1/objects/.../views/transcript\" /><item type=\"rosterevents\" uri=\"https://au-prod.asyncgw.teams.microsoft.com/v1/objects/.../views/rosterevents\" /><item type=\"onedriveForBusinessVideo\" uri=\"https://...-my.sharepoint.com/:v:/g/personal/..._com/...\" driveId=\"b!...\" driveItemId=\"...\" /></RecordingContent><RequestedExports><ExportResult type=\"ExportToOnedriveForBusiness\" /></RequestedExports></URIObject>",
-
 		} else if (g_str_equal(messagetype, "Event/SkypeVideoMessage")) {
 			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
 			const gchar *sid = purple_xmlnode_get_attrib(blob, "sid");
