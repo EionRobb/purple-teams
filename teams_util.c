@@ -346,7 +346,7 @@ find_acct(const char *prpl, const char *acct_id)
 const gchar *
 teams_user_url_prefix(const gchar *who)
 {
-	if(TEAMS_BUDDY_IS_S4B(who) || TEAMS_BUDDY_IS_BOT(who) || TEAMS_BUDDY_IS_NOTIFICATIONS(who)) {
+	if(TEAMS_BUDDY_IS_S4B(who) || TEAMS_BUDDY_IS_BOT(who) || TEAMS_BUDDY_IS_NOTIFICATIONS(who) || TEAMS_BUDDY_IS_VISITOR(who)) {
 		return ""; // already has a prefix
 	} else if (TEAMS_BUDDY_IS_MSN(who)) {
 		return "1:";

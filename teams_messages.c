@@ -577,15 +577,23 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				cb = purple_chat_conversation_find_user(chatconv, from);
 			}
 
+			const gchar *displayname = NULL;
 			if (json_object_has_member(resource, "imdisplayname") || json_object_has_member(resource, "imDisplayName")) {
-				const gchar *displayname = json_object_get_string_member(resource, "imdisplayname");
+				displayname = json_object_get_string_member(resource, "imdisplayname");
 				if (displayname == NULL) {
 					displayname = json_object_get_string_member(resource, "imDisplayName");
 				}
-				
-				if (cb && displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
-					purple_chat_user_set_alias(cb, displayname);
+			}
+			if (displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
+				if (TEAMS_BUDDY_IS_VISITOR(from)) {
+					g_hash_table_insert(sa->visitor_display_names, g_strdup(from), g_strdup(displayname));
 				}
+			} else {
+				displayname = g_hash_table_lookup(sa->visitor_display_names, from);
+			}
+
+			if (cb && displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
+				purple_chat_user_set_alias(cb, displayname);
 			}
 			
 			if (g_str_equal(messagetype, "RichText/UriObject")) {
@@ -721,33 +729,47 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				const gchar *username = json_object_get_string_member(member, "id");
 				username = teams_strip_user_prefix(username);
 				
-				if (!purple_chat_conversation_find_user(chatconv, username)) {
-					const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
-					const gchar *meetingMemberType = json_object_get_string_member(member, "meetingMemberType");
+				const gchar *friendlyname = json_object_get_string_member(member, "friendlyname");
+				const gchar *meetingMemberType = json_object_get_string_member(member, "meetingMemberType");
 
-					if (friendlyname == NULL) {
-						friendlyname = json_object_get_string_member(resource, "friendlyName");
+				if (friendlyname == NULL) {
+					friendlyname = json_object_get_string_member(resource, "friendlyName");
+				}
+				
+				if (friendlyname && *friendlyname && !g_str_has_prefix(friendlyname, "orgid:")) {
+					if (TEAMS_BUDDY_IS_VISITOR(username)) {
+						g_hash_table_insert(sa->visitor_display_names, g_strdup(username), g_strdup(friendlyname));
+					}
+
+					PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, username);
+					const gchar *local_alias;
+					
+					if (buddy == NULL) {
+						buddy = purple_buddy_new(sa->account, username, NULL);
+						if (purple_strequal(meetingMemberType, "temp") || TEAMS_BUDDY_IS_VISITOR(username)) {
+							purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
+						}
+						purple_blist_add_buddy(buddy, NULL, group, NULL);
 					}
 					
-					if (friendlyname && *friendlyname && !g_str_has_prefix(friendlyname, "orgid:")) {
-						PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, username);
-						const gchar *local_alias;
-						
-						if (buddy == NULL) {
-							purple_buddy_new(sa->account, username, NULL);
-							if (purple_strequal(meetingMemberType, "temp")) {
-								purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
-							}
-							purple_blist_add_buddy(buddy, NULL, group, NULL);
-						}
-						
-						local_alias = purple_buddy_get_local_alias(buddy);
-						if (!local_alias || !*local_alias) {
-							purple_serv_got_alias(sa->pc, username, friendlyname);
-						}
+					local_alias = purple_buddy_get_local_alias(buddy);
+					if (!local_alias || !*local_alias) {
+						purple_serv_got_alias(sa->pc, username, friendlyname);
 					}
-					
+				}
+				
+				if (!purple_chat_conversation_find_user(chatconv, username)) {
 					purple_chat_conversation_add_user(chatconv, username, NULL, PURPLE_CHAT_USER_NONE, TRUE);
+				}
+				PurpleChatUser *cb = purple_chat_conversation_find_user(chatconv, username);
+				if (cb) {
+					const gchar *display = friendlyname;
+					if (display == NULL || !*display) {
+						display = g_hash_table_lookup(sa->visitor_display_names, username);
+					}
+					if (display && *display && !g_str_has_prefix(display, "orgid:")) {
+						purple_chat_user_set_alias(cb, display);
+					}
 				}
 			}
 			
@@ -1022,6 +1044,9 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				}
 				
 				if (displayname && *displayname && !g_str_has_prefix(displayname, "orgid:")) {
+					if (TEAMS_BUDDY_IS_VISITOR(from)) {
+						g_hash_table_insert(sa->visitor_display_names, g_strdup(from), g_strdup(displayname));
+					}
 					//Hopefully not too expensive to do a lookup?
 					PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, from);
 					//TODO add to buddy list if null?
@@ -1548,14 +1573,17 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			}
 			
 			if (friendlyName && *friendlyName && !g_str_has_prefix(friendlyName, "orgid:")) {
+				if (TEAMS_BUDDY_IS_VISITOR(username)) {
+					g_hash_table_insert(sa->visitor_display_names, g_strdup(username), g_strdup(friendlyName));
+				}
+
 				buddy = purple_blist_find_buddy(sa->account, username);
 				if (buddy == NULL) {
-					purple_buddy_new(sa->account, username, NULL);
-					if (purple_strequal(role, "Anonymous") || purple_strequal(role, "anonymous")) {
+					buddy = purple_buddy_new(sa->account, username, NULL);
+					if (purple_strequal(role, "Anonymous") || purple_strequal(role, "anonymous") || TEAMS_BUDDY_IS_VISITOR(username)) {
 						purple_blist_node_set_transient(PURPLE_BLIST_NODE(buddy), TRUE);
 					}
 					purple_blist_add_buddy(buddy, NULL, group, NULL);
-					
 				}
 				
 				local_alias = purple_buddy_get_local_alias(buddy);
@@ -1565,6 +1593,16 @@ teams_got_thread_users(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			}
 			
 			purple_chat_conversation_add_user(chatconv, username, NULL, cbflags, FALSE);
+			PurpleChatUser *cb = purple_chat_conversation_find_user(chatconv, username);
+			if (cb) {
+				const gchar *display = friendlyName;
+				if (display == NULL || !*display) {
+					display = g_hash_table_lookup(sa->visitor_display_names, username);
+				}
+				if (display && *display && !g_str_has_prefix(display, "orgid:")) {
+					purple_chat_user_set_alias(cb, display);
+				}
+			}
 			users_to_fetch = g_slist_prepend(users_to_fetch, g_strdup(username));
 		}
 	}

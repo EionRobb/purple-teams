@@ -1566,6 +1566,7 @@ teams_get_friend_profiles(TeamsAccount *sa, GSList *contacts)
 	postdata = g_string_new("[\"\"");
 
 	do {
+		if (TEAMS_BUDDY_IS_VISITOR(cur->data)) continue;
 		user_prefix = teams_user_url_prefix(cur->data);
 		if (g_str_equal(user_prefix, "8:") && strncmp(cur->data, "orgid:", 6) != 0) continue;
 		// Skip contacts whose profiles have already been fetched to avoid duplicate
@@ -1718,6 +1719,28 @@ teams_get_info(PurpleConnection *pc, const gchar *username)
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 	gchar *url = NULL;
 	gchar *postdata;
+
+	if (TEAMS_BUDDY_IS_VISITOR(username)) {
+		PurpleNotifyUserInfo *user_info = purple_notify_user_info_new();
+		const gchar *alias = NULL;
+		if (sa->visitor_display_names) {
+			alias = g_hash_table_lookup(sa->visitor_display_names, username);
+		}
+		if (alias == NULL || !*alias) {
+			PurpleBuddy *buddy = purple_blist_find_buddy(sa->account, username);
+			if (buddy) {
+				alias = purple_buddy_get_alias(buddy);
+			}
+		}
+
+		if (alias && *alias && !purple_strequal(alias, username)) {
+			purple_notify_user_info_add_pair_html(user_info, _("Display Name"), alias);
+		}
+		purple_notify_user_info_add_pair_html(user_info, _("User Type"), _("Visitor"));
+
+		purple_notify_userinfo(pc, username, user_info, NULL, NULL);
+		return;
+	}
 	
 	url = g_strconcat(TEAMS_PROFILES_PREFIX, "users/", teams_user_url_prefix(username), purple_url_encode(username), "/?throwIfNotFound=false&isMailAddress=false&enableGuest=true&includeIBBarredUsers=true&skypeTeamsInfo=true&includeBots=true", NULL);
 	

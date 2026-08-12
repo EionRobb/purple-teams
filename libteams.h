@@ -170,6 +170,7 @@
 #define TEAMS_BUDDY_IS_NOTIFICATIONS(a) G_UNLIKELY((a) != NULL && g_str_has_prefix((a), "48:"))
 #define TEAMS_BUDDY_IS_SKYPE(a) G_UNLIKELY((a) != NULL && g_str_has_prefix((a), "8:") && !g_str_has_prefix((a), "8:orgid:"))
 #define TEAMS_BUDDY_IS_TEAMS(a) G_LIKELY((a) != NULL && g_str_has_prefix((a), "8:orgid:"))
+#define TEAMS_BUDDY_IS_VISITOR(a) G_UNLIKELY((a) != NULL && (g_str_has_prefix((a), "teamsvisitor:") || g_str_has_prefix((a), "8:teamsvisitor:")))
 
 #define TEAMS_CHAT_IS_MEETING(a) G_LIKELY((a) != NULL && g_str_has_prefix((a), "19:meeting_"))
 
@@ -235,6 +236,7 @@ struct _TeamsAccount {
 	GQueue *pending_presences;
 	guint presence_drain_source;
 	GHashTable *presence_mri_index;
+	GHashTable *visitor_display_names;
 	
 	struct _PurpleWebsocket *trouter_socket;
 	gchar *trouter_surl;

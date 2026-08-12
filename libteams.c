@@ -500,6 +500,7 @@ teams_login(PurpleAccount *account)
 	sa->pending_presences = g_queue_new();
 	sa->presence_drain_source = 0;
 	sa->presence_mri_index = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	sa->visitor_display_names = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	sa->keepalive_pool = purple_http_keepalive_pool_new();
 	purple_http_keepalive_pool_set_limit_per_host(sa->keepalive_pool, TEAMS_MAX_CONNECTIONS);
 	sa->conns = purple_http_connection_set_new();
@@ -626,6 +627,7 @@ teams_close(PurpleConnection *pc)
 	g_hash_table_destroy(sa->subscribed_contacts);
 	g_hash_table_destroy(sa->fetched_profiles);
 	g_hash_table_destroy(sa->presence_etag_cache);
+	g_hash_table_destroy(sa->visitor_display_names);
 	if (sa->subscription_flush_timer != 0) {
 		g_source_remove(sa->subscription_flush_timer);
 		sa->subscription_flush_timer = 0;
