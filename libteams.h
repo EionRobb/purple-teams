@@ -113,13 +113,27 @@
 #endif
 
 #define TEAMS_CALENDAR_REFRESH_MINUTES 15
+/* Personal/TFL: how often to poll for new messages (real-time Trouter push is
+ * dead for consumer accounts, so this drives message delivery latency). */
+#define TEAMS_MESSAGE_POLL_SECONDS 8
 #define TEAMS_MAX_MSG_RETRY 2
 #define TEAMS_MAX_PROCESSED_EVENT_BUFFER 10
+/* Cap the in-session received-message dedup cache. The poll only re-fetches recent
+ * messages, so keys past this many are never queried again — bounding memory. */
+#define TEAMS_MAX_DEDUP_CACHE 4096
 
+/* Keep the established plugin ids so existing accounts keep resolving and the
+ * work/personal builds can run side by side. Both are overridable at build time
+ * (e.g. the webOS transport derives the prpl id from the service name and expects
+ * "prpl-teams", so that port builds with -DTEAMS_PERSONAL_PLUGIN_ID='"prpl-teams"'). */
+#ifndef TEAMS_PLUGIN_ID
 #define TEAMS_PLUGIN_ID "prpl-eionrobb-msteams"
+#endif
 #define TEAMS_PLUGIN_VERSION "1.0"
 
+#ifndef TEAMS_PERSONAL_PLUGIN_ID
 #define TEAMS_PERSONAL_PLUGIN_ID "prpl-eionrobb-msteams-personal"
+#endif
 
 #define TEAMS_LOCKANDKEY_APPID "msmsgs@msnmsgr.com"
 #define TEAMS_LOCKANDKEY_SECRET "Q1P7W2E4J9R8U3S5"
@@ -186,7 +200,7 @@ struct _TeamsAccount {
 	gchar *username;
 	gchar *primary_member_name;
 	gchar *self_display_name;
-	
+
 	PurpleAccount *account;
 	PurpleConnection *pc;
 	PurpleHttpKeepalivePool *keepalive_pool;
@@ -194,7 +208,12 @@ struct _TeamsAccount {
 	PurpleHttpCookieJar *cookie_jar;
 	
 	GHashTable *sent_messages_hash;
+	/* Personal/TFL: dedup incoming messages by server id (+edit marker) so the
+	 * periodic poll / offline-history re-fetch never re-delivers an already-shown
+	 * message. See process_message_resource() and teams_poll_messages(). */
+	GHashTable *received_messages_hash;
 	guint poll_timeout;
+	gboolean poll_in_flight; /* a poll's conversations fetch is outstanding; skip overlapping ticks */
 	guint watchdog_timeout;
 	
 	guint authcheck_timeout;
@@ -215,6 +234,12 @@ struct _TeamsAccount {
 	
 	//teams
 	gchar *id_token;
+	/* Personal/TFL: personal (TFL) mt/beta endpoints (teams.live.com/api/mt/beta:
+	 * searchV2, contactsv3, contacts/buddylist) reject the primary id_token (audience
+	 * mtsvc.fl.teams.microsoft.com) with HTTP 401. This holds a token for a resource
+	 * those endpoints accept, fetched separately in teams_oauth_refresh_services and
+	 * used as the mt/beta Bearer (connection.c). NULL -> fall back to id_token. */
+	gchar *mt_access_token;
 	gchar *refresh_token;
 	gchar *messages_cursor;
 	gchar *tenant;
@@ -249,6 +274,14 @@ struct _TeamsAccount {
 	gchar *login_device_code;
 	guint login_device_code_timeout;
 	guint login_device_code_expires_timeout;
+
+	/* Personal/TFL: set TRUE once teams_do_all_the_things() has run the full
+	 * post-login setup (friend list, trouter, etc). Used to gate that setup instead
+	 * of PURPLE_CONNECTION_IS_CONNECTED, because our early-CONNECTED watchdog fix
+	 * (teams_login.c) makes IS_CONNECTED true during the device-code wait -> the
+	 * old `if (!IS_CONNECTED)` guard in teams_got_self_details would skip the buddy-
+	 * list fetch entirely. */
+	gboolean logged_in;
 };
 
 struct _TeamsBuddy {

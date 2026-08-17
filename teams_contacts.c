@@ -1030,6 +1030,10 @@ teams_chat_can_receive_file(PurpleConnection *pc, int id)
 }
 
 
+#ifdef ENABLE_TEAMS_PERSONAL
+static void teams_get_skype_contacts_before_login(TeamsAccount *sa);
+#endif
+
 static void
 teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
@@ -1042,27 +1046,42 @@ teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		return;
 	userobj = json_node_get_object(node);
 	
-	if (!json_object_has_member(userobj, "skypeName")) {
-		purple_debug_error("teams", "No skypeName in self details\n");
+	/* Personal/TFL: only accounts migrated from a classic Skype account carry a
+	 * skypeName; personal accounts created later (MSN/Microsoft, post-merger) have
+	 * none and expose only primaryMemberName (the MSA MRI, e.g. "live:.cid.<hex>").
+	 * The stock code bailed when skypeName was absent, so teams_do_all_the_things()
+	 * never ran and login never completed (stayed offline). Fall back to
+	 * primaryMemberName when skypeName is absent so those accounts can finish login
+	 * and fetch the buddy list. */
+	if (json_object_has_member(userobj, "skypeName")) {
+		username = json_object_get_string_member(userobj, "skypeName");
+	} else if (json_object_has_member(userobj, "primaryMemberName")) {
+		username = json_object_get_string_member(userobj, "primaryMemberName");
+		purple_debug_info("teams", "No skypeName in self details; using primaryMemberName '%s' as identity\n", username ? username : "(null)");
+	} else {
+		purple_debug_error("teams", "No skypeName or primaryMemberName in self details\n");
 		return;
 	}
-	username = json_object_get_string_member(userobj, "skypeName");
 	g_free(sa->username); sa->username = g_strdup(username);
 	purple_connection_set_display_name(sa->pc, sa->username);
-	
+
 	old_alias = purple_account_get_private_alias(sa->account);
-	if (!old_alias || !*old_alias) {
+	/* Consumer self-details omit userDetails entirely — guard the parse (the stock
+	 * json_decode_object(NULL) / has_member(NULL) path would misbehave). */
+	if ((!old_alias || !*old_alias) && json_object_has_member(userobj, "userDetails")) {
 		JsonObject *userDetails = json_decode_object(json_object_get_string_member(userobj, "userDetails"), -1);
-		
-		if (json_object_has_member(userDetails, "name"))
-			displayname = json_object_get_string_member(userDetails, "name");
-		if (!displayname || purple_strequal(displayname, username))
-			displayname = json_object_get_string_member(userDetails, "upn");
-	
-		if (displayname)
-			purple_account_set_private_alias(sa->account, displayname);
-		
-		json_object_unref(userDetails);
+
+		if (userDetails) {
+			if (json_object_has_member(userDetails, "name"))
+				displayname = json_object_get_string_member(userDetails, "name");
+			if ((!displayname || purple_strequal(displayname, username)) && json_object_has_member(userDetails, "upn"))
+				displayname = json_object_get_string_member(userDetails, "upn");
+
+			if (displayname)
+				purple_account_set_private_alias(sa->account, displayname);
+
+			json_object_unref(userDetails);
+		}
 	}
 	
 	if (json_object_has_member(userobj, "primaryMemberName")) {
@@ -1070,8 +1089,25 @@ teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		sa->primary_member_name = g_strdup(json_object_get_string_member(userobj, "primaryMemberName"));
 	}
 	
-	if (!PURPLE_CONNECTION_IS_CONNECTED(sa->pc)) {
+	/* Personal/TFL: gate on our own logged_in flag, NOT IS_CONNECTED. The
+	 * early-CONNECTED watchdog fix sets the connection CONNECTED during the device-
+	 * code wait, so an IS_CONNECTED check here would be true on the first pass and
+	 * skip teams_do_all_the_things() -> no friend list. logged_in is only set once
+	 * the full setup has actually run (else-branch of teams_do_all_the_things). */
+	if (!sa->logged_in) {
+#ifdef ENABLE_TEAMS_PERSONAL
+		/* Personal/TFL: load the Skype buddy roster into libpurple's blist BEFORE
+		 * we report the connection CONNECTED. A headless transport UI may run a
+		 * ONE-SHOT buddy-list consolidation the instant the login-state reaches
+		 * "retrieving-buddies" (i.e. at CONNECTED), reading the in-memory blist at
+		 * that exact moment — with no way to re-query. If our async contacts fetch lands after
+		 * that, Messaging caches an EMPTY buddy list forever. So fetch the contacts,
+		 * populate the blist, THEN connect. Falls through to teams_do_all_the_things()
+		 * even if the fetch fails, so login never hangs. */
+		teams_get_skype_contacts_before_login(sa);
+#else
 		teams_do_all_the_things(sa);
+#endif
 	}
 }
 
@@ -2383,6 +2419,132 @@ teams_get_buddylist_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 
 
 
+#ifdef ENABLE_TEAMS_PERSONAL
+/* Personal/TFL: parse the classic Skype contacts service response
+ * (contacts.skype.com/contacts/v2/users/SELF). For consumer/Teams-for-Life
+ * accounts this — NOT the mt/beta buddylist (which is empty) — is where the real
+ * contacts live. Schema (verified live):
+ *   {"contacts":[{"mri":"8:live:.cid.xxxxxxxx","display_name":"…","authorized":true,
+ *                 "blocked":false,"profile":{…}}, …],"blocklist":[],"groups":[]}  */
+static void
+teams_got_skype_contacts_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonObject *obj;
+	JsonArray *contacts;
+	PurpleGroup *group = teams_get_blist_group(sa);
+	GSList *users_to_fetch = NULL;
+	guint index, length;
+
+	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT)
+		return;
+	obj = json_node_get_object(node);
+	if (!json_object_has_member(obj, "contacts"))
+		return;
+	contacts = json_object_get_array_member(obj, "contacts");
+	length = json_array_get_length(contacts);
+
+	for (index = 0; index < length; index++) {
+		JsonObject *contact = json_array_get_object_element(contacts, index);
+		const gchar *mri = json_object_has_member(contact, "mri") ?
+			json_object_get_string_member(contact, "mri") : NULL;
+		const gchar *display_name = json_object_has_member(contact, "display_name") ?
+			json_object_get_string_member(contact, "display_name") : NULL;
+		gboolean blocked = json_object_has_member(contact, "blocked") &&
+			json_object_get_boolean_member(contact, "blocked");
+		PurpleBuddy *buddy;
+		TeamsBuddy *sbuddy;
+		const gchar *id;
+
+		if (!mri || !*mri)
+			continue;
+		id = teams_strip_user_prefix(mri);
+		if (!id || !*id)
+			continue;
+		/* never add ourselves */
+		if (purple_strequal(id, sa->primary_member_name))
+			continue;
+
+		buddy = purple_blist_find_buddy(sa->account, id);
+		if (!buddy) {
+			buddy = purple_buddy_new(sa->account, id, display_name);
+			purple_blist_add_buddy(buddy, NULL, group, NULL);
+		}
+
+		sbuddy = purple_buddy_get_protocol_data(buddy);
+		if (sbuddy == NULL) {
+			sbuddy = g_new0(TeamsBuddy, 1);
+			sbuddy->skypename = g_strdup(id);
+			sbuddy->sa = sa;
+			sbuddy->buddy = buddy;
+			purple_buddy_set_protocol_data(buddy, sbuddy);
+		}
+
+		if (display_name && *display_name) {
+			g_free(sbuddy->display_name);
+			sbuddy->display_name = g_strdup(display_name);
+			if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name))
+				purple_serv_got_alias(sa->pc, id, sbuddy->display_name);
+		}
+
+		teams_get_icon(buddy);
+
+		if (blocked) {
+			purple_account_privacy_deny_add(sa->account, id, TRUE);
+		} else {
+			users_to_fetch = g_slist_prepend(users_to_fetch, sbuddy->skypename);
+		}
+	}
+
+	if (users_to_fetch) {
+		teams_get_friend_profiles(sa, users_to_fetch);
+		teams_subscribe_to_contact_status(sa, users_to_fetch);
+		g_slist_free(users_to_fetch);
+	}
+}
+
+void
+teams_get_skype_contacts(TeamsAccount *sa)
+{
+	if (!PURPLE_IS_CONNECTION(sa->pc))
+		return;
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST,
+		"/contacts/v2/users/SELF?delta=&reason=default", NULL,
+		teams_got_skype_contacts_cb, NULL, TRUE);
+}
+
+/* Pre-login variant: add the buddies to the blist, THEN report CONNECTED (via
+ * teams_do_all_the_things) so the transport's login-time buddy-list consolidation
+ * sees a populated roster. Runs teams_do_all_the_things even on fetch failure (node
+ * NULL) so a network hiccup can't wedge the login. */
+static void
+teams_skype_contacts_before_login_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	teams_got_skype_contacts_cb(sa, node, user_data);
+	teams_do_all_the_things(sa);
+}
+
+/* teams_post_or_get invokes NEITHER callback when it receives a non-empty but
+ * unparseable body (e.g. an HTML proxy/auth error page). Without an error callback
+ * that would stall login forever, so advance login regardless. */
+static void
+teams_skype_contacts_before_login_err_cb(TeamsAccount *sa, const gchar *data, gssize len, gpointer user_data)
+{
+	teams_do_all_the_things(sa);
+}
+
+static void
+teams_get_skype_contacts_before_login(TeamsAccount *sa)
+{
+	if (!PURPLE_IS_CONNECTION(sa->pc)) {
+		teams_do_all_the_things(sa);
+		return;
+	}
+	teams_post_or_get_with_error(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST,
+		"/contacts/v2/users/SELF?delta=&reason=default", NULL,
+		teams_skype_contacts_before_login_cb, teams_skype_contacts_before_login_err_cb, NULL, TRUE);
+}
+#endif /* ENABLE_TEAMS_PERSONAL */
+
 gboolean
 teams_get_friend_list(TeamsAccount *sa)
 {
@@ -2390,6 +2552,12 @@ teams_get_friend_list(TeamsAccount *sa)
 	if (!PURPLE_IS_CONNECTION(pc)) {
 		return FALSE;
 	}
+
+#ifdef ENABLE_TEAMS_PERSONAL
+	/* Personal/TFL: consumer/TFL contacts come from the classic Skype contacts
+	 * service, not the (empty) mt/beta buddylist. Fetch them. */
+	teams_get_skype_contacts(sa);
+#endif
 
 	// Remove any meeting chats that were persisted from previous sessions
 	teams_purge_meeting_chats_from_blist(sa);
@@ -2418,6 +2586,28 @@ teams_get_friend_list(TeamsAccount *sa)
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "aus.loki.delve.office.com", search_url, NULL, teams_get_workingwith_cb, NULL, TRUE);
 	g_free(search_url);
 
+	// The mt/beta endpoints need the MT bearer token, which may not have arrived yet
+	// on the first pass; teams_mt_oauth_cb() re-runs just these once it has.
+	teams_get_mt_beta_contacts(sa);
+
+	// Look up all the contacts in the buddy list
+	teams_lookup_buddy_list_contacts(sa);
+
+	return FALSE;
+}
+
+/* The two mt/beta contact endpoints (People app contactsv3 + the personal buddy
+ * list) are the only friend-list calls that depend on sa->mt_access_token. Split
+ * them out so teams_mt_oauth_cb() can retry ONLY these when the MT token arrives,
+ * instead of re-running the whole ~7-call teams_get_friend_list() pipeline. */
+void
+teams_get_mt_beta_contacts(TeamsAccount *sa)
+{
+	const gchar *url;
+
+	if (!PURPLE_IS_CONNECTION(sa->pc))
+		return;
+
 	// Search the People app
 	url = "/api/mt/beta/contactsv3/";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_friend_list_cb, NULL, TRUE);
@@ -2425,11 +2615,6 @@ teams_get_friend_list(TeamsAccount *sa)
 	// Teams personal has a buddy list?!@
 	url = "/api/mt/beta/contacts/buddylist?migrationRequested=true&federatedContactsSupported=true";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_buddylist_cb, NULL, TRUE);
-
-	// Look up all the contacts in the buddy list
-	teams_lookup_buddy_list_contacts(sa);
-
-	return FALSE;
 }
 
 typedef struct {
