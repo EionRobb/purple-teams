@@ -113,6 +113,7 @@
 #endif
 
 #define TEAMS_CALENDAR_REFRESH_MINUTES 15
+#define TEAMS_PRESENCE_POLL_SECONDS 60
 #define TEAMS_MAX_MSG_RETRY 2
 #define TEAMS_MAX_PROCESSED_EVENT_BUFFER 10
 
@@ -227,6 +228,7 @@ struct _TeamsAccount {
 	struct _TeamsConnection *poll_conn;
 	GHashTable *calendar_reminder_timeouts;
 	guint calendar_poll_timeout;
+	guint presence_poll_timeout;
 	GQueue *processed_event_messages;
 	GHashTable *subscribed_contacts;
 	GHashTable *fetched_profiles;

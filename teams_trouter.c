@@ -565,6 +565,10 @@ teams_trouter_register(gpointer user_data)
 	// SkypeSpacesWeb has additional call info
 	// TeamsCDLWebWorker for events and messaging (must be last!)
 	
+	// The trouter URL may have changed, so re-point all existing presence
+	// subscriptions at it before (re)fetching the friend list
+	teams_resubscribe_all_contact_statuses(sa);
+
 	//TODO scan through buddy list and call teams_subscribe_to_contact_status instead
 	teams_get_friend_list(sa);
 
