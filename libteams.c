@@ -65,6 +65,10 @@ teams_do_all_the_things(TeamsAccount *sa)
 		if (sa->calendar_poll_timeout) 
 			g_source_remove(sa->calendar_poll_timeout);
 		sa->calendar_poll_timeout = g_timeout_add_seconds(TEAMS_CALENDAR_REFRESH_MINUTES * 60, (GSourceFunc)teams_check_calendar, sa);
+
+		if (sa->presence_poll_timeout)
+			g_source_remove(sa->presence_poll_timeout);
+		sa->presence_poll_timeout = g_timeout_add_seconds(TEAMS_PRESENCE_POLL_SECONDS, teams_poll_contact_statuses, sa);
 	}
 
 
@@ -664,6 +668,7 @@ teams_close(PurpleConnection *pc)
 	teams_flush_icon_queue_for_account(sa->account);
 
 	if (sa->calendar_poll_timeout)            g_source_remove(sa->calendar_poll_timeout);
+	if (sa->presence_poll_timeout)            g_source_remove(sa->presence_poll_timeout);
 	if (sa->authcheck_timeout)                g_source_remove(sa->authcheck_timeout);
 	if (sa->poll_timeout)                     g_source_remove(sa->poll_timeout);
 	if (sa->watchdog_timeout)                 g_source_remove(sa->watchdog_timeout);
@@ -726,8 +731,7 @@ teams_close(PurpleConnection *pc)
 		sa->subscription_flush_timer = 0;
 	}
 	while (!g_queue_is_empty(sa->pending_subscription_contacts)) {
-		GSList *l = g_queue_pop_head(sa->pending_subscription_contacts);
-		g_slist_free_full(l, g_free);
+		g_free(g_queue_pop_head(sa->pending_subscription_contacts));
 	}
 	g_queue_free(sa->pending_subscription_contacts);
 	if (sa->presence_drain_source != 0) {
@@ -735,8 +739,7 @@ teams_close(PurpleConnection *pc)
 		sa->presence_drain_source = 0;
 	}
 	while (!g_queue_is_empty(sa->pending_presences)) {
-		gpointer presence = g_queue_pop_head(sa->pending_presences);
-		g_free(presence);
+		json_object_unref(g_queue_pop_head(sa->pending_presences));
 	}
 	g_queue_free(sa->pending_presences);
 	g_hash_table_destroy(sa->presence_mri_index);

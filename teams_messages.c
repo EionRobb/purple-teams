@@ -2328,6 +2328,55 @@ teams_lookup_contact_statuses(TeamsAccount *sa, GSList *contacts)
 	json_array_unref(contacts_array);
 }
 
+// Contacts we don't get realtime presence pushes for over the trouter, even
+// when subscribed: cross-tenant work accounts on a personal account, or old
+// skype contacts on a work account.
+static gboolean
+teams_contact_needs_presence_polling(const gchar *who)
+{
+	// PSTN (telephone) contacts have no useful presence
+	if (who == NULL || *who == '\0' || g_str_has_prefix(who, "+")) {
+		return FALSE;
+	}
+#ifdef ENABLE_TEAMS_PERSONAL
+	return g_str_has_prefix(who, "orgid:");
+#else
+	return !g_str_has_prefix(who, "orgid:");
+#endif
+}
+
+// Periodically looks up the presence of contacts that don't receive realtime
+// updates. Unchanged statuses are skipped by the etag check in
+// teams_got_contact_statuses().
+gboolean
+teams_poll_contact_statuses(gpointer user_data)
+{
+	TeamsAccount *sa = user_data;
+	GSList *buddies, *cur;
+	GSList *contacts = NULL;
+
+	if (!PURPLE_CONNECTION_IS_VALID(sa->pc)) {
+		sa->presence_poll_timeout = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	buddies = purple_blist_find_buddies(sa->account, NULL);
+	for (cur = buddies; cur != NULL; cur = cur->next) {
+		const gchar *name = purple_buddy_get_name(cur->data);
+		if (teams_contact_needs_presence_polling(name) && !teams_is_user_self(sa, name)) {
+			contacts = g_slist_prepend(contacts, g_strdup(name));
+		}
+	}
+	g_slist_free(buddies);
+
+	if (contacts != NULL) {
+		teams_lookup_contact_statuses(sa, contacts);
+		g_slist_free_full(contacts, g_free);
+	}
+
+	return G_SOURCE_CONTINUE;
+}
+
 // Drains sa->pending_subscription_contacts at a rate of 100 contacts per 50 ms.
 // Called by a recurring g_timeout_add timer. Returns G_SOURCE_REMOVE when the
 // queue is empty and G_SOURCE_CONTINUE to reschedule for the next batch.
@@ -2458,12 +2507,7 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		}
 		g_hash_table_insert(sa->subscribed_contacts, g_strdup(cur->data), GUINT_TO_POINTER(TRUE));
 
-#ifdef ENABLE_TEAMS_PERSONAL
-		if (g_str_has_prefix(cur->data, "orgid:")) {
-#else
-		if (!g_str_has_prefix(cur->data, "orgid:")) {
-#endif
-			// Might be an old skype contact that we dont get the realtime presence for
+		if (teams_contact_needs_presence_polling(cur->data)) {
 			fallback_contacts = g_slist_prepend(fallback_contacts, g_strdup(cur->data));
 		}
 
@@ -2478,9 +2522,34 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 	}
 
 	if (fallback_contacts != NULL) {
-		//TODO we should be polling for the status of these users
+		// Initial lookup; teams_poll_contact_statuses() keeps them up to date
 		teams_lookup_contact_statuses(sa, fallback_contacts);
 		g_slist_free_full(fallback_contacts, g_free);
+	}
+}
+
+// Presence subscriptions are bound to the current trouter URL, so when the
+// trouter reconnects (and gets a new surl) every existing subscription points
+// at a dead endpoint. Forget them all and subscribe again with the new URL.
+void
+teams_resubscribe_all_contact_statuses(TeamsAccount *sa)
+{
+	while (!g_queue_is_empty(sa->pending_subscription_contacts)) {
+		g_free(g_queue_pop_head(sa->pending_subscription_contacts));
+	}
+
+	GSList *contacts = NULL;
+	GHashTableIter iter;
+	gpointer key;
+	g_hash_table_iter_init(&iter, sa->subscribed_contacts);
+	while (g_hash_table_iter_next(&iter, &key, NULL)) {
+		contacts = g_slist_prepend(contacts, g_strdup(key));
+	}
+	g_hash_table_remove_all(sa->subscribed_contacts);
+
+	if (contacts != NULL) {
+		teams_subscribe_to_contact_status(sa, contacts);
+		g_slist_free_full(contacts, g_free);
 	}
 }
 
