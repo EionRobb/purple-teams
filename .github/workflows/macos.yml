@@ -2,9 +2,74 @@ name: macOS
 on:
   - push
   - pull_request
+
 jobs:
-  build:
-    name: build
+  build-slice:
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-latest
+            setup: brew
+          - arch: x86_64
+            os: macos-15-intel
+            setup: macports
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install native arm64 deps (Homebrew)
+        if: matrix.setup == 'brew'
+        run: |
+          brew install pidgin json-glib gettext pkg-config
+          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$(brew --prefix)/opt/pidgin/lib/pkgconfig:$(brew --prefix)/opt/gettext/lib/pkgconfig:$(brew --prefix)/opt/json-glib/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: install MacPorts
+        if: matrix.setup == 'macports'
+        uses: melusina-org/setup-macports@v1
+
+      - name: install x86_64 deps (MacPorts)
+        if: matrix.setup == 'macports'
+        run: |
+          sudo port -N install pidgin json-glib pkgconfig
+          echo "PKG_CONFIG_PATH=/opt/local/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: build static json-glib
+        run: |
+          python3 -m pip install --upgrade meson ninja
+          git clone --depth 1 --branch 1.10.6 https://gitlab.gnome.org/GNOME/json-glib.git json-glib-src
+          meson setup json-glib-src/build json-glib-src \
+            --default-library=static \
+            -Dintrospection=disabled \
+            -Dtests=false \
+            -Ddocumentation=disabled \
+            -Dnls=disabled \
+            -Dc_args="-arch ${{ matrix.arch }} -mmacosx-version-min=10.13" \
+            -Dc_link_args="-arch ${{ matrix.arch }} -mmacosx-version-min=10.13"
+          ninja -C json-glib-src/build
+          echo "JSON_GLIB_A=$PWD/json-glib-src/build/json-glib/libjson-glib-1.0.a" >> $GITHUB_ENV
+
+      - name: build slice
+        run: |
+          make CFLAGS="-O2 -g -pipe -arch ${{ matrix.arch }} -mmacosx-version-min=10.13" \
+               LDFLAGS="-arch ${{ matrix.arch }} -mmacosx-version-min=10.13 -Wl,-undefined,dynamic_lookup" \
+               PURPLE_LIBS="-lz $JSON_GLIB_A"
+          mv libteams.so libteams_${{ matrix.arch }}.so
+          file libteams_${{ matrix.arch }}.so
+          otool -L libteams_${{ matrix.arch }}.so
+
+      - name: upload slice artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice-${{ matrix.arch }}
+          path: libgooglechat_${{ matrix.arch }}.so
+
+  assemble:
+    name: assemble universal binary
+    needs: build-slice
     runs-on: macos-latest
     permissions:
       id-token: write
@@ -14,52 +79,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: install native arm64 deps
-        run: |
-          brew install pidgin json-glib gettext pkg-config
-
-      - name: Cache x86_64 Homebrew & deps
-        id: cache-x64-brew
-        uses: actions/cache@v4
+      - name: download slices
+        uses: actions/download-artifact@v4
         with:
-          path: /usr/local
-          key: macos-x86_64-brew-pidgin-v1
+          pattern: slice-*
+          merge-multiple: true
 
-      - name: install rosetta x86_64 brew & deps
-        if: steps.cache-x64-brew.outputs.cache-hit != 'true'
+      - name: stitch universal fat binary
         run: |
-          if [ ! -f /usr/local/bin/brew ]; then
-            arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          fi
-          arch -x86_64 /usr/local/bin/brew install pidgin json-glib gettext pkg-config
-
-      - name: build universal binaries
-        run: |
-          # 1. Build arm64
-          ARM64_PKG="$(brew --prefix)/lib/pkgconfig:$(brew --prefix)/opt/pidgin/lib/pkgconfig:$(brew --prefix)/opt/gettext/lib/pkgconfig"
-          PKG_CONFIG_PATH="$ARM64_PKG" make CFLAGS="-O2 -g -pipe -arch arm64" LDFLAGS="-arch arm64"
-          mv libteams.so libteams_arm64.so
-          mv libteams-personal.so libteams-personal_arm64.so
-          make clean
-
-          # 2. Build x86_64 under Rosetta
-          X86_PKG="/usr/local/lib/pkgconfig:/usr/local/opt/pidgin/lib/pkgconfig:/usr/local/opt/gettext/lib/pkgconfig"
-          PKG_CONFIG_PATH="$X86_PKG" arch -x86_64 make CFLAGS="-O2 -g -pipe -arch x86_64" LDFLAGS="-arch x86_64"
-          mv libteams.so libteams_x86_64.so
-          mv libteams-personal.so libteams-personal_x86_64.so
-
-          # 3. Create universal fat binaries with lipo
           lipo -create libteams_x86_64.so libteams_arm64.so -output libteams_macos.so
-          lipo -create libteams-personal_x86_64.so libteams-personal_arm64.so -output libteams-personal_macos.so
           file libteams_macos.so
-          file libteams-personal_macos.so
+          otool -L libteams_macos.so
 
       - name: archive
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' && !env.ACT
         uses: actions/upload-artifact@v4
         with: 
-            name: plugin 
-            path: lib*_macos.so
+          name: plugin 
+          path: lib*_macos.so
 
       - name: Set date
         id: date
