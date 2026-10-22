@@ -44,6 +44,16 @@ to install.
 
 [![Latest Linux build](https://github.com/EionRobb/purple-teams/actions/workflows/linux.yml/badge.svg)](https://github.com/EionRobb/purple-teams/actions/workflows/linux.yml)
 
+## debian bookworm
+```
+sudo apt install pidgin libjson-glib-dev libpurple-dev libglib2.0-dev
+git clone https://github.com/EionRobb/purple-teams
+cd purple-teams
+make
+sudo make install
+```
+Now you can launch pidgin and enable the plugin!
+
 F<!--erociously -->A<!--udible -->Q<!--uacks -->
 ===
 
