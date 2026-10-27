@@ -87,19 +87,24 @@ PURPLE_C_FILES := libteams.c $(C_FILES)
 
 
 
+PURPLE_CFLAGS ?= $(shell $(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --cflags)
+PURPLE_LIBS ?= $(shell $(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --libs)
+PURPLE3_CFLAGS ?= $(shell $(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --cflags)
+PURPLE3_LIBS ?= $(shell $(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --libs)
+
 .PHONY:	all install FAILNOPURPLE clean translations
 
 all: $(TEAMS_TARGET)
 
 libteams.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
-	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) `$(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --libs --cflags`  $(INCLUDES) -Ipurple2compat -g -ggdb
+	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE_CFLAGS) $(PURPLE_LIBS) $(INCLUDES) -Ipurple2compat -g -ggdb
 libteams-personal.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
-	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(LDFLAGS) `$(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --libs --cflags`  $(INCLUDES) -Ipurple2compat -g -ggdb
+	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(LDFLAGS) $(PURPLE_CFLAGS) $(PURPLE_LIBS) $(INCLUDES) -Ipurple2compat -g -ggdb
 
 libteams3.so: $(PURPLE_C_FILES)
-	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) `$(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --libs --cflags` $(INCLUDES)  -g -ggdb
+	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE3_CFLAGS) $(PURPLE3_LIBS) $(INCLUDES) -g -ggdb
 libteams3-personal.so: $(PURPLE_C_FILES)
-	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(LDFLAGS) `$(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --libs --cflags` $(INCLUDES)  -g -ggdb
+	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(LDFLAGS) $(PURPLE3_CFLAGS) $(PURPLE3_LIBS) $(INCLUDES) -g -ggdb
 
 libteams.dll: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
 	$(WIN32_CC) -shared -o $@ $^ $(WIN32_PIDGIN2_CFLAGS) $(WIN32_PIDGIN2_LDFLAGS) -Ipurple2compat

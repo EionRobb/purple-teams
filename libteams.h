@@ -31,7 +31,21 @@
 #include <inttypes.h>
 #include <errno.h>
 #include <string.h>
-#include <glib/gi18n.h>
+#ifdef ENABLE_NLS
+#	define GETTEXT_PACKAGE "purple-teams"
+#	include <glib/gi18n-lib.h>
+#	ifdef _WIN32
+#		ifdef LOCALEDIR
+#			undef LOCALEDIR
+#		endif
+#		define LOCALEDIR  wpurple_locale_dir()
+#	endif
+#else
+#	define _(String) ((const char *) (String))
+#	define Q_(String) g_dpgettext (NULL, String, 0)
+#	define N_(String) (String)
+#	define C_(Context,String) g_dpgettext (NULL, Context "\004" String, strlen (Context) + 1)
+#endif
 #include <sys/types.h>
 #ifdef __GNUC__
 	#include <sys/time.h>
