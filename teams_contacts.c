@@ -1415,6 +1415,69 @@ typedef struct {
 	gint length;
 } TeamsBatchProfileData;
 
+/* Group chats without a title are named after their members' first names, as Teams' own client
+ * names them: "Ana, Bob, Carol +2". Until a chat has a title, its buddy list node keeps the member
+ * list, and the name is redone as the members' profiles arrive. */
+#define TEAMS_UNTITLED_CHAT_MEMBERS "teams-untitled-members"
+#define TEAMS_UNTITLED_CHAT_NAMES 3
+
+static void
+teams_name_untitled_chat(TeamsAccount *sa, PurpleChat *chat)
+{
+	const gchar *members = purple_blist_node_get_string(PURPLE_BLIST_NODE(chat), TEAMS_UNTITLED_CHAT_MEMBERS);
+	gchar **ids;
+	GString *name;
+	guint i, named = 0, others = 0;
+
+	if (members == NULL) {
+		return;
+	}
+
+	ids = g_strsplit(members, ",", -1);
+	name = g_string_new(NULL);
+	for (i = 0; ids[i] != NULL; i++) {
+		PurpleBuddy *buddy = *ids[i] ? purple_blist_find_buddy(sa->account, ids[i]) : NULL;
+		TeamsBuddy *sbuddy = buddy ? purple_buddy_get_protocol_data(buddy) : NULL;
+		const gchar *fullname = (sbuddy && sbuddy->fullname && *sbuddy->fullname) ? sbuddy->fullname :
+			(sbuddy && sbuddy->display_name && *sbuddy->display_name) ? sbuddy->display_name : NULL;
+
+		if (fullname == NULL || named == TEAMS_UNTITLED_CHAT_NAMES) {
+			// Not looked up yet, or one name too many
+			others++;
+			continue;
+		}
+
+		if (named++ > 0) {
+			g_string_append(name, ", ");
+		}
+		// The first name: profiles give "<given name> <surname>"
+		g_string_append_len(name, fullname, strcspn(fullname, " "));
+	}
+	g_strfreev(ids);
+
+	if (named > 0) {
+		if (others > 0) {
+			g_string_append_printf(name, " +%u", others);
+		}
+		if (!purple_strequal(purple_chat_get_name(chat), name->str)) {
+			purple_chat_set_alias(chat, name->str);
+		}
+	}
+	g_string_free(name, TRUE);
+}
+
+static void
+teams_name_untitled_chats(TeamsAccount *sa)
+{
+	PurpleBlistNode *node;
+
+	for (node = purple_blist_get_root(); node != NULL; node = purple_blist_node_next(node, TRUE)) {
+		if (PURPLE_IS_CHAT(node) && purple_chat_get_account(PURPLE_CHAT(node)) == sa->account) {
+			teams_name_untitled_chat(sa, PURPLE_CHAT(node));
+		}
+	}
+}
+
 static gboolean
 teams_process_profile_batch(gpointer user_data)
 {
@@ -1509,6 +1572,7 @@ teams_process_profile_batch(gpointer user_data)
 	}
 
 	data->next_index = end_index;
+	teams_name_untitled_chats(sa);
 
 	if (data->next_index >= data->length) {
 		// All entries processed
@@ -1966,9 +2030,40 @@ teams_get_friend_list_teams_cb(TeamsAccount *sa, JsonNode *node, gpointer user_d
 				purple_chat = purple_chat_new(sa->account, title, components);
 				purple_blist_add_chat(purple_chat, group, NULL);
 				
-			} else {
+			} else if (title != NULL && *title != '\0') {
 				purple_chat_set_alias(purple_chat, title);
 				
+			}
+			
+			if (title != NULL && *title != '\0') {
+				purple_blist_node_remove_setting(PURPLE_BLIST_NODE(purple_chat), TEAMS_UNTITLED_CHAT_MEMBERS);
+				
+			} else if (!TEAMS_CHAT_IS_MEETING(id)) {
+				const gchar *chat_alias = purple_chat_get_alias(purple_chat);
+				gboolean is_untitled = (purple_blist_node_get_string(PURPLE_BLIST_NODE(purple_chat), TEAMS_UNTITLED_CHAT_MEMBERS) != NULL) ||
+					(chat_alias == NULL || *chat_alias == '\0');
+
+				if (is_untitled) {
+					JsonArray *members = json_object_get_array_member(chat, "members");
+					guint members_index, members_length = members ? json_array_get_length(members) : 0;
+					GString *member_ids = g_string_new(NULL);
+					
+					for (members_index = 0; members_index < members_length; members_index++) {
+						JsonObject *member = json_array_get_object_element(members, members_index);
+						const gchar *mri = json_object_get_string_member(member, "mri");
+						const gchar *buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
+						
+						if (buddyid && *buddyid && !teams_is_user_self(sa, buddyid)) {
+							if (member_ids->len > 0) {
+								g_string_append_c(member_ids, ',');
+							}
+							g_string_append(member_ids, buddyid);
+						}
+					}
+					purple_blist_node_set_string(PURPLE_BLIST_NODE(purple_chat), TEAMS_UNTITLED_CHAT_MEMBERS, member_ids->str);
+					g_string_free(member_ids, TRUE);
+					teams_name_untitled_chat(sa, purple_chat);
+				}
 			}
 			
 			if (title != NULL && *title != '\0') {
