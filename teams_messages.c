@@ -105,7 +105,8 @@ teams_find_protected_image_links(TeamsAccount *sa, PurpleConversation *conv, tim
     while (purple_markup_find_tag("a", scan, &start, &end, &attributes)) {
         const gchar *href = g_datalist_get_data(&attributes, "href");
 
-        if (href != NULL && teams_uri_is_protected_image(href)) {
+        if (href != NULL && teams_uri_is_protected_image(href) &&
+            teams_download_uri_to_conv(sa, href, conv, msg_time, msg_who)) {
             const gchar *closing = g_strstr_len(end + 1, -1, "</a>");
             const gchar *after = closing != NULL ? closing + strlen("</a>") : end + 1;
 
@@ -114,7 +115,6 @@ teams_find_protected_image_links(TeamsAccount *sa, PurpleConversation *conv, tim
             if (copy < start)
                 g_string_append_len(newmsg, copy, start - copy);
 
-            teams_download_uri_to_conv(sa, href, conv, msg_time, msg_who);
             copy = after;
             scan = after;
         } else {
