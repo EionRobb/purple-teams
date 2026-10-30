@@ -345,6 +345,62 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	g_free(ctx_from);
 }
 
+gboolean
+teams_uri_is_protected_image(const gchar *uri)
+{
+    const gchar *host;
+    const gchar *host_end;
+    const gchar *path;
+    gchar *hostname;
+    gboolean protected_uri = FALSE;
+
+    if (uri == NULL || g_ascii_strncasecmp(uri, "https://", 8) != 0)
+        return FALSE;
+
+    host = uri + 8;
+    host_end = host + strcspn(host, "/:?#@");
+    if (*host_end == '@' || host_end == host)
+        return FALSE;
+
+    path = host_end + strcspn(host_end, "/?#");
+    if (strstr(path, "/views/imgpsh_fullsize") == NULL &&
+        strstr(path, "/views/imgt1") == NULL &&
+        strstr(path, "/views/imgo") == NULL)
+        return FALSE;
+
+    hostname = g_ascii_strdown(host, host_end - host);
+    protected_uri = g_str_equal(hostname, "api.asm.skype.com") ||
+                    g_str_has_suffix(hostname, "-api.asm.skype.com") ||
+                    g_str_has_suffix(hostname, ".asyncgw.teams.microsoft.com");
+    g_free(hostname);
+
+    return protected_uri;
+}
+
+static void
+teams_download_protected_image(TeamsAccount *sa, const gchar *uri, PurpleConversation *conv, time_t ts, const gchar *from)
+{
+    PurpleHttpRequest *request;
+    SkypeImgMsgContext *ctx;
+
+    if (sa == NULL || sa->skype_token == NULL || *sa->skype_token == '\0') {
+        purple_debug_warning("teams", "No skype token available for protected image download\n");
+        return;
+    }
+
+    request = purple_http_request_new(uri);
+    purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
+    purple_http_request_header_set_printf(request, "Cookie", "skypetoken_asm=%s", sa->skype_token);
+    purple_http_request_header_set(request, "Accept", "image/*");
+
+    ctx = g_new(SkypeImgMsgContext, 1);
+    ctx->composetimestamp = ts;
+    ctx->conv = conv;
+    ctx->from = g_strdup(from);
+    purple_http_request(sa->pc, request, teams_got_imagemessage, ctx);
+    purple_http_request_unref(request);
+}
+
 void
 teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversation *conv, time_t ts, const gchar* from)
 {
@@ -355,6 +411,12 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	text = purple_strreplace(uri, "/imgt1", "/imgpsh_fullsize");
 	url = purple_strreplace(text, "/imgo", "/imgpsh_fullsize");
 	g_free(text);
+
+    if (teams_uri_is_protected_image(uri) && !purple_strequal(purple_core_get_ui(), "BitlBee")) {
+        teams_download_protected_image(sa, uri, conv, ts, from);
+        g_free(url);
+        return;
+    }
 
 	if (purple_strequal(purple_core_get_ui(), "BitlBee")) {
 		// Bitlbee doesn't support images, so just plop a url to the image instead

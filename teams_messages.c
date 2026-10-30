@@ -89,6 +89,49 @@ process_userpresence_resource(TeamsAccount *sa, JsonObject *resource)
 // }
 
 static void
+teams_find_protected_image_links(TeamsAccount *sa, PurpleConversation *conv, time_t msg_time, const gchar *msg_who, gchar **msg_content)
+{
+    const gchar *scan;
+    const gchar *copy;
+    const gchar *start;
+    const gchar *end;
+    GData *attributes;
+    GString *newmsg = NULL;
+
+    if (msg_content == NULL || *msg_content == NULL)
+        return;
+
+    scan = copy = *msg_content;
+    while (purple_markup_find_tag("a", scan, &start, &end, &attributes)) {
+        const gchar *href = g_datalist_get_data(&attributes, "href");
+
+        if (href != NULL && teams_uri_is_protected_image(href)) {
+            const gchar *closing = g_strstr_len(end + 1, -1, "</a>");
+            const gchar *after = closing != NULL ? closing + strlen("</a>") : end + 1;
+
+            if (newmsg == NULL)
+                newmsg = g_string_new(NULL);
+            if (copy < start)
+                g_string_append_len(newmsg, copy, start - copy);
+
+            teams_download_uri_to_conv(sa, href, conv, msg_time, msg_who);
+            copy = after;
+            scan = after;
+        } else {
+            scan = end + 1;
+        }
+
+        g_datalist_clear(&attributes);
+    }
+
+    if (newmsg != NULL) {
+        g_string_append(newmsg, copy);
+        g_free(*msg_content);
+        *msg_content = g_string_free(newmsg, FALSE);
+    }
+}
+
+static void
 teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_time, const gchar *msg_who, gchar **msg_content)
 {
 	const char *tmp;
@@ -96,6 +139,8 @@ teams_find_incoming_img(TeamsAccount *sa, PurpleConversation *conv, time_t msg_t
 	const char *end;
 	GData *attributes;
 	GString *newmsg = NULL;
+
+    teams_find_protected_image_links(sa, conv, msg_time, msg_who, msg_content);
 
 	tmp = *msg_content;
 	
