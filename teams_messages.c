@@ -105,10 +105,28 @@ teams_find_protected_image_links(TeamsAccount *sa, PurpleConversation *conv, tim
     while (purple_markup_find_tag("a", scan, &start, &end, &attributes)) {
         const gchar *href = g_datalist_get_data(&attributes, "href");
 
-        if (href != NULL && teams_uri_is_protected_image(href) &&
-            teams_download_uri_to_conv(sa, href, conv, msg_time, msg_who)) {
-            const gchar *closing = g_strstr_len(end + 1, -1, "</a>");
-            const gchar *after = closing != NULL ? closing + strlen("</a>") : end + 1;
+        if (href != NULL && teams_uri_is_protected_image(href)) {
+            const gchar *closing = NULL;
+            const gchar *after;
+            const gchar *candidate = end + 1;
+            while ((candidate = strchr(candidate, '<')) != NULL) {
+                if (g_ascii_strncasecmp(candidate, "</a>", 4) == 0) {
+                    closing = candidate;
+                    break;
+                }
+                candidate++;
+            }
+            if (closing == NULL) {
+                scan = end + 1;
+                g_datalist_clear(&attributes);
+                continue;
+            }
+            after = closing + 4;
+            if (!teams_download_uri_to_conv(sa, href, conv, msg_time, msg_who)) {
+                scan = after;
+                g_datalist_clear(&attributes);
+                continue;
+            }
 
             if (newmsg == NULL)
                 newmsg = g_string_new(NULL);
