@@ -123,9 +123,7 @@ teams_get_icon_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response,
 	
 	active_icon_downloads--;
 
-	if (!buddy || !purple_http_response_is_successful(response) ||
-		(fallback_url != NULL && (len >= TEAMS_PROTECTED_IMAGE_MAX_SIZE ||
-		 !teams_is_supported_image(url_text, len)))) {
+	if (!buddy || !purple_http_response_is_successful(response)) {
 		return;
 	}
 	
@@ -339,7 +337,9 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	url_text = purple_http_response_get_data(response, &len);
 	
 	if (!url_text || !len || url_text[0] == '{' || url_text[0] == '<' ||
-		!purple_http_response_is_successful(response)) {
+		!purple_http_response_is_successful(response) ||
+		(fallback_url != NULL && (len >= TEAMS_PROTECTED_IMAGE_MAX_SIZE ||
+		 !teams_is_supported_image(url_text, len)))) {
 		if (fallback_url != NULL)
 			purple_conversation_write_system_message_ts(conv, fallback_url, PURPLE_MESSAGE_SYSTEM, ts);
 		g_free(fallback_url);
@@ -347,7 +347,7 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 		return;
 	}
 	
-		image = purple_image_new_from_data(g_memdup2(url_text, len), len);
+	image = purple_image_new_from_data(g_memdup2(url_text, len), len);
 	icon_id = purple_image_store_add(image);
 	msg_tmp = g_strdup_printf("<img id='%d'>", icon_id);
 	
