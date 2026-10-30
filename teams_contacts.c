@@ -289,7 +289,21 @@ typedef struct SkypeImgMsgContext_ {
 	PurpleConversation *conv;
 	time_t composetimestamp;
 	gchar* from;
+	gchar *fallback_url;
 } SkypeImgMsgContext;
+
+/* Limit authenticated images to 20 MiB. */
+#define TEAMS_PROTECTED_IMAGE_MAX_SIZE (20 * 1024 * 1024)
+
+static gboolean
+teams_is_supported_image(const gchar *data, gsize len)
+{
+	const guchar *p = (const guchar *)data;
+	return (len >= 8 && memcmp(p, "\x89PNG\r\n\x1a\n", 8) == 0) ||
+	       (len >= 3 && p[0] == 0xff && p[1] == 0xd8 && p[2] == 0xff) ||
+	       (len >= 6 && (memcmp(p, "GIF87a", 6) == 0 || memcmp(p, "GIF89a", 6) == 0)) ||
+	       (len >= 12 && memcmp(p, "RIFF", 4) == 0 && memcmp(p + 8, "WEBP", 4) == 0);
+}
 
 static void
 teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
@@ -308,23 +322,27 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	
 	time_t ts = ctx->composetimestamp;
 	gchar* ctx_from = ctx->from;
+	gchar *fallback_url = ctx->fallback_url;
 	ctx->from = NULL;
+	ctx->fallback_url = NULL;
 	g_free(ctx);
 	
 	// Conversation could have been closed before we retrieved the image
 	if (!purple_conversation_is_valid(conv)) {
+		g_free(fallback_url);
 		g_free(ctx_from);
 		return;
 	}
 	
 	url_text = purple_http_response_get_data(response, &len);
 	
-	if (!url_text || !len || url_text[0] == '{' || url_text[0] == '<') {
-		g_free(ctx_from);
-		return;
-	}
-	
-	if (!purple_http_response_is_successful(response)) {
+	if (!url_text || !len || url_text[0] == '{' || url_text[0] == '<' ||
+		!purple_http_response_is_successful(response) ||
+		(fallback_url != NULL && (len >= TEAMS_PROTECTED_IMAGE_MAX_SIZE ||
+		 !teams_is_supported_image(url_text, len)))) {
+		if (fallback_url != NULL)
+			purple_conversation_write_system_message_ts(conv, fallback_url, PURPLE_MESSAGE_SYSTEM, ts);
+		g_free(fallback_url);
 		g_free(ctx_from);
 		return;
 	}
@@ -342,10 +360,78 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	purple_conversation_write_img_message(conv, ctx_from, msg_tmp, flags, ts);
 	
 	g_free(msg_tmp);
+	g_free(fallback_url);
 	g_free(ctx_from);
 }
 
-void
+gboolean
+teams_uri_is_protected_image(const gchar *uri)
+{
+    PurpleHttpURL *parsed;
+    const gchar *host;
+    const gchar *path;
+    gboolean valid = FALSE;
+
+    if (uri == NULL)
+        return FALSE;
+
+    parsed = purple_http_url_parse(uri);
+    if (parsed == NULL)
+        return FALSE;
+
+    host = purple_http_url_get_host(parsed);
+    path = purple_http_url_get_path(parsed);
+    if (g_strcmp0(purple_http_url_get_protocol(parsed), "https") == 0 &&
+        purple_http_url_get_username(parsed) == NULL &&
+        purple_http_url_get_password(parsed) == NULL &&
+        host != NULL && path != NULL &&
+        (g_str_equal(host, "api.asm.skype.com") ||
+         g_str_has_suffix(host, "-api.asm.skype.com") ||
+         g_str_has_suffix(host, ".asyncgw.teams.microsoft.com"))) {
+        gchar *path_only = g_strndup(path, strcspn(path, "?#"));
+        valid = strstr(path_only, "/views/imgpsh_fullsize") != NULL ||
+                strstr(path_only, "/views/imgt1") != NULL ||
+                strstr(path_only, "/views/imgo") != NULL;
+        g_free(path_only);
+    }
+
+    purple_http_url_free(parsed);
+    return valid;
+}
+
+static gboolean
+teams_download_protected_image(TeamsAccount *sa, const gchar *uri, PurpleConversation *conv, time_t ts, const gchar *from)
+{
+    PurpleHttpRequest *request;
+    SkypeImgMsgContext *ctx;
+
+    if (sa == NULL || sa->skype_token == NULL || *sa->skype_token == '\0') {
+        purple_debug_warning("teams", "No skype token available for protected image download\n");
+        return FALSE;
+    }
+
+    /* Revalidate the parsed destination before attaching credentials. */
+    if (!teams_uri_is_protected_image(uri))
+        return FALSE;
+
+    request = purple_http_request_new(uri);
+    purple_http_request_set_max_len(request, TEAMS_PROTECTED_IMAGE_MAX_SIZE);
+    purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
+    purple_http_request_set_max_redirects(request, 0);
+    purple_http_request_header_set_printf(request, "Cookie", "skypetoken_asm=%s", sa->skype_token);
+    purple_http_request_header_set(request, "Accept", "image/*");
+
+    ctx = g_new(SkypeImgMsgContext, 1);
+    ctx->composetimestamp = ts;
+    ctx->conv = conv;
+    ctx->from = g_strdup(from);
+    ctx->fallback_url = g_strdup(uri);
+    purple_http_request(sa->pc, request, teams_got_imagemessage, ctx);
+    purple_http_request_unref(request);
+    return TRUE;
+}
+
+gboolean
 teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversation *conv, time_t ts, const gchar* from)
 {
 	gchar *url, *text;
@@ -356,13 +442,19 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	url = purple_strreplace(text, "/imgo", "/imgpsh_fullsize");
 	g_free(text);
 
+    if (teams_uri_is_protected_image(uri) && !purple_strequal(purple_core_get_ui(), "BitlBee")) {
+        gboolean queued = teams_download_protected_image(sa, uri, conv, ts, from);
+        g_free(url);
+        return queued;
+    }
+
 	if (purple_strequal(purple_core_get_ui(), "BitlBee")) {
 		// Bitlbee doesn't support images, so just plop a url to the image instead
 		
 		purple_conversation_write_system_message_ts(conv, url, PURPLE_MESSAGE_SYSTEM, ts);
 		g_free(url);
 		
-		return;
+		return TRUE;
 	}
 	
 	request = purple_http_request_new(uri);
@@ -383,6 +475,7 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	ctx->composetimestamp = ts;
 	ctx->conv = conv;
 	ctx->from = g_strdup(from);
+	ctx->fallback_url = NULL;
 	purple_http_request(sa->pc, request, teams_got_imagemessage, ctx);
 	purple_http_request_unref(request);
 	
@@ -397,6 +490,7 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	
 	g_free(url);
 	g_free(text);
+	return TRUE;
 }
 
 void
@@ -419,6 +513,7 @@ teams_download_moji_to_conv(TeamsAccount *sa, const gchar *text, const gchar *ur
 	ctx->composetimestamp = ts;
 	ctx->conv = conv;
 	ctx->from = g_strdup(from);
+	ctx->fallback_url = NULL;
 	purple_http_request(sa->pc, request, teams_got_imagemessage, ctx);
 	purple_http_request_unref(request);
 	
