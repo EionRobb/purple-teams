@@ -123,7 +123,9 @@ teams_get_icon_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response,
 	
 	active_icon_downloads--;
 
-	if (!buddy || !purple_http_response_is_successful(response)) {
+	if (!buddy || !purple_http_response_is_successful(response) ||
+		(fallback_url != NULL && (len >= TEAMS_PROTECTED_IMAGE_MAX_SIZE ||
+		 !teams_is_supported_image(url_text, len)))) {
 		return;
 	}
 	
@@ -292,6 +294,19 @@ typedef struct SkypeImgMsgContext_ {
 	gchar *fallback_url;
 } SkypeImgMsgContext;
 
+/* Limit authenticated images to 20 MiB. */
+#define TEAMS_PROTECTED_IMAGE_MAX_SIZE (20 * 1024 * 1024)
+
+static gboolean
+teams_is_supported_image(const gchar *data, gsize len)
+{
+	const guchar *p = (const guchar *)data;
+	return (len >= 8 && memcmp(p, "\x89PNG\r\n\x1a\n", 8) == 0) ||
+	       (len >= 3 && p[0] == 0xff && p[1] == 0xd8 && p[2] == 0xff) ||
+	       (len >= 6 && (memcmp(p, "GIF87a", 6) == 0 || memcmp(p, "GIF89a", 6) == 0)) ||
+	       (len >= 12 && memcmp(p, "RIFF", 4) == 0 && memcmp(p + 8, "WEBP", 4) == 0);
+}
+
 static void
 teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
 {
@@ -352,37 +367,36 @@ teams_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 gboolean
 teams_uri_is_protected_image(const gchar *uri)
 {
+    PurpleHttpURL *parsed;
     const gchar *host;
-    const gchar *host_end;
     const gchar *path;
-    gchar *path_only;
-    gchar *hostname;
-    gboolean protected_uri = FALSE;
+    gboolean valid = FALSE;
 
-    if (uri == NULL || g_ascii_strncasecmp(uri, "https://", 8) != 0)
+    if (uri == NULL)
         return FALSE;
 
-    host = uri + 8;
-    host_end = host + strcspn(host, "/:?#@");
-    if (*host_end == '@' || host_end == host)
+    parsed = purple_http_url_parse(uri);
+    if (parsed == NULL)
         return FALSE;
 
-    path = host_end + strcspn(host_end, "/?#");
-    path_only = g_strndup(path, strcspn(path, "?#"));
-    protected_uri = strstr(path_only, "/views/imgpsh_fullsize") != NULL ||
-                    strstr(path_only, "/views/imgt1") != NULL ||
-                    strstr(path_only, "/views/imgo") != NULL;
-    g_free(path_only);
-    if (!protected_uri)
-        return FALSE;
+    host = purple_http_url_get_host(parsed);
+    path = purple_http_url_get_path(parsed);
+    if (g_strcmp0(purple_http_url_get_protocol(parsed), "https") == 0 &&
+        purple_http_url_get_username(parsed) == NULL &&
+        purple_http_url_get_password(parsed) == NULL &&
+        host != NULL && path != NULL &&
+        (g_str_equal(host, "api.asm.skype.com") ||
+         g_str_has_suffix(host, "-api.asm.skype.com") ||
+         g_str_has_suffix(host, ".asyncgw.teams.microsoft.com"))) {
+        gchar *path_only = g_strndup(path, strcspn(path, "?#"));
+        valid = strstr(path_only, "/views/imgpsh_fullsize") != NULL ||
+                strstr(path_only, "/views/imgt1") != NULL ||
+                strstr(path_only, "/views/imgo") != NULL;
+        g_free(path_only);
+    }
 
-    hostname = g_ascii_strdown(host, host_end - host);
-    protected_uri = g_str_equal(hostname, "api.asm.skype.com") ||
-                    g_str_has_suffix(hostname, "-api.asm.skype.com") ||
-                    g_str_has_suffix(hostname, ".asyncgw.teams.microsoft.com");
-    g_free(hostname);
-
-    return protected_uri;
+    purple_http_url_free(parsed);
+    return valid;
 }
 
 static gboolean
@@ -396,7 +410,12 @@ teams_download_protected_image(TeamsAccount *sa, const gchar *uri, PurpleConvers
         return FALSE;
     }
 
+    /* Revalidate the parsed destination before attaching credentials. */
+    if (!teams_uri_is_protected_image(uri))
+        return FALSE;
+
     request = purple_http_request_new(uri);
+    purple_http_request_set_max_len(request, TEAMS_PROTECTED_IMAGE_MAX_SIZE);
     purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
     purple_http_request_set_max_redirects(request, 0);
     purple_http_request_header_set_printf(request, "Cookie", "skypetoken_asm=%s", sa->skype_token);
