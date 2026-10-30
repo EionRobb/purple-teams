@@ -24,7 +24,7 @@
 void teams_get_icon(PurpleBuddy *buddy);
 void teams_flush_icon_queue_for_account(PurpleAccount *account);
 gboolean teams_uri_is_protected_image(const gchar *uri);
-void teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversation *conv, time_t ts, const gchar* from);
+gboolean teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversation *conv, time_t ts, const gchar* from);
 void teams_download_video_message(TeamsAccount *sa, const gchar *sid, PurpleConversation *conv);
 void teams_download_moji_to_conv(TeamsAccount *sa, const gchar *text, const gchar *url_thumbnail, PurpleConversation *conv, time_t ts, const gchar* from);
 void teams_present_uri_as_filetransfer(TeamsAccount *sa, const gchar *uri, const gchar *from);
