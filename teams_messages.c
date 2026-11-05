@@ -235,9 +235,9 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 			
 			//Potentially use the preview image in  file.filePreview.previewUrl
 		}
-		
-		json_array_unref(files);
-		
+
+		if (files) json_array_unref(files); /* NULL when "files" is missing */
+
 		gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
 		g_free(*html);
 		*html = temp;
@@ -1521,27 +1521,33 @@ process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 			if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
 				// ... and we dont know about it yet
 				
-				JsonObject *member = json_array_get_object_element(members, 0);
-				const gchar *mri = json_object_get_string_member(member, "id");
-				const gchar *buddyid = teams_strip_user_prefix(mri);
-				
-				if (teams_is_user_self(sa, buddyid)) {
+				// `members` may be absent (NULL) or have <2 entries. Bound
+				// the index-0/1 access with the length (raw json_array_get_object_element asserts on
+				// NULL/out-of-range - the `array != NULL` critical seen next to incoming messages).
+				guint mcount = json_array_get_length(members);
+				JsonObject *member = mcount >= 1 ? json_array_get_object_element(members, 0) : NULL;
+				const gchar *mri = member ? json_object_get_string_member(member, "id") : NULL;
+				const gchar *buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
+
+				if (buddyid && teams_is_user_self(sa, buddyid) && mcount >= 2) {
 					// There were two in the bed and the little one said....
 					member = json_array_get_object_element(members, 1);
 					mri = json_object_get_string_member(member, "id");
-					buddyid = teams_strip_user_prefix(mri);
+					buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
 				}
-				
-				//Fetch buddy presence
-				teams_subscribe_to_single_contact_status(sa, buddyid);
-				
-				//Create an array of one to one mappings for IMs
-				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
-				g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
-				
-				PurpleChatConversation *conv = purple_conversations_find_chat_with_account(id, sa->account);
-				if (conv != NULL) {
-					purple_conversation_destroy(PURPLE_CONVERSATION(conv));
+
+				if (buddyid != NULL) {
+					//Fetch buddy presence
+					teams_subscribe_to_single_contact_status(sa, buddyid);
+
+					//Create an array of one to one mappings for IMs
+					g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+					g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+
+					PurpleChatConversation *conv = purple_conversations_find_chat_with_account(id, sa->account);
+					if (conv != NULL) {
+						purple_conversation_destroy(PURPLE_CONVERSATION(conv));
+					}
 				}
 			}
 		}

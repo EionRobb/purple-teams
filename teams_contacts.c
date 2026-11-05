@@ -587,7 +587,8 @@ teams_got_vm_download_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	obj = json_node_get_object(node);
 	
 	files = json_object_get_array_member(obj, "files");
-	file = json_array_get_object_element(files, 0);
+	/* "files" may be absent or empty */
+	file = (json_array_get_length(files) >= 1) ? json_array_get_object_element(files, 0) : NULL;
 	if (file != NULL) {
 		status = json_object_get_string_member(file, "status");
 		if (status && g_str_equal(status, "ok")) {
@@ -2279,12 +2280,15 @@ teams_get_friend_suggestions_cb(TeamsAccount *sa, JsonNode *node, gpointer user_
 	GSList *users_to_fetch = NULL;
 	guint index, length;
 
-	if (node == NULL)
+	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT)
 		return;
 
 	obj = json_node_get_object(node);
 	groups = json_object_get_array_member(obj, "Groups");
-	firstgroup = json_array_get_object_element(groups, 0);
+	/* "Groups" may be absent or empty: then there is nothing to suggest */
+	firstgroup = (json_array_get_length(groups) >= 1) ? json_array_get_object_element(groups, 0) : NULL;
+	if (firstgroup == NULL)
+		return;
 	suggestions = json_object_get_array_member(firstgroup, "Suggestions");
 	length = json_array_get_length(suggestions);
 	
