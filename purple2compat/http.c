@@ -1175,6 +1175,15 @@ static gboolean _purple_http_recv_loopbody(PurpleHttpConnection *hc, gint fd)
 			if (!purple_http_headers_get_int(hc->response->headers,
 				"Content-Length", &hc->length_expected))
 				hc->length_expected = -1;
+			/* 204 and 304 responses never have a body
+			 * (RFC 9112 6.3), whatever their headers say. Without a
+			 * Content-Length the response was otherwise read until the
+			 * server closed the connection, which on a kept-alive one it
+			 * does not, so a 204 was only reported when the request
+			 * timed out. (1xx is left alone: a 100 Continue is not the
+			 * final answer.) */
+			if (hc->response->code == 204 || hc->response->code == 304)
+				hc->length_expected = 0;
 			hc->is_chunked = (purple_http_headers_match(
 				hc->response->headers,
 				"Transfer-Encoding", "chunked"));
