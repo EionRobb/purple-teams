@@ -605,6 +605,38 @@ teams_im_conversation_created(PurpleConversation *conv)
 	teams_fetch_conv_history_paginated(sa, convname, since);
 }
 
+// purple-teams fires many async HTTP requests carrying `sa` as user_data. On this
+// consumer/personal account the connection FLAPS (re-login every few minutes); teams_close frees
+// `sa`, but an in-flight request from the OLD connection can still complete afterwards and run its
+// handler against the freed sa -- whose zeroed memory makes sa->*_hash read NULL, so the dedup loops
+// in process_message_resource / process_conversation_resource FLOOD thousands of
+// "g_hash_table_insert/contains: assertion 'hash_table != NULL' failed" criticals in milliseconds,
+// pegging the CPU and hanging the client (purple_http_conn_cancel_all(pc) in teams_close does not
+// always catch every request). Track live TeamsAccount pointers in a global set so the batch
+// processors can bail on a dead sa -- checked by POINTER, never dereferencing the freed sa.
+static GHashTable *teams_live_accounts = NULL;
+
+gboolean
+teams_account_is_live(TeamsAccount *sa)
+{
+	return sa != NULL && teams_live_accounts != NULL && g_hash_table_contains(teams_live_accounts, sa);
+}
+
+static void
+teams_account_mark_live(TeamsAccount *sa)
+{
+	if (teams_live_accounts == NULL)
+		teams_live_accounts = g_hash_table_new(g_direct_hash, g_direct_equal);
+	g_hash_table_insert(teams_live_accounts, sa, sa); // not g_hash_table_add: Win32 builds use GLib 2.28
+}
+
+static void
+teams_account_mark_dead(TeamsAccount *sa)
+{
+	if (teams_live_accounts != NULL)
+		g_hash_table_remove(teams_live_accounts, sa);
+}
+
 static void
 teams_login(PurpleAccount *account)
 {
@@ -613,8 +645,9 @@ teams_login(PurpleAccount *account)
 	PurpleConnectionFlags flags;
 	const gchar *tenant;
 	const gchar *password = purple_connection_get_password(pc);
-	
+
 	purple_connection_set_protocol_data(pc, sa);
+	teams_account_mark_live(sa);
 
 	flags = purple_connection_get_flags(pc);
 	flags |= PURPLE_CONNECTION_FLAG_HTML | PURPLE_CONNECTION_FLAG_NO_BGCOLOR | PURPLE_CONNECTION_FLAG_NO_FONTSIZE;
@@ -831,6 +864,7 @@ teams_close(PurpleConnection *pc)
 	g_free(sa->primary_member_name);
 	g_free(sa->self_display_name);
 	g_free(sa->username);
+	teams_account_mark_dead(sa); // stop late async handlers from touching this freed sa (hash-flood hang)
 	g_free(sa);
 }
 
