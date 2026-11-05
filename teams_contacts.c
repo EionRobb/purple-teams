@@ -45,6 +45,14 @@ static void purple_conversation_write_img_message(
 		PurpleMessageFlags flags, time_t ts) {
 	PurpleMessage *pmsg;
 
+	// A NULL conv reaches purple_conversation_write_message -> purple_conversation_get_im_data
+	// which asserts conv != NULL and then derefs it -> SIGSEGV that takes the whole libpurple process down
+	// (seen on Teams image send/receive when no PurpleConversation exists yet for `who`). Guard it.
+	if (conv == NULL) {
+		purple_debug_warning("teams", "write_img_message: no conversation for %s, dropping inline image\n", who ? who : "(null)");
+		return;
+	}
+
 	if (flags & PURPLE_MESSAGE_SEND) {
 		pmsg = purple_message_new_outgoing(who, msg, flags);
 		purple_message_set_time(pmsg, ts);
@@ -973,8 +981,14 @@ teams_got_object_for_file(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 	
 	//Get back {"id": "0-cus-d3-deadbeefdeadbeef012345678"}
 	if (obj == NULL || !json_object_has_member(obj, "id")) {
+		// swft is still the xfer's protocol data, and purple_xfer_cancel_local() fires the
+		// cancel_send_fnc (teams_free_xfer), which frees swft->from + swft a SECOND time -> a
+		// double-free that aborts the whole libpurple process whenever a Teams image/file object-creation
+		// POST comes back without an id. NULL the protocol data first so teams_free_xfer's
+		// g_return_if_fail(swft != NULL) bails instead of re-freeing what we free here.
 		g_free(swft->from);
 		g_free(swft);
+		purple_xfer_set_protocol_data(xfer, NULL);
 		purple_xfer_cancel_local(xfer);
 		if (obj != NULL) {
 			json_object_unref(obj);
