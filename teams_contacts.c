@@ -81,6 +81,7 @@ typedef struct {
 	gchar *url;
 	gchar *id;
 	TeamsAccount *sa;
+	gboolean is_image; // send as an inline AMSImage picture, not a File.1 attachment
 } TeamsFileTransfer;
 
 static guint active_icon_downloads = 0;
@@ -831,7 +832,7 @@ got_file_send_progress(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	if (obj == NULL) {
 		return;
 	}
-	
+
 	//{"content_length":0,"content_full_length":0,"view_length":0,"content_state":"no content","view_state":"none","view_location":"https://nus1-api.asm.skype.com/v1/objects/0-cus-d1-61121cfae8cf601944627a66afdb77ad/views/original","status_location":"https://nus1-api.asm.skype.com/v1/objects/0-cus-d1-61121cfae8cf601944627a66afdb77ad/views/original/status"}
 	
 	if (json_object_has_member(obj, "status_location")) {
@@ -933,8 +934,38 @@ teams_xfer_send_done(PurpleHttpConnection *conn, PurpleHttpResponse *resp, gpoin
 	const gchar *data = purple_http_response_get_data(resp, &len);
 	const gchar *error = purple_http_response_get_error(resp);
 	int code = purple_http_response_get_code(resp);
+	TeamsFileTransfer *swft = user_data;
 	purple_debug_info("teams", "Finished [%d]: %s\n", code, error);
 	purple_debug_info("teams", "Server message: %s\n", data);
+
+	if (swft->is_image) {
+		// the image content is uploaded -> send it as an inline AMSImage <img> now, exactly like
+		// the paste-an-image path (teams_conversation_send_image_part2_cb) -- no status poll. The
+		// recipient fetches /views/imgo and renders it inline (a File.1 URIObject shows "Unsupported
+		// Content" instead). teams_send_message tags a non-<URIObject> body as RichText/Html.
+		TeamsAccount *sa = swft->sa;
+		PurpleXfer *xfer = swft->xfer;
+		gchar *image_url = g_strdup_printf("https://%s/v1/objects/%s/views/imgo", TEAMS_XFER_HOST, purple_url_encode(swft->id));
+		gchar *html = g_strdup_printf(
+			"<p><img itemscope=\"image\" style=\"vertical-align:bottom\" src=\"%s\" alt=\"image\" "
+			"itemtype=\"http://schema.skype.com/AMSImage\" height=\"250\" id=\"%s\" itemid=\"%s\" "
+			"href=\"%s\" target-src=\"%s\"></p>",
+			image_url, swft->id, swft->id, image_url, image_url);
+		purple_xfer_set_completed(xfer, TRUE);
+#if PURPLE_VERSION_CHECK(3, 0, 0)
+		PurpleMessage *m = purple_message_new_outgoing(swft->from, html, PURPLE_MESSAGE_SEND);
+		teams_send_im(sa->pc, m);
+		purple_message_destroy(m);
+#else
+		teams_send_im(sa->pc, swft->from, html, PURPLE_MESSAGE_SEND);
+#endif
+		g_free(html);
+		g_free(image_url);
+		teams_free_xfer(xfer);
+		purple_xfer_unref(xfer);
+		return;
+	}
+
 	g_timeout_add_seconds(1, poll_file_send_progress, user_data);
 }
 
@@ -956,10 +987,12 @@ teams_xfer_send_begin(gpointer user_data)
 
 	PurpleHttpRequest *request = purple_http_request_new("");
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
-	purple_http_request_set_url_printf(request, "https://%s/v1/objects/%s/content/original", TEAMS_XFER_HOST, purple_url_encode(swft->id));
+	// images upload to the image content view (imgpsh) as octet-stream; generic files to the
+	// original view as multipart/form-data (the recipient renders the former inline, see is_image).
+	purple_http_request_set_url_printf(request, "https://%s/v1/objects/%s/content/%s", TEAMS_XFER_HOST, purple_url_encode(swft->id), swft->is_image ? "imgpsh" : "original");
 	purple_http_request_set_method(request, "PUT");
 	purple_http_request_header_set(request, "Host", TEAMS_XFER_HOST);
-	purple_http_request_header_set(request, "Content-Type", "multipart/form-data");
+	purple_http_request_header_set(request, "Content-Type", swft->is_image ? "application/octet-stream" : "multipart/form-data");
 	purple_http_request_header_set_printf(request, "Content-Length", "%" G_GSIZE_FORMAT, (gsize) purple_xfer_get_size(xfer));
 	purple_http_request_header_set_printf(request, "Authorization", "skype_token %s", sa->skype_token);
 	purple_http_request_set_contents_reader(request, teams_xfer_send_contents_reader, purple_xfer_get_size(xfer), user_data);
@@ -982,7 +1015,7 @@ teams_got_object_for_file(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 	
 	data = purple_http_response_get_data(response, &len);
 	obj = json_decode_object(data, len);
-	
+
 	//Get back {"id": "0-cus-d3-deadbeefdeadbeef012345678"}
 	if (obj == NULL || !json_object_has_member(obj, "id")) {
 		// swft is still the xfer's protocol data, and purple_xfer_cancel_local() fires the
@@ -1027,9 +1060,23 @@ teams_xfer_send_init(PurpleXfer *xfer)
 	
 	purple_xfer_set_filename(xfer, basename);
 	purple_xfer_ref(xfer);
-	
-	json_object_set_string_member(obj, "type", "sharing/file");
+
+	// an image must be created as a "pish/image" (Inline) object so it gets the /views/imgo image
+	// view and can be sent as an inline AMSImage <img> (which the recipient renders). A generic
+	// "sharing/file" object goes as a File.1 URIObject that modern Teams shows as "Unsupported Content".
+	{
+		const gchar *dot = strrchr(basename, '.');
+		swft->is_image = dot != NULL && (
+			g_ascii_strcasecmp(dot, ".png")  == 0 || g_ascii_strcasecmp(dot, ".jpg") == 0 ||
+			g_ascii_strcasecmp(dot, ".jpeg") == 0 || g_ascii_strcasecmp(dot, ".gif") == 0 ||
+			g_ascii_strcasecmp(dot, ".webp") == 0 || g_ascii_strcasecmp(dot, ".bmp") == 0);
+	}
+
+	json_object_set_string_member(obj, "type", swft->is_image ? "pish/image" : "sharing/file");
 	json_object_set_string_member(obj, "filename", basename);
+	if (swft->is_image) {
+		json_object_set_string_member(obj, "sharingMode", "Inline");
+	}
 	
 	id = g_strconcat(teams_user_url_prefix(swft->from), swft->from, NULL);
 	json_array_add_string_element(userpermissions, "read");
