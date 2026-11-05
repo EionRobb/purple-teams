@@ -314,6 +314,10 @@ struct _TeamsBuddy {
 
 void teams_buddy_free(PurpleBuddy *buddy);
 
+// TRUE while `sa` is a live (logged-in, not-yet-freed) account. Async HTTP handlers that fire
+// after a re-login flap must check this before touching sa, to avoid the freed-sa hash-flood hang.
+gboolean teams_account_is_live(TeamsAccount *sa);
+
 void teams_do_all_the_things(TeamsAccount *sa);
 
 #endif /* LIBTEAMS_H */
