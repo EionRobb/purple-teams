@@ -839,20 +839,11 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		purple_notify_message(sa->pc, PURPLE_NOTIFY_MSG_INFO, _("Authorization Code"),
 			message, NULL, NULL, NULL);
 
-		/* Personal/TFL: headless UIs (transports such as spectrum) implement no interactive purple_notify UI, so the notify_message/
-		 * notify_uri above are invisible to the user. Only for those UIs, also deliver
-		 * the sign-in instructions (verification URL + user code) as an incoming IM from
-		 * a synthetic "TeamsLogin" buddy so they surface through the conversation uiops.
-		 * Interactive UIs (Pidgin, bitlbee) already showed the notify and must not get a
-		 * duplicate. Detect headless by the absence of a notify_message uiop (with a
-		 * known-headless UI-id fallback). Always log it for retrieval from the debug log. */
-		PurpleNotifyUiOps *notify_ops = purple_notify_get_ui_ops();
+		/* Pidgin and bitlbee show the notify above. Other UIs (spectrum and other
+		 * transports) may not, so they also get the sign-in instructions as an IM
+		 * from a "TeamsLogin" buddy. */
 		const gchar *core_ui = purple_core_get_ui();
-		gboolean headless_ui = (notify_ops == NULL || notify_ops->notify_message == NULL)
-			|| purple_strequal(core_ui, "spectrum") || purple_strequal(core_ui, "adapter");
-
-		purple_debug_info("teams", "DEVICE-CODE-LOGIN: %s\n", message);
-		if (headless_ui)
+		if (!purple_strequal(core_ui, "gtk-gaim") && !purple_strequal(core_ui, "BitlBee"))
 			purple_serv_got_im(sa->pc, "TeamsLogin", message, PURPLE_MESSAGE_RECV, time(NULL));
 
 		g_free(message);
@@ -881,8 +872,13 @@ teams_devicecode_login_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 		 * refresh path with no device code. Headless UIs only: an interactive UI has
 		 * no such watchdog and marking it CONNECTED early would let it flush buffered
 		 * messages before login truly completes. */
-		if (headless_ui)
-			purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
+		{
+			PurpleNotifyUiOps *notify_ops = purple_notify_get_ui_ops();
+			gboolean headless_ui = (notify_ops == NULL || notify_ops->notify_message == NULL)
+				|| purple_strequal(core_ui, "spectrum") || purple_strequal(core_ui, "adapter");
+			if (headless_ui)
+				purple_connection_set_state(sa->pc, PURPLE_CONNECTION_CONNECTED);
+		}
 
 	} else {
 		if (obj != NULL) {
