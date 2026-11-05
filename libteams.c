@@ -22,6 +22,9 @@
 #include "teams_messages.h"
 #include "teams_util.h"
 #include "teams_trouter.h"
+#ifdef TEAMS_CALLING
+#include "teams_calling.h"
+#endif
 
 #ifdef ENABLE_TEAMS_PERSONAL
 /* Personal/TFL: real-time message delivery via Trouter push does not work for
@@ -87,7 +90,12 @@ teams_do_all_the_things(TeamsAccount *sa)
 
 		teams_get_friend_list(sa);
 		teams_trouter_begin(sa);
-		
+
+#ifdef TEAMS_CALLING
+		/* tell the call front end, if any, that this account can take and place calls */
+		teams_calling_account_connected(sa);
+#endif
+
 		teams_get_offline_history(sa);
 
 #ifdef ENABLE_TEAMS_PERSONAL
@@ -782,6 +790,12 @@ teams_close(PurpleConnection *pc)
 	if (sa->subscription_flush_timer)         { g_source_remove(sa->subscription_flush_timer); sa->subscription_flush_timer = 0; }
 	// Trouter timeouts handled in teams_trouter_stop()
 
+#ifdef TEAMS_CALLING
+	// End this account's call and stop its media engine before the HTTP connections are
+	// cancelled, so nothing keeps pointing at sa.
+	teams_calling_close(sa);
+#endif
+
 	teams_logout(sa);
 	
 	purple_debug_info("teams", "destroying incomplete connections\n");
@@ -1129,7 +1143,7 @@ plugin_load(PurplePlugin *plugin
 						NULL);
 	
 	purple_signal_connect(purple_get_core(), "uri-handler", plugin, PURPLE_CALLBACK(teams_uri_handler), NULL);
-	
+
 	return TRUE;
 }
 

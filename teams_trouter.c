@@ -19,6 +19,7 @@
 #include "teams_trouter.h"
 
 #include "glib.h"
+#include "teams_calling.h"
 #include "teams_contacts.h"
 #include "teams_messages.h"
 #include "teams_util.h"
@@ -28,7 +29,7 @@
 #define TEAMS_TROUTER_TCCV "2024.23.01.2"
 
 static gboolean teams_trouter_register(gpointer user_data);
-static void teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path, const gchar *productContext);
+static void teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path, const gchar *productContext, const gchar *transport_context, const gchar *registrar_url);
 
 void
 teams_trouter_stop(TeamsAccount *sa)
@@ -171,6 +172,61 @@ teams_trouter_schedule_reconnect(TeamsAccount *sa)
 	sa->trouter_reconnect_timeout = purple_timeout_add_seconds(sa->trouter_reconnect_backoff, teams_trouter_reconnect_cb, sa);
 }
 
+
+/* A request's header, its name matched without case (the trouter sends both "MS-CV" and "ms-cv"
+ * styles). NULL if absent or not a string. */
+static const gchar *
+trouter_header(JsonObject *headers, const gchar *name)
+{
+	GList *names, *l;
+	const gchar *v = NULL;
+	if (!headers) return NULL;
+	names = json_object_get_members(headers);
+	for (l = names; l; l = l->next) {
+		if (!g_ascii_strcasecmp(l->data, name)) {
+			/* NULL for a member that is not a string */
+			v = json_node_get_string(json_object_get_member(headers, l->data));
+			break;
+		}
+	}
+	g_list_free(names);
+	return v;
+}
+
+/* The response to a trouter request, as the teams.live.com web client sends it. CAPTURED
+ * (every 3::: response it sent): besides id, status and an empty body, headers with the
+ * request's MS-CV + ".0", its trouter-request copied as it came, and trouter-client {"cd":<ms the
+ * client took>}. Live, ours had no headers, and the trouter delivered the same mediaRenegotiation
+ * again and again, while a leave went unanswered for two minutes. */
+static JsonObject *
+teams_trouter_response_for(JsonObject *request, int status, int took_ms)
+{
+	JsonObject *response = json_object_new(), *headers = json_object_new();
+	JsonObject *rh = NULL;
+	const gchar *cv, *treq;
+	gchar *cd;
+
+	if (json_object_has_member(request, "headers") &&
+	    JSON_NODE_HOLDS_OBJECT(json_object_get_member(request, "headers")))
+		rh = json_object_get_object_member(request, "headers");
+	cv = trouter_header(rh, "MS-CV");
+	treq = trouter_header(rh, "trouter-request");
+	json_object_set_int_member(response, "id", json_object_get_int_member(request, "id"));
+	json_object_set_int_member(response, "status", status);
+	if (cv) {
+		gchar *cv0 = g_strconcat(cv, ".0", NULL);
+		json_object_set_string_member(headers, "MS-CV", cv0);
+		g_free(cv0);
+	}
+	if (treq) json_object_set_string_member(headers, "trouter-request", treq);
+	cd = g_strdup_printf("{\"cd\":%d}", took_ms < 0 ? 0 : took_ms);
+	json_object_set_string_member(headers, "trouter-client", cd);
+	g_free(cd);
+	json_object_set_object_member(response, "headers", headers);
+	json_object_set_string_member(response, "body", "");
+	return response;
+}
+
 static void
 teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsocketOp op, const guchar *msg, size_t len)
 {
@@ -179,10 +235,12 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 	purple_debug_info("teams", "Trouter WS: %d %.*s\n", op, (int) len, msg);
 	if (op == PURPLE_WEBSOCKET_OPEN) {
 		purple_debug_info("teams", "Trouter WS: Opened\n");
+		teams_call_log("TROUTER connected (websocket open)");
 		sa->trouter_reconnect_backoff = 0; /* healthy connection - reset backoff */
 		return;
 	} else if (op == PURPLE_WEBSOCKET_CLOSE) {
 		purple_debug_info("teams", "Trouter WS: Closed\n");
+		teams_call_log("TROUTER closed");
 		// _CLOSE calls abort internally, bypass to prevent double-free
 		sa->trouter_socket = NULL;
 		// reopen on a backoff, not instantly, to avoid the reconnect storm
@@ -190,6 +248,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 		return;
 	} else if (op == PURPLE_WEBSOCKET_ERROR) {
 		purple_debug_info("teams", "Trouter WS: Error\n");
+		teams_call_log("TROUTER error");
 		// _ERROR calls abort internally, bypass to prevent double-free
 		sa->trouter_socket = NULL;
 		// reopen on a backoff, not instantly, to avoid the reconnect storm
@@ -241,12 +300,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				purple_debug_info("teams", "Trouter 3: frame did not decode, ignoring\n");
 				return;
 			}
-			response = json_object_new();
-
-			json_object_set_int_member(response, "id", json_object_get_int_member(request, "id"));
-			json_object_set_int_member(response, "status", 200);
-			json_object_set_string_member(response, "body", "");
-			
+			response = teams_trouter_response_for(request, 200, 0);
 			response_str = teams_jsonobj_to_string(response);
 			response_msg = g_strconcat("3:::", response_str, NULL);
 			purple_websocket_send(ws, PURPLE_WEBSOCKET_TEXT, (guchar *) response_msg, strlen(response_msg));
@@ -260,7 +314,11 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 			 * object_member + hash_table NULL flood otherwise). */
 			JsonObject *headers = json_object_get_object_member(request, "headers");
 			gchar *body = g_strdup(json_object_get_string_member(request, "body"));
-			if (headers != NULL && purple_strequal(json_object_get_string_member(headers, "X-Microsoft-Skype-Content-Encoding"), "gzip")) {
+			/* header names are not always capitalised the same way. CAPTURED (teams.live.com):
+			 * the call controller's frames say "X-Microsoft-Skype-Content-Encoding",
+			 * the conversation's (rosterUpdate) "x-microsoft-skype-content-encoding" - their gzip
+			 * bodies were left undecoded and the frames dropped. */
+			if (body != NULL && purple_strequal(trouter_header(headers, "X-Microsoft-Skype-Content-Encoding"), "gzip")) {
 				gsize body_len;
 				guchar *body_base64_decoded = g_base64_decode(body, &body_len);
 				gchar *body_unzipped = teams_gunzip(body_base64_decoded, &body_len);
@@ -269,13 +327,16 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				body = body_unzipped;
 			}
 
-			JsonObject *body_obj = json_decode_object(body, strlen(body));
+			/* no body, or one that did not unzip, is NULL here */
+			JsonObject *body_obj = body ? json_decode_object(body, strlen(body)) : NULL;
 			JsonObject *orig_body;
 
 			/* an empty/unparseable frame body decodes to NULL - clean up and stop, don't
 			 * ref/deref NULL (part of the json_decode 'root' + 'object != NULL' flood). */
 			if (body_obj == NULL) {
 				purple_debug_info("teams", "Trouter 3: frame body did not decode, ignoring\n");
+				teams_call_log("TROUTER frame url=%s: body did not decode - ignored",
+				               json_object_get_string_member(request, "url") ? json_object_get_string_member(request, "url") : "(null)");
 				g_free(body);
 				json_object_unref(request);
 				return;
@@ -301,6 +362,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 			}
 
 			const gchar *request_url = json_object_get_string_member(request, "url");
+			teams_call_log("TROUTER frame url=%s", request_url ? request_url : "(null)");
 			// if request_url ends with /TeamsUnifiedPresenceService
 			if (g_str_has_suffix(request_url, "/TeamsUnifiedPresenceService") ||
 					g_str_has_suffix(request_url, "/unifiedPresenceService")) {
@@ -321,7 +383,15 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 					teams_process_event_message(sa, body_obj);
 				}
 
-			} else if (g_str_has_suffix(request_url, "/NGCallManagerWin") || strstr(request_url, "/SkypeSpacesWeb")) {
+			} else if (g_str_has_suffix(request_url, "/NGCallManagerWin") || strstr(request_url, "/SkypeSpacesWeb")
+					|| strstr(request_url, "/callAgent/")
+					|| (sa->trouter_surl && request_url && request_url[0] && strstr(sa->trouter_surl, request_url))) {
+				/* The last clause: a frame delivered to the BARE base surl (our TFL SkypeSpacesWeb
+				 * calling registration path) - personal Teams delivers call setup here with the
+				 * call detail in the BODY (not a /callAgent/ sub-path in the url). */
+				/* /callAgent/... = the personal/TFL consumer calling delivery path (call setup,
+				 * ring, end, conversation). Enterprise NGC uses /NGCallManagerWin. With
+				 * TEAMS_CALLING both go to teams_calling.c, which drives the call. */
 
 				// Incoming call:
 				/// body: "{\"evt\":107,\"cp\":\"...\",\"callId\":\"... callid guid ...\",\"callerId\":\"orgid:...\"}"
@@ -388,7 +458,15 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				// 	},
 				// 	"groupContext":null
 				// }
-				if (json_object_has_member(body_obj, "callNotification")) {
+				gboolean announce_call = TRUE;
+#ifdef TEAMS_CALLING
+				/* parse the offer (sdp/udpKey/links), track the call's state and ring the
+				 * front end; see teams_calling.c. Without a front end the call is still
+				 * announced as a message below. */
+				teams_calling_handle_trouter(sa, body_obj, request_url);
+				announce_call = !teams_calling_has_frontend();
+#endif
+				if (announce_call && json_object_has_member(body_obj, "callNotification")) {
 					JsonObject *callNotification = json_object_get_object_member(body_obj, "callNotification");
 					JsonObject *from = json_object_get_object_member(callNotification, "from");
 					JsonObject *to = json_object_get_object_member(callNotification, "to");
@@ -422,9 +500,15 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 
 			} else if (g_str_has_suffix(request_url, "/rosterUpdate")) {
 				// In progress call has added or removed users
+#ifdef TEAMS_CALLING
+				teams_calling_handle_trouter(sa, body_obj, request_url);
+#endif
 
 			} else if (g_str_has_suffix(request_url, "/end")) {
 				// Call ended
+#ifdef TEAMS_CALLING
+				teams_calling_handle_trouter(sa, body_obj, request_url);
+#endif
 				// {
 				//   "callEnd": {
 				//     "reason": "clientError",
@@ -460,6 +544,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				
 			} else {
 				purple_debug_info("teams", "Trouter WS: Unknown request: %s\n", request_url);
+				teams_call_log("UNKNOWN frame url=%s", request_url ? request_url : "(null)");
 			}
 
 			json_object_unref(orig_body);
@@ -480,7 +565,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 			JsonObject *obj = json_decode_object((const gchar *) &msg[i], len - i);
 			const gchar *name = json_object_get_string_member(obj, "name"); /* NULL-safe wrapper in libteams.h */
 			if (purple_strequal(name, "trouter.message_loss")) {
-				teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_1.9", sa->trouter_surl, NULL);
+				teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_1.9", sa->trouter_surl, NULL, "", NULL);
 			}
 			if (obj) json_object_unref(obj); /* empty 5: frame decodes to NULL */
 		}
@@ -537,8 +622,25 @@ teams_trouter_send_ping(gpointer user_data)
 	return teams_trouter_send_message(sa, "{\"name\":\"ping\"}");
 }
 
+/* log the registrar's response so we can see whether the calling-endpoint
+ * registration (NextGenCalling etc.) actually succeeds. appId (a string literal) is passed as
+ * user_data. A non-2xx here explains "rings on the caller, never here". */
 static void
-teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path, const gchar *productContext)
+teams_trouter_reg_response_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
+{
+	const gchar *appId = user_data;
+	int code = purple_http_response_get_code(response);
+	size_t len = 0;
+	const gchar *body = purple_http_response_get_data(response, &len);
+	const gchar *err = purple_http_response_get_error(response);
+	(void) http_conn;
+	teams_call_log("REGISTRAR resp appId=%s code=%d err=%s body=%.240s",
+	               appId ? appId : "?", code, err ? err : "(none)", body ? body : "(none)");
+}
+
+/* As teams_trouter_register_one, under reg_id when it is not NULL. */
+static void
+teams_trouter_register_as(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path, const gchar *productContext, const gchar *transport_context, const gchar *registrar_url, const gchar *reg_id)
 {
 	JsonObject *reg_obj = json_object_new();
 	JsonObject *clientDescription = json_object_new();
@@ -557,7 +659,10 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 		json_object_set_string_member(clientDescription, "productContext", productContext);
 	}
 
-	json_object_set_string_member(trouter_obj, "context", "");
+	/* transport context: "" for messaging, "TFL" for the personal calling (SkypeSpacesWeb)
+	 * registration - a captured web-client registration shows calls only route to a TFL-context
+	 * SkypeSpacesWeb endpoint. */
+	json_object_set_string_member(trouter_obj, "context", transport_context ? transport_context : "");
 	json_object_set_string_member(trouter_obj, "path", path);
 	json_object_set_int_member(trouter_obj, "ttl", TEAMS_TROUTER_TTL);
 
@@ -565,12 +670,17 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 	json_object_set_array_member(transports, "TROUTER", trouter);
 
 	json_object_set_object_member(reg_obj, "clientDescription", clientDescription);
+	/* registrationId MUST equal the trouter endpoint id (sa->endpoint / epid) for the endpoint to
+	 * be a routable target - the web client registers both messaging (TeamsCDLWebWorker) AND calling
+	 * (SkypeSpacesWeb) under the epid, not a random UUID. */
 	gchar *regId = NULL;
-	if (purple_strequal("TeamsCDLWebWorker", appId)
+	if (reg_id) {
+		regId = g_strdup(reg_id);
+	} else if (purple_strequal("SkypeSpacesWeb", appId) || (purple_strequal("TeamsCDLWebWorker", appId)
 #ifdef ENABLE_TEAMS_PERSONAL
 		&& purple_strequal(productContext, "TFL")
 #endif
-	) {
+	)) {
 		regId = g_strdup(sa->endpoint);
 	} else {
 		regId = purple_uuid_random();
@@ -591,18 +701,27 @@ teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *te
 #	define TEAMS_REGISTRAR_URL "https://teams.microsoft.com/registrar/prod/V2/registrations"
 #endif
 
-	PurpleHttpRequest *request = purple_http_request_new(TEAMS_REGISTRAR_URL);
+	/* Per-registration registrar: personal messaging uses edge.skype.com, but personal CALLING
+	 * (SkypeSpacesWeb) registers at teams.microsoft.com (captured from the web client). */
+	PurpleHttpRequest *request = purple_http_request_new(registrar_url ? registrar_url : TEAMS_REGISTRAR_URL);
 	purple_http_request_set_method(request, "POST");
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
 	purple_http_request_header_set(request, "Content-Type", "application/json");
 	purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
+	purple_http_request_header_set(request, "x-ms-migration", "True");
 	purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->id_token); // Only for chat?
 	purple_http_request_set_contents(request, reg_str, strlen(reg_str));
-	purple_http_request(sa->pc, request, NULL, NULL);
+	purple_http_request(sa->pc, request, teams_trouter_reg_response_cb, (gpointer) appId);
 	purple_http_request_unref(request);
 
 	g_free(reg_str);
 	json_object_unref(reg_obj);
+}
+
+static void
+teams_trouter_register_one(TeamsAccount *sa, const gchar *appId, const gchar *templateKey, const gchar *path, const gchar *productContext, const gchar *transport_context, const gchar *registrar_url)
+{
+	teams_trouter_register_as(sa, appId, templateKey, path, productContext, transport_context, registrar_url, NULL);
 }
 
 static gboolean
@@ -644,21 +763,47 @@ teams_trouter_register(gpointer user_data)
 	//TODO scan through buddy list and call teams_subscribe_to_contact_status instead
 	teams_get_friend_list(sa);
 
+#ifdef ENABLE_TEAMS_PERSONAL
+	/* Personal/TFL CALLING: a captured teams.live.com web-client registration shows personal Teams
+	 * has NO "NextGenCalling" endpoint (that's enterprise NGC). Calls instead route to a
+	 * "SkypeSpacesWeb" endpoint registered at teams.microsoft.com with templateKey
+	 * TFLSkypeSpacesWeb_2.0, transport context "TFL", the BASE trouter surl as path (no app suffix),
+	 * and registrationId = epid. Incoming calls then arrive as /callAgent/... sub-paths of that surl.
+	 * (See docs/CALLING.md.) */
+	teams_call_log("registering TFL calling endpoint (SkypeSpacesWeb) surl=%s", sa->trouter_surl ? sa->trouter_surl : "(null)");
+	teams_trouter_register_one(sa, "SkypeSpacesWeb", "TFLSkypeSpacesWeb_2.0", sa->trouter_surl, NULL,
+	                           "TFL", "https://teams.microsoft.com/registrar/prod/v2/registrations");
+	/* CAPTURED (teams.live.com receiving a call from the Android app): the web client
+	 * registers the calling endpoint twice at that registrar, under the epid with the surl as
+	 * given, and under the epid + "-gg" with the surl's trailing '/' dropped. A call from the
+	 * Android app reached the web client but never this one, which had only the first. */
+	if (sa->trouter_surl && sa->endpoint) {
+		gchar *gg_id = g_strconcat(sa->endpoint, "-gg", NULL);
+		gchar *gg_path = g_strdup(sa->trouter_surl);
+		if (gg_path) {
+			gsize n = strlen(gg_path);
+			if (n > 0 && gg_path[n - 1] == '/') gg_path[n - 1] = '\0';
+			teams_trouter_register_as(sa, "SkypeSpacesWeb", "TFLSkypeSpacesWeb_2.0", gg_path, NULL,
+			                          "TFL", "https://teams.microsoft.com/registrar/prod/v2/registrations", gg_id);
+		}
+		g_free(gg_id);
+		g_free(gg_path);
+	}
+
+	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.6", sa->trouter_surl, "TFL", "", NULL);
+	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.3", sa->trouter_surl, "", "", NULL);
+#else
+	/* Enterprise NGC calling. */
 	gchar *ngc_path = g_strconcat(sa->trouter_surl, "NGCallManagerWin", NULL);
-	teams_trouter_register_one(sa, "NextGenCalling", "DesktopNgc_2.3:SkypeNgc", ngc_path, NULL);
+	teams_call_log("registering NGC calling endpoint: surl=%s path=%s", sa->trouter_surl ? sa->trouter_surl : "(null)", ngc_path);
+	teams_trouter_register_one(sa, "NextGenCalling", "DesktopNgc_2.3:SkypeNgc", ngc_path, NULL, "", NULL);
 	g_free(ngc_path);
 
 	gchar *ssw_path = g_strconcat(sa->trouter_surl, "SkypeSpacesWeb", NULL);
-	teams_trouter_register_one(sa, "SkypeSpacesWeb", "SkypeSpacesWeb_2.3", ssw_path, NULL);
+	teams_trouter_register_one(sa, "SkypeSpacesWeb", "SkypeSpacesWeb_2.3", ssw_path, NULL, "", NULL);
 	g_free(ssw_path);
 
-	//teams_trouter_register_one(sa, "com.microsoft.calendar", "Calendar_2.0", sa->trouter_surl, NULL);
-
-#ifdef ENABLE_TEAMS_PERSONAL
-	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.6", sa->trouter_surl, "TFL");
-	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.3", sa->trouter_surl, "");
-#else
-	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.1", sa->trouter_surl, NULL);
+	teams_trouter_register_one(sa, "TeamsCDLWebWorker", "TeamsCDLWebWorker_2.1", sa->trouter_surl, NULL, "", NULL);
 #endif
 
 
@@ -740,7 +885,14 @@ teams_trouter_sessionid_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *
 	}
 	sa->trouter_surl = g_strdup(json_object_get_string_member(obj, "surl"));
 
-	sa->trouter_registration_timeout = purple_timeout_add_seconds(TEAMS_TROUTER_TTL - 10, teams_trouter_register, sa);
+	/* NOT TEAMS_TROUTER_TTL-10 (~24h): that assumed the registrar honors the 86400s ttl we send in
+	 * the registration body. Real-world testing showed otherwise -- a call placed
+	 * ~30 minutes after the last successful registration (with zero renewal in between, since the
+	 * 24h timer never gets close to firing in any real session) failed in ~2s on the caller's side
+	 * with NOTHING reaching our trouter at all: the SkypeSpacesWeb/TFL calling registration had
+	 * gone stale well before 24h. Renewing every 5 minutes gives comfortable margin under that
+	 * observed window without spamming the registrar. */
+	sa->trouter_registration_timeout = purple_timeout_add_seconds(300, teams_trouter_register, sa);
 
 	json_object_unref(obj);
 	g_strfreev(node_parts);

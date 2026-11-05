@@ -85,6 +85,15 @@ C_FILES = \
 PURPLE_COMPAT_FILES := purple2compat/http.c purple2compat/purple-socket.c
 PURPLE_C_FILES := libteams.c $(C_FILES)
 
+# 1:1 calls (personal accounts only, see docs/CALLING.md): build with TEAMS_CALLING=1 and
+# TEAMS_MEDIA_BIN=<path of the media engine>. A front end has to register to ring and drive
+# calls; without one an incoming call is still announced as a message.
+ifdef TEAMS_CALLING
+TEAMS_MEDIA_BIN ?= /usr/libexec/teams_media
+TEAMS_CALL_FILES = teams_calling.c teams_call_sdp.c
+TEAMS_CALL_FLAGS = -DTEAMS_CALLING -DTEAMS_MEDIA_BIN='"$(TEAMS_MEDIA_BIN)"'
+endif
+
 
 
 PURPLE_CFLAGS ?= $(shell $(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --cflags)
@@ -92,14 +101,14 @@ PURPLE_LIBS ?= $(shell $(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --libs)
 PURPLE3_CFLAGS ?= $(shell $(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --cflags)
 PURPLE3_LIBS ?= $(shell $(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --libs)
 
-.PHONY:	all install FAILNOPURPLE clean translations
+.PHONY:	all install FAILNOPURPLE clean translations check
 
 all: $(TEAMS_TARGET)
 
 libteams.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
 	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE_CFLAGS) $(PURPLE_LIBS) $(INCLUDES) -Ipurple2compat -g -ggdb
-libteams-personal.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
-	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(LDFLAGS) $(PURPLE_CFLAGS) $(PURPLE_LIBS) $(INCLUDES) -Ipurple2compat -g -ggdb
+libteams-personal.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES) $(TEAMS_CALL_FILES)
+	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL $(TEAMS_CALL_FLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE_CFLAGS) $(PURPLE_LIBS) $(INCLUDES) -Ipurple2compat -g -ggdb
 
 libteams3.so: $(PURPLE_C_FILES)
 	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE3_CFLAGS) $(PURPLE3_LIBS) $(INCLUDES) -g -ggdb
@@ -152,6 +161,13 @@ po/%.mo: po/%.po
 FAILNOPURPLE:
 	echo "You need libpurple development headers installed to be able to compile this plugin"
 
+# Unit test of the call SDP rules (GLib only).
+tests/test_call_sdp: tests/test_call_sdp.c teams_call_sdp.c
+	$(CC) $(CFLAGS) -I. -o $@ $^ $(LDFLAGS) $(shell $(PKG_CONFIG) glib-2.0 --cflags --libs)
+
+check: tests/test_call_sdp
+	./tests/test_call_sdp
+
 clean:
-	rm -f $(TEAMS_TARGET)
+	rm -f $(TEAMS_TARGET) tests/test_call_sdp
 
