@@ -466,6 +466,11 @@ teams_parse_media_call_recording_content(const gchar *content)
 static void
 process_message_resource(TeamsAccount *sa, JsonObject *resource)
 {
+	// bail if this is a late handler for an account freed by a re-login flap (checked by
+	// pointer, no deref) -- otherwise the dedup hash access below floods NULL-hash criticals and hangs.
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *clientmessageid = NULL;
 	const gchar *skypeeditedid = NULL;
 	const gchar *messagetype = json_object_get_string_member(resource, "messagetype");
@@ -1420,6 +1425,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 static void
 process_conversation_resource(TeamsAccount *sa, JsonObject *resource)
 {
+	// bail on a late handler for an account freed by a re-login flap (see process_message_resource).
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *id = json_object_get_string_member(resource, "id");
 	JsonObject *threadProperties = json_object_get_object_member(resource, "threadProperties");
 	JsonObject *lastMessage = json_object_get_object_member(resource, "lastMessage");
@@ -1549,6 +1558,10 @@ process_endpointpresence_resource(TeamsAccount *sa, JsonObject *resource)
 void
 teams_process_event_message(TeamsAccount *sa, JsonObject *message)
 {
+	// bail on a late poll/trouter batch for an account freed by a re-login flap (hash-flood hang).
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *resourceType = json_object_get_string_member(message, "resourceType");
 	const gchar *time = json_object_get_string_member(message, "time");
 	JsonObject *resource = json_object_get_object_member(message, "resource");
@@ -2077,6 +2090,11 @@ teams_drain_presence_queue(gpointer user_data)
 {
 	TeamsAccount *sa = user_data;
 
+	// if sa was freed by a re-login flap, bail WITHOUT touching it (pointer check first, so we
+	// never deref the freed sa->pc / sa->pending_presences). The source id is gone with the old sa.
+	if (!teams_account_is_live(sa))
+		return G_SOURCE_REMOVE;
+
 	if (!PURPLE_IS_CONNECTION(sa->pc)) {
 		// If the connection has dropped discard all pending messages and stop.
 		while (!g_queue_is_empty(sa->pending_presences)) {
@@ -2281,6 +2299,12 @@ teams_drain_presence_queue(gpointer user_data)
 void
 teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
+	// a presence-snapshot response that lands after a re-login flap would loop over the
+	// presences inserting into the freed sa's NULL hashes (flood) and then g_queue_push into the freed
+	// NULL pending_presences queue -> SIGSEGV. Bail by pointer check (no deref of the freed sa).
+	if (!teams_account_is_live(sa))
+		return;
+
 	JsonArray *responses = json_node_get_array(node);
 
 	if (responses == NULL || json_array_get_length(responses) == 0) {
@@ -2506,8 +2530,11 @@ teams_subscribe_to_contact_status_delay(gpointer contacts_ptr)
 		return FALSE;
 	}
 
+	// this repeating g_timeout isn't cancelled by teams_close's purple_http_conn_cancel_all, so
+	// it can fire against a freed sa after a re-login flap. teams_account_is_live() checks by pointer
+	// (no deref) and must come FIRST so we never reach PURPLE_CONNECTION_IS_VALID(sa->pc) on a freed sa.
 	TeamsAccount *sa = g_dataset_get_data(contacts, "teams_account");
-	if (sa == NULL || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
+	if (!teams_account_is_live(sa) || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
 		g_slist_free_full(contacts, g_free);
 		g_dataset_destroy(contacts);
 		return FALSE;
@@ -2540,6 +2567,11 @@ void
 teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 {
 	if (contacts == NULL) {
+		return;
+	}
+	// guard against a late call for a freed account (the subscribed_contacts insert loop below
+	// would otherwise flood NULL-hash criticals and hang). Pointer check, no deref of a freed sa.
+	if (!teams_account_is_live(sa)) {
 		return;
 	}
 
