@@ -29,9 +29,11 @@ const char *teams_video_our_direction(const char *answer_dir);
 gboolean teams_video_dir_we_send(const char *answer_dir);
 gboolean teams_video_dir_peer_sends(const char *offer_dir);
 
-/* Whether turning our camera on needs an offer of our own (the web client's mid-call
- * .../renegotiate): the camera is wanted, the engine has video, the call's media is negotiated,
- * our current direction does not let us send, and no offer of ours is waiting for its answer. */
+/* Whether turning our camera on or off needs an offer of our own (the web client's mid-call
+ * .../renegotiate): the call's media is negotiated, no offer of ours is waiting for its answer,
+ * and our current direction does not match the camera - it does not let us send while the camera
+ * is wanted and the engine has video, or it still lets us send while the camera is off. Without
+ * the second, the far side keeps showing our last frame (the Teams Android app does). */
 gboolean teams_video_needs_offer(gboolean camera, gboolean engine_video, gboolean negotiated,
                                  const char *our_dir, gboolean offer_pending);
 
@@ -39,6 +41,12 @@ gboolean teams_video_needs_offer(gboolean camera, gboolean engine_video, gboolea
  * (teams.live.com turning its camera on mid-call): the uuid is the participantId of the
  * cpconv that placed the call, and the first offer of each call is v_1. g_free() it; NULL without
  * a participant id or for n 0. */
+/* The video direction of that offer: "sendrecv" with the camera on, "recvonly" with it off.
+ * CAPTURED (the Teams Android app turning its camera off and on mid-call): its offers keep the
+ * m=video line and port, with a=recvonly and callModalities ["audio"] while its camera is off,
+ * and sendrecv with ["audio","video"] once it is back on. */
+const char *teams_video_offer_direction(gboolean camera);
+
 gchar *teams_negotiation_tag(const char *participant_id, guint n);
 
 #endif

@@ -89,6 +89,9 @@ link it gives; the call is up when the callee picks up.
 * Turning our camera on in a call that did not send video needs an offer of our own
   (`.../renegotiate`) with video `sendrecv`, the same ICE credentials and key, and negotiationTag
   `<participantId>;v_<n>`: the participantId of the call's cpconv, n counting from 1 per call.
+* Turning it off while we send takes the same offer with video `recvonly` and `callModalities`
+  `["Audio"]`, which is what the Teams Android app offers when its own camera goes off. Only
+  stopping the RTP leaves the far side showing our last frame.
 * m-lines other than audio and video (e.g. `m=x-data`) are declined (port 0).
 
 ### Ending

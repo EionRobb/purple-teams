@@ -67,7 +67,7 @@ static void test_answer_direction(void)
 	CHECK(!strcmp(teams_video_our_direction(NULL), "inactive"));
 }
 
-/* Our own offer when the camera comes on mid-call, and its negotiationTag. */
+/* Our own offer when the camera comes on or goes off mid-call, and its negotiationTag. */
 static void test_needs_offer(void)
 {
 	gchar *t;
@@ -76,7 +76,16 @@ static void test_needs_offer(void)
 	CHECK(teams_video_needs_offer(TRUE, TRUE, TRUE, NULL, FALSE));      /* a voice call we placed */
 	CHECK(!teams_video_needs_offer(TRUE, TRUE, TRUE, "sendrecv", FALSE)); /* already sending */
 	CHECK(!teams_video_needs_offer(TRUE, TRUE, TRUE, "sendonly", FALSE));
-	CHECK(!teams_video_needs_offer(FALSE, TRUE, TRUE, "recvonly", FALSE)); /* camera off */
+	CHECK(!teams_video_needs_offer(FALSE, TRUE, TRUE, "recvonly", FALSE)); /* camera off, not sending */
+	CHECK(!teams_video_needs_offer(FALSE, TRUE, TRUE, "inactive", FALSE));
+	CHECK(!teams_video_needs_offer(FALSE, TRUE, TRUE, NULL, FALSE));
+	CHECK(teams_video_needs_offer(FALSE, TRUE, TRUE, "sendrecv", FALSE));   /* camera off while sending */
+	CHECK(teams_video_needs_offer(FALSE, TRUE, TRUE, "sendonly", FALSE));
+	CHECK(teams_video_needs_offer(FALSE, FALSE, TRUE, "sendrecv", FALSE));
+	CHECK(!teams_video_needs_offer(FALSE, TRUE, FALSE, "sendrecv", FALSE)); /* not negotiated yet */
+	CHECK(!teams_video_needs_offer(FALSE, TRUE, TRUE, "sendrecv", TRUE));   /* one already waiting */
+	CHECK(!strcmp(teams_video_offer_direction(TRUE), "sendrecv"));
+	CHECK(!strcmp(teams_video_offer_direction(FALSE), "recvonly"));
 	CHECK(!teams_video_needs_offer(TRUE, FALSE, TRUE, "recvonly", FALSE)); /* engine without video */
 	CHECK(!teams_video_needs_offer(TRUE, TRUE, FALSE, "recvonly", FALSE)); /* the first answer carries it */
 	CHECK(!teams_video_needs_offer(TRUE, TRUE, TRUE, "recvonly", TRUE));   /* one already waiting */

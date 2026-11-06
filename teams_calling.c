@@ -186,6 +186,7 @@ typedef struct {
 	/* An offer of ours (send_reneg_offer) is waiting for its answer, which comes as a mediaAnswer
 	 * frame; the timer gives up on it so that the camera button can try again. */
 	gboolean     reneg_offer_pending;
+	gboolean     reneg_offer_camera;   /* the camera state that offer announces */
 	guint        reneg_offer_timer;
 } TeamsMediaProc;
 
@@ -671,7 +672,7 @@ media_send_candidates(TeamsMediaProc *mp, const char *sdp)
 }
 
 static void teams_calling_post_answer(TeamsCall *call);
-static gboolean send_reneg_offer(TeamsMediaProc *mp);
+static gboolean send_reneg_offer(TeamsMediaProc *mp, gboolean camera);
 static void call_http_post(TeamsAccount *sa, const gchar *full_url, const gchar *body);
 
 /* Our own connection address for c=/m=, from the first UDP host candidate (NOT the offerer's relay
@@ -737,7 +738,9 @@ sdp_declined_mlines(const gchar *offer)
  * when the far side sends, and send when our camera is on and the far side receives. A voice-only
  * offer - the Android app's first offer has video a=recvonly, its renegotiations a=inactive - is
  * answered a=inactive as before (see build_answer_sdp). Turning our camera on mid-call when our
- * answer so far does not let us send makes an offer of our own (send_reneg_offer). */
+ * answer so far does not let us send makes an offer of our own (send_reneg_offer), and so does
+ * turning it off while our direction still lets us send: stopping the RTP alone leaves the far
+ * side showing our last frame. */
 
 static void
 video_event(TeamsMediaProc *mp, const char *line)
@@ -795,11 +798,12 @@ teams_calling_set_camera(TeamsAccount *sa, gboolean on)
 		 * far side's answer is applied; before that the first answer carries the camera. */
 		gboolean negotiated = mp->video_answer || (mp->is_caller && mp->call->answer_applied);
 		if (teams_video_needs_offer(on, mp->our_vssrc != 0, negotiated, mp->video_answer, mp->reneg_offer_pending)) {
-			if (!send_reneg_offer(mp))
-				teams_call_log("video: camera on, waiting for an offer that lets us send (answered %s)",
-				               mp->video_answer ? mp->video_answer : "no video");
-		} else if (on && mp->reneg_offer_pending) {
-			teams_call_log("video: camera on, our offer is waiting for its answer");
+			if (!send_reneg_offer(mp, on))
+				teams_call_log("video: camera %s, waiting for an offer to follow (answered %s)",
+				               on ? "on" : "off", mp->video_answer ? mp->video_answer : "no video");
+		} else if (mp->reneg_offer_pending && on != mp->reneg_offer_camera) {
+			/* handle_reneg_offer_answer() offers again once that answer is in */
+			teams_call_log("video: camera %s, our offer is waiting for its answer", on ? "on" : "off");
 		}
 	}
 	if (mp->video_answer) media_video_apply(mp);
@@ -1222,11 +1226,14 @@ send_reneg_answer(TeamsMediaProc *mp, const gchar *answer_link)
  * contentType, requiredFeatures, clientLocation, negotiationTag, mediaLegId}}} to the far side's
  * mediaRenegotiation link (202); the answer comes as a mediaAnswer frame on the link given, the
  * web client acknowledges it on that frame's mediaAcknowledgement link, and the far side then
- * sends offers of its own, answered as before. */
+ * sends offers of its own, answered as before. Turning the camera off makes the same offer with
+ * video a=recvonly and callModalities ["Audio"], as the Teams Android app's own camera-off offers
+ * are (teams_video_offer_direction). */
 #define RENEG_OFFER_WAIT_S 15
 
 static gchar *
-reneg_offer_body(TeamsCall *call, const gchar *sdp, const gchar *leg_id, const gchar *tag)
+reneg_offer_body(TeamsCall *call, const gchar *sdp, const gchar *leg_id, const gchar *tag,
+                 gboolean camera)
 {
 	TeamsAccount *sa = call->sa;
 	const char *agent = call->callagent_id;
@@ -1237,12 +1244,12 @@ reneg_offer_body(TeamsCall *call, const gchar *sdp, const gchar *leg_id, const g
 	gchar *l_ans = callagent_path(call, agent, "call", "mediaAnswer");
 	gchar *l_rej = callagent_path(call, agent, "call", "rejection");
 	gchar *body = g_strdup_printf(
-	    "{\"mediaNegotiation\":{\"callModalities\":[\"Audio\",\"Video\"],\"sender\":%s,"
+	    "{\"mediaNegotiation\":{\"callModalities\":%s,\"sender\":%s,"
 	      "\"links\":{\"mediaAnswer\":\"%s\",\"rejection\":\"%s\"},"
 	      "\"mediaContent\":{\"blob\":%s,\"contentType\":\"application/sdp-ngc-1.0\","
 	        "\"requiredFeatures\":\"nonByPass\",\"clientLocation\":%s,\"negotiationTag\":%s,"
 	        "\"mediaLegId\":%s}}}",
-	    sender, l_ans, l_rej, blob_q, loc_q, tag_q, leg_q);
+	    camera ? "[\"Audio\",\"Video\"]" : "[\"Audio\"]", sender, l_ans, l_rej, blob_q, loc_q, tag_q, leg_q);
 	g_free(sender); g_free(loc); g_free(loc_q); g_free(blob_q); g_free(leg_q); g_free(tag_q);
 	g_free(l_ans); g_free(l_rej);
 	return body;
@@ -1279,31 +1286,34 @@ reneg_offer_resp_cb(PurpleHttpConnection *hc, PurpleHttpResponse *resp, gpointer
 		reneg_offer_done(g_mproc);
 }
 
-/* POST our offer: video sendrecv on the call's media. FALSE if it could not be sent. */
+/* POST our offer: video sendrecv on the call's media with the camera on, recvonly with it off.
+ * FALSE if it could not be sent. */
 static gboolean
-send_reneg_offer(TeamsMediaProc *mp)
+send_reneg_offer(TeamsMediaProc *mp, gboolean camera)
 {
+	const char *vdir = teams_video_offer_direction(camera);
 	TeamsCall *call = mp->call;
 	GString *sdp;
 	gchar *tag, *body, *url, *host;
 	const gchar *leg = call->media_leg_id ? call->media_leg_id : mp->reneg_leg_id;
 	if (!call->link_peer_reneg || !mp->our_ufrag || !mp->our_pwd || !mp->our_txkey || !call->our_participant_id) {
-		teams_call_log("renegotiate: cannot offer video (link=%d uf=%d pw=%d key=%d pid=%d)",
-		               call->link_peer_reneg != NULL, mp->our_ufrag != NULL, mp->our_pwd != NULL,
+		teams_call_log("renegotiate: cannot offer video %s (link=%d uf=%d pw=%d key=%d pid=%d)",
+		               vdir, call->link_peer_reneg != NULL, mp->our_ufrag != NULL, mp->our_pwd != NULL,
 		               mp->our_txkey != NULL, call->our_participant_id != NULL);
 		return FALSE;
 	}
 	tag = teams_negotiation_tag(call->our_participant_id, call->reneg_offers + 1);
 	if (!tag) return FALSE;
 	call->reneg_offers++;
-	sdp = build_sdp(mp, "sendrecv");
+	sdp = build_sdp(mp, vdir);
 	sdp_log_shape("renegotiation offer of ours", sdp->str);
-	body = reneg_offer_body(call, sdp->str, leg, tag);
+	body = reneg_offer_body(call, sdp->str, leg, tag, camera);
 	url = teams_calling_via_flightproxy(call->link_peer_reneg);
 	host = url_host_for_log(url);
-	teams_call_log("renegotiate: offering video sendrecv, v_%u (%d bytes) to %s", call->reneg_offers,
+	teams_call_log("renegotiate: offering video %s, v_%u (%d bytes) to %s", vdir, call->reneg_offers,
 	               (int) strlen(body), host ? host : "?");
 	mp->reneg_offer_pending = TRUE;
+	mp->reneg_offer_camera = camera;
 	if (mp->reneg_offer_timer) g_source_remove(mp->reneg_offer_timer);
 	mp->reneg_offer_timer = g_timeout_add_seconds(RENEG_OFFER_WAIT_S, reneg_offer_timeout, mp);
 	flightproxy_post_cb(call->sa, url, body, reneg_offer_resp_cb, call_ref_new(call));
@@ -1313,7 +1323,9 @@ send_reneg_offer(TeamsMediaProc *mp)
 
 /* The far side's answer to our offer (a mediaAnswer frame while one is waiting): acknowledge it
  * and send our camera if it lets us. The credentials stay the call's (see build_sdp); an answer
- * that changes them is logged, not applied. */
+ * that changes them is logged, not applied. If the camera was toggled while the offer waited,
+ * the next offer announces where it is now; it is not repeated for an answer that merely
+ * refuses what we offered, which would go on forever. */
 static void
 handle_reneg_offer_answer(TeamsAccount *sa, TeamsCall *call, TeamsMediaProc *mp, JsonObject *body_obj)
 {
@@ -1347,6 +1359,12 @@ handle_reneg_offer_answer(TeamsAccount *sa, TeamsCall *call, TeamsMediaProc *mp,
 	teams_call_log("video: answer to our offer %s, so we %s", peer ? peer : "none", mp->video_answer);
 	video_event(mp, teams_video_dir_peer_sends(peer) ? "OFFERED 1" : "OFFERED 0");
 	media_video_apply(mp);
+	if (mp->camera_wanted != mp->reneg_offer_camera &&
+	    teams_video_needs_offer(mp->camera_wanted, mp->our_vssrc != 0, TRUE, mp->video_answer, FALSE)) {
+		teams_call_log("video: camera turned %s while our offer waited, offering again",
+		               mp->camera_wanted ? "on" : "off");
+		send_reneg_offer(mp, mp->camera_wanted);
+	}
 }
 
 /* read UFRAG/PWD/TXKEY/SSRC/VSSRC/CAND/READY/ANSWERED/RESTARTED/AUDIOD/ERR and the video lines
