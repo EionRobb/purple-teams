@@ -9,7 +9,7 @@ on:
 jobs:
   cross-build:
     name: cross-compile macOS universal
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     env:
       OSXCROSS_COMMIT: 27d21e4977c9751d01199c7a226a6faf494c3dd9
@@ -34,7 +34,7 @@ jobs:
           path: ${{ env.OSXCROSS }}
           # The linker depends on the host libxml2 ABI; do not reuse
           # cached binaries built on an older Ubuntu runner image.
-          key: osxcross-ubuntu24-${{ env.OSXCROSS_COMMIT }}-sdk11.3-v2
+          key: osxcross-ubuntu24-${{ env.OSXCROSS_COMMIT }}-sdk11.3-v3
 
       - name: Download SDK and build osxcross
         if: steps.osxcross-cache.outputs.cache-hit != 'true'
@@ -57,6 +57,18 @@ jobs:
           TARGET=$(basename "$(ls -1 "$OSXCROSS"/bin/x86_64-apple-darwin[0-9]*-clang | grep -v cmake | head -n 1)" | sed 's/x86_64-apple-//;s/-clang//')
           echo "Detected Darwin target: $TARGET"
           echo "DARWIN_TARGET=$TARGET" >> $GITHUB_ENV
+
+      - name: Verify osxcross linker host dependencies
+        run: |
+          set -euo pipefail
+          for linker in "$OSXCROSS"/bin/*-apple-darwin*-ld; do
+            [ -e "$linker" ] || continue
+            echo "Checking $linker"
+            if ldd "$linker" | grep -q 'not found'; then
+              ldd "$linker"
+              exit 1
+            fi
+          done
 
       - name: Build plugin slices
         run: |
