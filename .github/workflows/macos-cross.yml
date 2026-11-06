@@ -30,7 +30,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.OSXCROSS }}
-          key: osxcross-${{ env.OSXCROSS_COMMIT }}-sdk11.3
+          # The linker depends on the host libxml2 ABI; do not reuse
+          # cached binaries built on an older Ubuntu runner image.
+          key: osxcross-ubuntu24-${{ env.OSXCROSS_COMMIT }}-sdk11.3-v2
 
       - name: Download SDK and build osxcross
         if: steps.osxcross-cache.outputs.cache-hit != 'true'
