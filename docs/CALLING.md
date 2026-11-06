@@ -22,6 +22,43 @@ message, as without `TEAMS_CALLING`.
 <https://github.com/webOS-ports/luneos-synergy-connectors>, `im/teams/calling/media/`. It plays and
 records through PulseAudio devices of its own naming, so it needs adapting to a desktop.
 
+### The in-process engine (PurpleMedia)
+
+    make libteams-personal.so TEAMS_CALLING=1 TEAMS_PURPLEMEDIA=1 TEAMS_MEDIA_BIN=/usr/libexec/teams_media
+
+adds `teams_call_pmedia.c`, an engine on libpurple's own voice and video support (PurpleMedia,
+with Farstream). It needs libpurple 2 built with it (`--enable-vv`, so Farstream 0.2 and
+GStreamer 1.x) and links GStreamer itself. It runs inside the plug-in's process and takes the
+same lines as `teams_media` (below), so the signalling is the same for both. A call uses it when
+`TEAMS_MEDIA_BIN` is not installed, or with `TEAMS_CALL_ENGINE=purplemedia` in the environment
+(`TEAMS_CALL_ENGINE=teams_media` picks the other).
+
+What it does not do yet:
+
+* Voice only. It has no video, so our SDP declines the video m-line, and it does not BUNDLE (each
+  Farstream session has an ICE stream of its own). Teams takes such an answer. Video would be a
+  second session on its own ICE stream, which Teams also takes (tested with `teams_media`).
+* No ICE restart: `RESTART` gets `ERR`, and a renegotiation that changes the far side's ICE
+  credentials is not answered.
+* No REMB or transport-cc (no video, so none needed yet).
+* `RELAY turn` is ignored; only the STUN server is used.
+
+It plays and records through the PulseAudio devices `teams_media` uses (`voipcall`, `webcall`);
+`TEAMS_PMEDIA_SRC`/`TEAMS_PMEDIA_SINK` name other GStreamer elements instead. Its SSRC line is
+taken from its first RTP packet, which can hold the answer back by up to 2 s;
+`TEAMS_PMEDIA_NO_SSRC=1` leaves the SSRC out of the SDP.
+
+`tests/test_pmedia_loopback.c` places a call between two such engines in one process (`make
+check-pmedia`, with libpurple, Farstream and GStreamer's nice, srtp, rtpmanager, opus,
+audiotestsrc and fakesink installed): audio has to arrive both ways through SRTP-GCM over ICE.
+`tests/test_pmedia_novv.c` checks the other case: with a libpurple built without voice and video
+the plug-in still loads (the media-gst.h calls only such a libpurple lacks are looked up at run
+time) and the engine answers `START` with `ERR` and closes.
+
+Farstream 0.2.9's nice transmitter needs a fix to work with current libnice: nicesrc pushes buffer
+lists, which its source-association probe ignored, so with SRTP every packet was dropped
+(the patch is `nice: associate sources from buffer lists too`, not in Farstream yet).
+
 `TEAMS_CALL_DEBUG=1` in the environment copies the call log lines to stderr. They never contain
 SRTP keys, ICE passwords or TURN credentials; SDPs are logged by shape only.
 

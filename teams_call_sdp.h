@@ -49,4 +49,26 @@ const char *teams_video_offer_direction(gboolean camera);
 
 gchar *teams_negotiation_tag(const char *participant_id, guint n);
 
+/* One ICE candidate, as an SDP a=candidate line has it (RFC 5245 15.1):
+ * "candidate:<foundation> <component> <transport> <priority> <ip> <port> typ <type>
+ * [raddr <ip> rport <port>] [<name> <value>]...". */
+typedef struct {
+	gchar   foundation[33];
+	guint   component;
+	gboolean udp;             /* the transport is UDP (TCP candidates are left alone) */
+	guint32 priority;
+	gchar   ip[64];
+	guint   port;
+	gchar   type[8];          /* "host", "srflx", "prflx" or "relay" */
+	gchar   raddr[64];        /* "" when the line has none */
+	guint   rport;
+} TeamsIceCand;
+
+/* Parse a candidate line, with or without its "a=" (an engine's CAND/RCAND line). FALSE if it is
+ * not one: a field missing or out of range, or an unknown type. */
+gboolean teams_ice_candidate_parse(const char *line, TeamsIceCand *c);
+
+/* The "candidate:..." line for c, without "a=", in the order libnice writes it. g_free() it. */
+gchar *teams_ice_candidate_format(const TeamsIceCand *c);
+
 #endif

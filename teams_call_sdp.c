@@ -146,3 +146,75 @@ teams_negotiation_tag(const char *participant_id, guint n)
 	if (!participant_id || !*participant_id || !n) return NULL;
 	return g_strdup_printf("%s;v_%u", participant_id, n);
 }
+
+static gboolean
+parse_uint(const char *s, guint64 max, guint64 *out)
+{
+	gchar *end = NULL;
+	guint64 v;
+	if (!s || !g_ascii_isdigit(*s)) return FALSE;
+	v = g_ascii_strtoull(s, &end, 10);
+	if (!end || *end || v > max) return FALSE;
+	*out = v;
+	return TRUE;
+}
+
+gboolean
+teams_ice_candidate_parse(const char *line, TeamsIceCand *c)
+{
+	gchar **t;
+	guint64 v;
+	gboolean ok = FALSE;
+	int n, i;
+	if (!line || !c) return FALSE;
+	memset(c, 0, sizeof *c);
+	if (g_str_has_prefix(line, "a=")) line += 2;
+	if (!g_str_has_prefix(line, "candidate:")) return FALSE;
+	t = g_strsplit_set(line + strlen("candidate:"), " \t\r\n", -1);
+	/* drop the empty fields that repeated blanks leave */
+	for (i = 0, n = 0; t[i]; i++) {
+		if (*t[i]) t[n++] = t[i];
+		else g_free(t[i]);
+	}
+	t[n] = NULL;
+	if (n < 8 || strcmp(t[6], "typ")) goto out;
+	if (!*t[0] || strlen(t[0]) >= sizeof c->foundation) goto out;
+	g_strlcpy(c->foundation, t[0], sizeof c->foundation);
+	if (!parse_uint(t[1], 256, &v) || v == 0) goto out;
+	c->component = (guint) v;
+	c->udp = !g_ascii_strcasecmp(t[2], "UDP");
+	if (!parse_uint(t[3], G_MAXUINT32, &v)) goto out;
+	c->priority = (guint32) v;
+	if (!*t[4] || strlen(t[4]) >= sizeof c->ip) goto out;
+	g_strlcpy(c->ip, t[4], sizeof c->ip);
+	if (!parse_uint(t[5], 65535, &v)) goto out;
+	c->port = (guint) v;
+	if (strcmp(t[7], "host") && strcmp(t[7], "srflx") && strcmp(t[7], "prflx") && strcmp(t[7], "relay"))
+		goto out;
+	g_strlcpy(c->type, t[7], sizeof c->type);
+	for (i = 8; i + 1 < n; i += 2) {
+		if (!strcmp(t[i], "raddr")) {
+			if (strlen(t[i + 1]) >= sizeof c->raddr) goto out;
+			g_strlcpy(c->raddr, t[i + 1], sizeof c->raddr);
+		} else if (!strcmp(t[i], "rport")) {
+			if (!parse_uint(t[i + 1], 65535, &v)) goto out;
+			c->rport = (guint) v;
+		}
+	}
+	ok = TRUE;
+out:
+	g_strfreev(t);
+	if (!ok) memset(c, 0, sizeof *c);
+	return ok;
+}
+
+gchar *
+teams_ice_candidate_format(const TeamsIceCand *c)
+{
+	GString *s = g_string_new("");
+	g_string_append_printf(s, "candidate:%s %u %s %u %s %u typ %s", c->foundation, c->component,
+	                       c->udp ? "UDP" : "TCP", (unsigned) c->priority, c->ip, c->port, c->type);
+	if (c->raddr[0])
+		g_string_append_printf(s, " raddr %s rport %u", c->raddr, c->rport);
+	return g_string_free(s, FALSE);
+}

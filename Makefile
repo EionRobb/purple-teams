@@ -92,6 +92,14 @@ ifdef TEAMS_CALLING
 TEAMS_MEDIA_BIN ?= /usr/libexec/teams_media
 TEAMS_CALL_FILES = teams_calling.c teams_call_sdp.c
 TEAMS_CALL_FLAGS = -DTEAMS_CALLING -DTEAMS_MEDIA_BIN='"$(TEAMS_MEDIA_BIN)"'
+# TEAMS_PURPLEMEDIA=1 adds the in-process engine on libpurple's own voice and video (PurpleMedia,
+# Farstream; libpurple 2 built with it), used when teams_media is not installed or with
+# TEAMS_CALL_ENGINE=purplemedia. Voice only.
+ifdef TEAMS_PURPLEMEDIA
+TEAMS_CALL_FILES += teams_call_pmedia.c
+TEAMS_CALL_FLAGS += -DTEAMS_PURPLEMEDIA $(shell $(PKG_CONFIG) gstreamer-1.0 gio-2.0 gmodule-2.0 --cflags)
+TEAMS_CALL_LIBS += $(shell $(PKG_CONFIG) gstreamer-1.0 gio-2.0 gmodule-2.0 --libs)
+endif
 endif
 
 
@@ -101,14 +109,14 @@ PURPLE_LIBS ?= $(shell $(PKG_CONFIG) purple glib-2.0 json-glib-1.0 zlib --libs)
 PURPLE3_CFLAGS ?= $(shell $(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --cflags)
 PURPLE3_LIBS ?= $(shell $(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 zlib --libs)
 
-.PHONY:	all install FAILNOPURPLE clean translations check
+.PHONY:	all install FAILNOPURPLE clean translations check check-pmedia
 
 all: $(TEAMS_TARGET)
 
 libteams.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
 	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE_CFLAGS) $(PURPLE_LIBS) $(INCLUDES) -Ipurple2compat -g -ggdb
 libteams-personal.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES) $(TEAMS_CALL_FILES)
-	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL $(TEAMS_CALL_FLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE_CFLAGS) $(PURPLE_LIBS) $(INCLUDES) -Ipurple2compat -g -ggdb
+	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL $(TEAMS_CALL_FLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE_CFLAGS) $(PURPLE_LIBS) $(TEAMS_CALL_LIBS) $(INCLUDES) -Ipurple2compat -g -ggdb
 
 libteams3.so: $(PURPLE_C_FILES)
 	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE3_CFLAGS) $(PURPLE3_LIBS) $(INCLUDES) -g -ggdb
@@ -168,6 +176,18 @@ tests/test_call_sdp: tests/test_call_sdp.c teams_call_sdp.c
 check: tests/test_call_sdp
 	./tests/test_call_sdp
 
+# Loopback test of the PurpleMedia engine (see docs/CALLING.md): needs libpurple built with
+# voice and video, Farstream and GStreamer; silent (audiotestsrc into fakesink).
+tests/test_pmedia_loopback: tests/test_pmedia_loopback.c teams_call_pmedia.c teams_call_sdp.c
+	$(CC) $(CFLAGS) -I. -o $@ $^ $(LDFLAGS) $(shell $(PKG_CONFIG) purple glib-2.0 gio-2.0 gmodule-2.0 gstreamer-1.0 --cflags --libs)
+
+check-pmedia: tests/test_pmedia_loopback
+	TEAMS_PMEDIA_SRC=audiotestsrc TEAMS_PMEDIA_SINK=fakesink ./tests/test_pmedia_loopback
+
+# The same engine against a libpurple built without voice and video: it loads, and refuses calls.
+tests/test_pmedia_novv: tests/test_pmedia_novv.c teams_call_pmedia.c teams_call_sdp.c
+	$(CC) $(CFLAGS) -I. -o $@ $^ $(LDFLAGS) $(shell $(PKG_CONFIG) purple glib-2.0 gio-2.0 gmodule-2.0 gstreamer-1.0 --cflags --libs)
+
 clean:
-	rm -f $(TEAMS_TARGET) tests/test_call_sdp
+	rm -f $(TEAMS_TARGET) tests/test_call_sdp tests/test_pmedia_loopback tests/test_pmedia_novv
 

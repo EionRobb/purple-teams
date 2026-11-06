@@ -131,8 +131,44 @@ static void test_send_params(void)
 	CHECK(w == 640 && h == 480 && k == 800);
 }
 
+static void test_ice_candidate(void)
+{
+	TeamsIceCand c;
+	gchar *f;
+	/* libnice's own shape (teams_media's CAND lines) */
+	CHECK(teams_ice_candidate_parse("candidate:1 1 UDP 2015363327 192.168.1.5 50523 typ host", &c));
+	CHECK(!strcmp(c.foundation, "1") && c.component == 1 && c.udp && c.priority == 2015363327u);
+	CHECK(!strcmp(c.ip, "192.168.1.5") && c.port == 50523 && !strcmp(c.type, "host") && !c.raddr[0]);
+	f = teams_ice_candidate_format(&c);
+	CHECK(!strcmp(f, "candidate:1 1 UDP 2015363327 192.168.1.5 50523 typ host"));
+	g_free(f);
+	/* a Teams offer's, with a=, raddr/rport and trailing attributes (addresses made up) */
+	CHECK(teams_ice_candidate_parse("a=candidate:3 1 UDP 1694498815 203.0.113.7 3480 typ srflx "
+	                                "raddr 10.0.0.2 rport 3480 generation 0\r", &c));
+	CHECK(!strcmp(c.type, "srflx") && !strcmp(c.raddr, "10.0.0.2") && c.rport == 3480 && c.port == 3480);
+	f = teams_ice_candidate_format(&c);
+	CHECK(!strcmp(f, "candidate:3 1 UDP 1694498815 203.0.113.7 3480 typ srflx raddr 10.0.0.2 rport 3480"));
+	g_free(f);
+	/* the TCP ones Teams sends are parsed, and marked */
+	CHECK(teams_ice_candidate_parse("candidate:4 1 TCP-ACT 1 203.0.113.7 3478 typ relay", &c) && !c.udp);
+	CHECK(teams_ice_candidate_parse("candidate:2  2 udp 5 ::1 9 typ relay", &c) && c.udp && c.component == 2);
+	/* not candidates */
+	CHECK(!teams_ice_candidate_parse(NULL, &c));
+	CHECK(!teams_ice_candidate_parse("a=ice-ufrag:abc", &c));
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4 70000 typ host", &c));   /* port */
+	CHECK(!teams_ice_candidate_parse("candidate:1 0 UDP 5 1.2.3.4 7 typ host", &c));       /* component */
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 4294967296 1.2.3.4 7 typ host", &c));
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4 7 typ bogus", &c));
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4 7 host", &c));
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4", &c));
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP -5 1.2.3.4 7 typ host", &c));
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4 7 typ host raddr 1.2.3.4 rport x", &c));
+	CHECK(c.port == 0 && !c.ip[0]);   /* left cleared on failure */
+}
+
 int main(void)
 {
+	test_ice_candidate();
 	test_send_params();
 	test_sdp_direction();
 	test_answer_direction();

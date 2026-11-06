@@ -16,6 +16,9 @@
 #include "teams_call_sdp.h"
 #include "teams_connection.h"
 #include "teams_util.h"
+#ifdef TEAMS_PURPLEMEDIA
+#include "teams_call_pmedia.h"
+#endif
 
 #include <glib-unix.h>
 #include <errno.h>
@@ -143,7 +146,10 @@ typedef struct {
 
 typedef struct {
 	TeamsCall   *call;
-	MediaReaper *reaper;       /* NULL once the engine has exited */
+	MediaReaper *reaper;       /* NULL once the engine has exited, and for the in-process engine */
+#ifdef TEAMS_PURPLEMEDIA
+	TeamsPMedia *pm;           /* the in-process PurpleMedia engine, instead of teams_media */
+#endif
 	int          in_fd;        /* -> child stdin (our end of a socketpair; written with MSG_NOSIGNAL) */
 	GIOChannel  *out_ch;       /* <- child stdout */
 	guint        out_watch;
@@ -191,6 +197,20 @@ typedef struct {
 } TeamsMediaProc;
 
 static TeamsMediaProc *g_mproc;
+
+/* The engine has no BUNDLE: the in-process PurpleMedia one (Farstream gives each session its own
+ * ICE stream). Teams takes an answer without BUNDLE and with video declined (tested on a call
+ * from the Teams Android app). */
+static gboolean
+media_engine_unbundled(const TeamsMediaProc *mp)
+{
+#ifdef TEAMS_PURPLEMEDIA
+	return mp && mp->pm != NULL;
+#else
+	(void) mp;
+	return FALSE;
+#endif
+}
 
 /* An async HTTP callback's handle on a call: the call itself may be gone by the time the
  * response arrives (hung up, replaced, account closed). */
@@ -874,7 +894,7 @@ build_sdp(TeamsMediaProc *mp, const char *vdir)
 	g_string_append(a, "b=CT:4000\r\nt=0 0\r\n");
 	g_string_append(a, "a=extmap-allow-mixed\r\n");
 	g_string_append(a, "a=msid-semantic: WMS *\r\n");
-	g_string_append(a, "a=group:BUNDLE audio_0 video_1\r\n");
+	if (!media_engine_unbundled(mp)) g_string_append(a, "a=group:BUNDLE audio_0 video_1\r\n");
 	g_string_append_printf(a, "m=audio %d RTP/SAVP 102 9 0 8 101\r\n", our_port);
 	g_string_append_printf(a, "c=IN IP4 %s\r\n", our_ip ? our_ip : "127.0.0.1");
 	g_string_append(a, "a=rtpmap:102 opus/48000/2\r\n");
@@ -900,7 +920,10 @@ build_sdp(TeamsMediaProc *mp, const char *vdir)
 	g_string_append(a, "a=rtcp-mux\r\n");
 	g_string_append(a, "a=label:main-audio\r\n");
 
-	append_video_mline(a, mp, our_port, our_ip ? our_ip : "127.0.0.1", "video_1", vdir);
+	if (media_engine_unbundled(mp))   /* no video: declined, as RFC 3264 has it */
+		g_string_append(a, "m=video 0 RTP/SAVP 107\r\na=mid:video_1\r\n");
+	else
+		append_video_mline(a, mp, our_port, our_ip ? our_ip : "127.0.0.1", "video_1", vdir);
 	/* A declined m-line is left out of the BUNDLE group above (RFC 8843). */
 	if (mp->declined_mlines) g_string_append(a, mp->declined_mlines);
 
@@ -1007,7 +1030,8 @@ media_send_offer(TeamsMediaProc *mp)
 	our_ip = our_host_address(mp, &our_port);
 	video = mp->camera_wanted && mp->our_vssrc;   /* a video call, and the engine has video */
 	sdp = g_string_new("v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nb=CT:4000\r\nt=0 0\r\n");
-	g_string_append(sdp, video ? "a=group:BUNDLE 0 1\r\n" : "a=group:BUNDLE 0\r\n");
+	if (!media_engine_unbundled(mp))
+		g_string_append(sdp, video ? "a=group:BUNDLE 0 1\r\n" : "a=group:BUNDLE 0\r\n");
 	g_string_append_printf(sdp, "m=audio %d RTP/SAVP 102 9 0 8\r\n", our_port);
 	g_string_append_printf(sdp, "c=IN IP4 %s\r\n", our_ip ? our_ip : "0.0.0.0");
 	g_string_append(sdp, "a=rtpmap:102 opus/48000/2\r\na=rtpmap:9 G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\n");
@@ -1367,6 +1391,18 @@ handle_reneg_offer_answer(TeamsAccount *sa, TeamsCall *call, TeamsMediaProc *mp,
 	}
 }
 
+#ifdef TEAMS_PURPLEMEDIA
+static gboolean
+media_engine_lost_cb(gpointer u)
+{
+	CallRef *ref = u;
+	TeamsCall *call = call_ref_resolve(ref);
+	g_free(ref);
+	if (call && g_mproc && g_mproc->call == call) end_call(call->sa, "error", TRUE);
+	return G_SOURCE_REMOVE;
+}
+#endif
+
 /* read UFRAG/PWD/TXKEY/SSRC/VSSRC/CAND/READY/ANSWERED/RESTARTED/AUDIOD/ERR and the video lines
  * (VSHM/VPREVIEW/VTX/PEERVIDEO/VIDEOERR, passed to the front end) from teams_media's stdout */
 static gboolean
@@ -1440,8 +1476,15 @@ media_on_output(GIOChannel *ch, GIOCondition cond, gpointer user)
 		g_free(line); line = NULL;
 	}
 	if (cond & (G_IO_HUP | G_IO_ERR)) {
-		/* The engine closed its stdout; its exit is handled by media_child_exited(). */
+		/* The engine closed its stdout; its exit is handled by media_child_exited(). The
+		 * in-process engine has no exit: its closing the pipe is the media being lost. */
 		mp->out_watch = 0;
+#ifdef TEAMS_PURPLEMEDIA
+		if (mp->pm && g_mproc == mp) {
+			teams_call_log("media engine (PurpleMedia) lost the media during the call; ending it");
+			g_idle_add(media_engine_lost_cb, call_ref_new(mp->call));
+		}
+#endif
 		return G_SOURCE_REMOVE;
 	}
 	return G_SOURCE_CONTINUE;
@@ -1483,17 +1526,36 @@ media_child_exited(GPid pid, gint status, gpointer user)
 	g_free(r);
 }
 
+#ifdef TEAMS_PURPLEMEDIA
+/* Which engine a call gets: TEAMS_CALL_ENGINE=purplemedia or =teams_media in the environment
+ * chooses; without it, teams_media when it is installed and the in-process one when not. */
+static gboolean
+media_use_pmedia(void)
+{
+	const char *e = g_getenv("TEAMS_CALL_ENGINE");
+	if (e && !g_ascii_strcasecmp(e, "purplemedia")) return TRUE;
+	if (e && !g_ascii_strcasecmp(e, "teams_media")) return FALSE;
+	return !g_file_test(TEAMS_MEDIA_BIN, G_FILE_TEST_IS_EXECUTABLE);
+}
+#endif
+
 /* Start an engine for call (none may be running): stdin is a socketpair, stdout a pipe, stderr
- * the service's own. The engine inherits our environment. */
+ * the service's own. The engine inherits our environment. The in-process engine gets the other
+ * ends of the same two instead, so both are driven alike. */
 static TeamsMediaProc *
 media_spawn(TeamsCall *call, gboolean is_caller)
 {
 	const gchar *argv[] = { TEAMS_MEDIA_BIN, is_caller ? "--caller" : "--answer", NULL };
 	int sv[2], outp[2];
-	GPid pid;
+	GPid pid = 0;
 	GError *err = NULL;
 	TeamsMediaProc *mp;
-	MediaReaper *r;
+	MediaReaper *r = NULL;
+	gboolean in_process = FALSE;
+#ifdef TEAMS_PURPLEMEDIA
+	TeamsPMedia *pm = NULL;
+	in_process = media_use_pmedia();
+#endif
 
 	if (g_mproc) {
 		teams_call_log("media: an engine is already running for another call");
@@ -1503,27 +1565,45 @@ media_spawn(TeamsCall *call, gboolean is_caller)
 		teams_call_log("media: socketpair: %s", g_strerror(errno));
 		return NULL;
 	}
-	if (!g_unix_open_pipe(outp, FD_CLOEXEC, &err)) {
-		teams_call_log("media: pipe: %s", err->message);
-		g_error_free(err);
+	/* The in-process engine's output is a socket too, written with MSG_NOSIGNAL: a write after
+	 * we closed our end must not SIGPIPE the service. */
+	if (in_process ? socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, outp) < 0
+	               : !g_unix_open_pipe(outp, FD_CLOEXEC, &err)) {
+		teams_call_log("media: pipe: %s", err ? err->message : g_strerror(errno));
+		g_clear_error(&err);
 		close(sv[0]); close(sv[1]);
 		return NULL;
 	}
-	if (!g_spawn_async_with_fds(NULL, (gchar **) argv, NULL, G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL,
-	                            &pid, sv[1], outp[1], -1, &err)) {
-		teams_call_log("media: spawn %s failed: %s", TEAMS_MEDIA_BIN, err->message);
-		g_error_free(err);
-		close(sv[0]); close(sv[1]); close(outp[0]); close(outp[1]);
-		return NULL;
-	}
-	close(sv[1]); close(outp[1]);
+#ifdef TEAMS_PURPLEMEDIA
+	if (in_process) {
+		pm = teams_pmedia_start(call->sa->account, is_caller, sv[1], outp[1]);   /* takes both */
+		if (!pm) {
+			teams_call_log("media: the PurpleMedia engine did not start");
+			close(sv[0]); close(outp[0]);
+			return NULL;
+		}
+	} else
+#endif
+	{
+		if (!g_spawn_async_with_fds(NULL, (gchar **) argv, NULL, G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL,
+		                            &pid, sv[1], outp[1], -1, &err)) {
+			teams_call_log("media: spawn %s failed: %s", TEAMS_MEDIA_BIN, err->message);
+			g_error_free(err);
+			close(sv[0]); close(sv[1]); close(outp[0]); close(outp[1]);
+			return NULL;
+		}
+		close(sv[1]); close(outp[1]);
 
-	r = g_new0(MediaReaper, 1);
-	r->pid = pid;
-	g_child_watch_add(pid, media_child_exited, r);
+		r = g_new0(MediaReaper, 1);
+		r->pid = pid;
+		g_child_watch_add(pid, media_child_exited, r);
+	}
 
 	mp = g_new0(TeamsMediaProc, 1);
 	mp->call = call; mp->reaper = r; mp->in_fd = sv[0]; mp->is_caller = is_caller;
+#ifdef TEAMS_PURPLEMEDIA
+	mp->pm = pm;
+#endif
 	mp->our_cands = g_string_new("");
 	mp->out_ch = g_io_channel_unix_new(outp[0]);
 	g_io_channel_set_close_on_unref(mp->out_ch, TRUE);
@@ -1531,7 +1611,8 @@ media_spawn(TeamsCall *call, gboolean is_caller)
 	g_io_channel_set_flags(mp->out_ch, G_IO_FLAG_NONBLOCK, NULL);
 	mp->out_watch = g_io_add_watch(mp->out_ch, G_IO_IN | G_IO_HUP | G_IO_ERR, media_on_output, mp);
 	g_mproc = mp;
-	teams_call_log("media: spawned %s %s pid=%d", TEAMS_MEDIA_BIN, argv[1], (int) pid);
+	if (r) teams_call_log("media: spawned %s %s pid=%d", TEAMS_MEDIA_BIN, argv[1], (int) pid);
+	else   teams_call_log("media: in-process PurpleMedia engine %s", argv[1]);
 	return mp;
 }
 
@@ -1584,6 +1665,9 @@ teams_media_stop(void)
 	if (mp->out_ch) g_io_channel_unref(mp->out_ch);
 	if (mp->reaper && !mp->reaper->kill_timer)
 		mp->reaper->kill_timer = g_timeout_add_seconds(5, media_kill_cb, mp->reaper);
+#ifdef TEAMS_PURPLEMEDIA
+	teams_pmedia_free(mp->pm);
+#endif
 	g_string_free(mp->our_cands, TRUE);
 	if (mp->our_txkey) explicit_bzero(mp->our_txkey, strlen(mp->our_txkey));
 	g_free(mp->our_ufrag); g_free(mp->our_pwd); g_free(mp->our_txkey); g_free(mp->answer_ufrag);
