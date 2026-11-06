@@ -11,20 +11,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Validate SDK configuration
-        env:
-          SDK_URL: ${{ vars.MACOS_SDK_URL }}
-          SDK_SHA256: ${{ vars.MACOS_SDK_SHA256 }}
-        run: |
-          if [[ -z "$SDK_URL" || -z "$SDK_SHA256" ]]; then
-            echo '::error::Configure MACOS_SDK_URL and MACOS_SDK_SHA256 repository variables before running the shared LLVM osxcross test'
-            exit 1
-          fi
       - name: Set up shared LLVM osxcross
         uses: EionRobb/libpurple-build-actions/setup-osxcross@feature/reusable-osxcross-toolchain
-        with:
-          sdk-url: ${{ vars.MACOS_SDK_URL }}
-          sdk-sha256: ${{ vars.MACOS_SDK_SHA256 }}
       - name: Install plugin build dependencies
         run: |
           sudo apt-get update -qq
