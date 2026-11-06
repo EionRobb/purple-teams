@@ -125,6 +125,7 @@ struct _PurpleHttpConnection
 	guint length_got, length_got_decompressed;
 
 	gboolean is_chunked, in_chunk, chunks_done;
+	gboolean invalidate_socket;
 	int chunk_length, chunk_got;
 
 	GList *link_global, *link_gc;
@@ -938,8 +939,22 @@ static gboolean _purple_http_recv_headers(PurpleHttpConnection *hc,
 		}
 
 		g_string_erase(hc->response_buffer, 0, hdrline_len + 2);
-		if (hc->headers_got)
+		if (hc->headers_got) {
+			/* An interim response has no body. Keep parsing the final
+			 * response, possibly already present in this buffer. */
+			if (hc->response->code >= 100 &&
+				hc->response->code < 200 &&
+				hc->response->code != 101)
+			{
+				purple_http_headers_free(hc->response->headers);
+				hc->response->headers = purple_http_headers_new();
+				hc->response->code = 0;
+				hc->main_header_got = FALSE;
+				hc->headers_got = FALSE;
+				continue;
+			}
 			break;
+		}
 	}
 	return TRUE;
 }
@@ -1172,18 +1187,37 @@ static gboolean _purple_http_recv_loopbody(PurpleHttpConnection *hc, gint fd)
 		len = 0;
 		if (hc->headers_got) {
 			gboolean is_gzip, is_deflate;
+			gboolean bodyless = (hc->response->code == 204 ||
+				hc->response->code == 304 ||
+				(hc->response->code >= 100 &&
+				 hc->response->code < 200));
 			if (!purple_http_headers_get_int(hc->response->headers,
 				"Content-Length", &hc->length_expected))
 				hc->length_expected = -1;
-			hc->is_chunked = (purple_http_headers_match(
+			/* Bodyless responses complete at the end of the headers,
+			 * regardless of advertised length or transfer encoding. */
+			if (bodyless) {
+				/* An upgraded 101 connection is not reusable HTTP. */
+				if (hc->response->code == 101)
+					hc->invalidate_socket = TRUE;
+				/* Malformed framing means leftover bytes could poison
+				 * the next request on a reused connection. */
+				if (hc->response->code == 204 &&
+					(hc->length_expected > 0 ||
+					 purple_http_headers_get(hc->response->headers,
+						"Transfer-Encoding") != NULL))
+					hc->invalidate_socket = TRUE;
+				hc->length_expected = 0;
+			}
+			hc->is_chunked = !bodyless && purple_http_headers_match(
 				hc->response->headers,
-				"Transfer-Encoding", "chunked"));
-			is_gzip = purple_http_headers_match(
+				"Transfer-Encoding", "chunked");
+			is_gzip = !bodyless && purple_http_headers_match(
 				hc->response->headers, "Content-Encoding",
-				"gzip");
-			is_deflate = purple_http_headers_match(
+					"gzip");
+			is_deflate = !bodyless && purple_http_headers_match(
 				hc->response->headers, "Content-Encoding",
-				"deflate");
+					"deflate");
 			if (is_gzip || is_deflate) {
 				hc->gz_stream = purple_http_gz_new(
 					hc->request->max_length + 1,
@@ -1194,6 +1228,10 @@ static gboolean _purple_http_recv_loopbody(PurpleHttpConnection *hc, gint fd)
 			hc->response_buffer->len > 0)
 		{
 			int buffer_len = hc->response_buffer->len;
+			/* Unexpected bytes after a bodyless response must not
+			 * leak into a subsequent keep-alive request. */
+			if (hc->length_expected == 0 && !hc->is_chunked)
+				hc->invalidate_socket = TRUE;
 			gchar *buffer = g_string_free(hc->response_buffer, FALSE);
 			hc->response_buffer = NULL;
 			if (!_purple_http_recv_body(hc, buffer, buffer_len))
@@ -1268,7 +1306,11 @@ static gboolean _purple_http_recv_loopbody(PurpleHttpConnection *hc, gint fd)
 
 		redirect = purple_http_headers_get(hc->response->headers,
 			"location");
-		if (redirect && (hc->request->max_redirects == -1 ||
+		/* Not every 3xx status is a redirect (notably 304). */
+		if ((hc->response->code == 300 || hc->response->code == 301 ||
+			hc->response->code == 302 || hc->response->code == 303 ||
+			hc->response->code == 307 || hc->response->code == 308) &&
+			redirect && (hc->request->max_redirects == -1 ||
 			hc->request->max_redirects > hc->redirects_count))
 		{
 			PurpleHttpURL *url = purple_http_url_parse(redirect);
@@ -1298,7 +1340,7 @@ static gboolean _purple_http_recv_loopbody(PurpleHttpConnection *hc, gint fd)
 			return FALSE;
 		}
 
-		_purple_http_disconnect(hc, TRUE);
+		_purple_http_disconnect(hc, !hc->invalidate_socket);
 		purple_http_connection_terminate(hc);
 		return FALSE;
 	}
@@ -1549,6 +1591,7 @@ static gboolean _purple_http_reconnect(PurpleHttpConnection *hc)
 	hc->is_chunked = FALSE;
 	hc->in_chunk = FALSE;
 	hc->chunks_done = FALSE;
+	hc->invalidate_socket = FALSE;
 
 	purple_http_conn_notify_progress_watcher(hc);
 
