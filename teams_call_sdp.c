@@ -129,7 +129,15 @@ gboolean
 teams_video_needs_offer(gboolean camera, gboolean engine_video, gboolean negotiated,
                         const char *our_dir, gboolean offer_pending)
 {
-	return camera && engine_video && negotiated && !teams_video_dir_we_send(our_dir) && !offer_pending;
+	if (!negotiated || offer_pending) return FALSE;
+	if (camera) return engine_video && !teams_video_dir_we_send(our_dir);
+	return teams_video_dir_we_send(our_dir);
+}
+
+const char *
+teams_video_offer_direction(gboolean camera)
+{
+	return camera ? "sendrecv" : "recvonly";
 }
 
 gchar *
