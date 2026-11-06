@@ -462,7 +462,11 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	
 	static GRegex *skype_token_uri_regex = NULL;
 	if (skype_token_uri_regex == NULL) {
-		skype_token_uri_regex = g_regex_new("^https://api\\.asm\\.skype\\.com/|^https://[^\\.]*\\.asyncgw\\.teams\\.microsoft\\.com/", G_REGEX_OPTIMIZE, 0, NULL);
+		// match ANY *.asm.skype.com host, not just bare "api.asm.skype.com". Consumer/personal
+		// Teams serves media from region-prefixed hosts (us-api.asm.skype.com, nus1-api.asm.skype.com,
+		// ...); the old exact-match failed those, so the image download went out WITHOUT the skype_token
+		// cookie -> 401 -> an HTML/JSON body -> teams_got_imagemessage bailed -> empty bubble, no image.
+		skype_token_uri_regex = g_regex_new("^https://[^/]*\\.asm\\.skype\\.com/|^https://[^\\.]*\\.asyncgw\\.teams\\.microsoft\\.com/", G_REGEX_OPTIMIZE, 0, NULL);
 	}
 
 	//Only for skype domains
