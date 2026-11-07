@@ -1473,6 +1473,12 @@ media_on_output(GIOChannel *ch, GIOCondition cond, gpointer user)
 			}
 		}
 		else if (g_str_has_prefix(line, "AUDIOD ")) teams_call_log("media audiod %s", line + 7);
+		/* both engines' numbers every few seconds, tagged with which engine it is */
+		else if (g_str_has_prefix(line, "STATS ")) teams_call_log("media stats engine=%s %s",
+#ifdef TEAMS_PURPLEMEDIA
+		                                                          mp->pm ? "purplemedia" :
+#endif
+		                                                          "teams_media", line + 6);
 		g_free(line); line = NULL;
 	}
 	if (cond & (G_IO_HUP | G_IO_ERR)) {
@@ -1533,9 +1539,17 @@ static gboolean
 media_use_pmedia(void)
 {
 	const char *e = g_getenv("TEAMS_CALL_ENGINE");
-	if (e && !g_ascii_strcasecmp(e, "purplemedia")) return TRUE;
-	if (e && !g_ascii_strcasecmp(e, "teams_media")) return FALSE;
-	return !g_file_test(TEAMS_MEDIA_BIN, G_FILE_TEST_IS_EXECUTABLE);
+	const char *f = g_getenv("TEAMS_CALL_ENGINE_FILE");
+	gchar *fc = NULL;
+	gboolean r;
+	/* For comparing the engines call by call: the engine named in this file, read at each call,
+	 * so it can change without restarting the process. */
+	if (f && g_file_get_contents(f, &fc, NULL, NULL)) e = g_strstrip(fc);
+	if (e && !g_ascii_strcasecmp(e, "purplemedia")) r = TRUE;
+	else if (e && !g_ascii_strcasecmp(e, "teams_media")) r = FALSE;
+	else r = !g_file_test(TEAMS_MEDIA_BIN, G_FILE_TEST_IS_EXECUTABLE);
+	g_free(fc);
+	return r;
 }
 #endif
 

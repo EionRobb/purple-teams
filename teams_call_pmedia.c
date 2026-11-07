@@ -89,6 +89,9 @@ struct _TeamsPMedia {
 	gulong         wire_probe;
 	GHashTable    *other_sessions; /* rtpsession elements that were there before our stream */
 	GstElement    *rtpsession;     /* ours, once found (a weak pointer) */
+	guint          stats_timer;    /* the STATS line every PM_STATS_SECONDS */
+	gint64         stats_t0;
+	gdouble        mic_max;        /* loudest send level (RMS, 0-1) since the last STATS line */
 };
 
 /* libpurple's media-gst.h calls, looked up when first needed: a libpurple built without voice
@@ -120,6 +123,8 @@ pm_vv_available(void)
 
 static void pm_handle_line(TeamsPMedia *pm, gchar *line);
 static void pm_wire_stop(TeamsPMedia *pm);
+static void pm_stats_emit(TeamsPMedia *pm);
+static guint pm_find_ssrc(TeamsPMedia *pm);
 
 static void
 pm_log(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
@@ -208,6 +213,11 @@ static void
 pm_end_media(TeamsPMedia *pm)
 {
 	PurpleMedia *media = pm->media;
+	if (pm->stats_timer) {
+		g_source_remove(pm->stats_timer);
+		pm->stats_timer = 0;
+		pm_stats_emit(pm);     /* the call's last numbers */
+	}
 	if (pm->ssrc_check) { g_source_remove(pm->ssrc_check); pm->ssrc_check = 0; }
 	pm_wire_stop(pm);
 	if (pm->rtpsession) {
@@ -251,6 +261,121 @@ pm_fatal(TeamsPMedia *pm, const char *why)
 	pm_stop_input(pm);
 	pm_end_media(pm);
 	if (pm->out_fd >= 0 && !pm->outq->len) { close(pm->out_fd); pm->out_fd = -1; }
+}
+
+/* ---- statistics ---------------------------------------------------------------------------- */
+
+/* Every PM_STATS_SECONDS a STATS line in the form teams_media prints too (tm_stats_line in
+ * teams_media.c), so the two engines can be compared on real calls:
+ *   STATS t=<s> tx=<RTP packets sent> rx=<RTP packets received> jb_pushed= jb_lost= jb_late=
+ *         jb_dup= jb_jitter_us= (the audio jitterbuffers' own counts) peer_lost= peer_frac=
+ *         (the far side's last RTCP report about our audio; -1 = none yet) rtt_ms= (from that
+ *         report; -1 = none) mic_rms= (loudest send level in the interval, 0-1)
+ * From our RTP session's source statistics and the jitterbuffers next to it in its rtpbin. */
+#define PM_STATS_SECONDS 5
+
+static void
+pm_jb_add(GstElement *jb, guint64 *v)
+{
+	GstStructure *st = NULL;
+	guint64 x;
+	g_object_get(jb, "stats", &st, NULL);
+	if (!st) return;
+	if (gst_structure_get_uint64(st, "num-pushed", &x)) v[0] += x;
+	if (gst_structure_get_uint64(st, "num-lost", &x)) v[1] += x;
+	if (gst_structure_get_uint64(st, "num-late", &x)) v[2] += x;
+	if (gst_structure_get_uint64(st, "num-duplicates", &x)) v[3] += x;
+	if (gst_structure_get_uint64(st, "avg-jitter", &x) && x > v[4]) v[4] = x;   /* ns; the worst */
+	gst_structure_free(st);
+}
+
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS   /* GValueArray: what rtpsession's source-stats is */
+static void
+pm_stats_emit(TeamsPMedia *pm)
+{
+	guint64 tx = 0, rx = 0, jb[5] = { 0, 0, 0, 0, 0 };
+	gint peer_lost = -1, peer_frac = -1, rtt_ms = -1;
+	GstStructure *st = NULL;
+	GstObject *bin;
+
+	if (!pm->rtpsession) pm_find_ssrc(pm);    /* finds our rtpsession */
+	if (!pm->rtpsession) return;
+	g_object_get(pm->rtpsession, "stats", &st, NULL);
+	if (st) {
+		const GValue *v = gst_structure_get_value(st, "source-stats");
+		GValueArray *a = v && G_VALUE_HOLDS_BOXED(v) ? g_value_get_boxed(v) : NULL;
+		guint i;
+		for (i = 0; a && i < a->n_values; i++) {
+			const GstStructure *ss = gst_value_get_structure(g_value_array_get_nth(a, i));
+			gboolean internal = FALSE, have_rb = FALSE;
+			guint64 n;
+			if (!ss) continue;
+			gst_structure_get_boolean(ss, "internal", &internal);
+			if (internal) {
+				guint frac = 0, rt = 0;
+				gint lost = 0;
+				if (gst_structure_get_uint64(ss, "packets-sent", &n)) tx += n;
+				if (gst_structure_get_boolean(ss, "have-rb", &have_rb) && have_rb &&
+				    gst_structure_get_uint(ss, "rb-fractionlost", &frac) &&
+				    gst_structure_get_int(ss, "rb-packetslost", &lost)) {
+					peer_frac = (gint) frac;
+					peer_lost = lost;
+					/* 1/65536 s units (RFC 3550 6.4.1) */
+					if (gst_structure_get_uint(ss, "rb-round-trip", &rt) && rt)
+						rtt_ms = (gint) (((guint64) rt * 1000) >> 16);
+				}
+			} else if (gst_structure_get_uint64(ss, "packets-received", &n)) {
+				rx += n;
+			}
+		}
+		gst_structure_free(st);
+	}
+	bin = gst_object_get_parent(GST_OBJECT(pm->rtpsession));    /* the rtpbin */
+	if (bin && GST_IS_BIN(bin)) {
+		GstIterator *it = gst_bin_iterate_elements(GST_BIN(bin));
+		GValue v = G_VALUE_INIT;
+		gboolean done = FALSE;
+		while (!done) {
+			switch (gst_iterator_next(it, &v)) {
+			case GST_ITERATOR_OK: {
+				GstElement *e = g_value_get_object(&v);
+				GstElementFactory *f = gst_element_get_factory(e);
+				if (f && !strcmp(GST_OBJECT_NAME(f), "rtpjitterbuffer")) pm_jb_add(e, jb);
+				g_value_reset(&v);
+				break;
+			}
+			case GST_ITERATOR_RESYNC: gst_iterator_resync(it); break;
+			default: done = TRUE; break;
+			}
+		}
+		g_value_unset(&v);
+		gst_iterator_free(it);
+	}
+	if (bin) gst_object_unref(bin);
+	pm_emit(pm, "STATS t=%" G_GINT64_FORMAT " tx=%" G_GUINT64_FORMAT " rx=%" G_GUINT64_FORMAT
+	        " jb_pushed=%" G_GUINT64_FORMAT " jb_lost=%" G_GUINT64_FORMAT " jb_late=%" G_GUINT64_FORMAT
+	        " jb_dup=%" G_GUINT64_FORMAT " jb_jitter_us=%" G_GUINT64_FORMAT
+	        " peer_lost=%d peer_frac=%d rtt_ms=%d mic_rms=%.4f\n",
+	        (g_get_monotonic_time() - pm->stats_t0) / G_USEC_PER_SEC, tx, rx,
+	        jb[0], jb[1], jb[2], jb[3], jb[4] / 1000, peer_lost, peer_frac, rtt_ms, pm->mic_max);
+	pm->mic_max = 0;
+}
+G_GNUC_END_IGNORE_DEPRECATIONS
+
+static gboolean
+pm_stats_tick(gpointer u)
+{
+	pm_stats_emit(u);
+	return G_SOURCE_CONTINUE;
+}
+
+/* libpurple's level signal: who NULL is our microphone (backend-fs2's sendlevel_), as RMS 0-1 */
+static void
+pm_on_level(PurpleMedia *media, gchar *sid, gchar *who, double level, gpointer u)
+{
+	TeamsPMedia *pm = u;
+	(void) media; (void) sid;
+	if (!who && level > pm->mic_max) pm->mic_max = level;
 }
 
 /* ---- audio elements ------------------------------------------------------------------------- */
@@ -732,6 +857,7 @@ pm_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw)
 	g_signal_connect(pm->media, "error", G_CALLBACK(pm_on_error), pm);
 	g_signal_connect(pm->media, "state-changed", G_CALLBACK(pm_on_state), pm);
 	g_signal_connect(pm->media, "codecs-changed", G_CALLBACK(pm_on_codecs), pm);
+	g_signal_connect(pm->media, "level", G_CALLBACK(pm_on_level), pm);
 
 	/* RFC 5245 ICE (NICE_COMPATIBILITY_RFC5245 is 0) over UDP; libpurple adds controlling-mode
 	 * from the initiator flag. */
@@ -787,6 +913,8 @@ pm_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw)
 		pm->wire->refs = 1;
 		pm->ssrc_poll = g_timeout_add(PM_SSRC_POLL_MS, pm_ssrc_poll, pm);
 	}
+	pm->stats_t0 = g_get_monotonic_time();
+	pm->stats_timer = g_timeout_add_seconds(PM_STATS_SECONDS, pm_stats_tick, pm);
 	pm_log("started as %s, Opus PT %d, STUN %s:%u", pm->caller ? "caller" : "answerer", pm->pt,
 	       pm->stun_ip ? pm->stun_ip : "(none)", pm->stun_ip ? pm->stun_port : 0);
 }

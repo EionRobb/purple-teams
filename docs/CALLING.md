@@ -31,7 +31,25 @@ with Farstream). It needs libpurple 2 built with it (`--enable-vv`, so Farstream
 GStreamer 1.x) and links GStreamer itself. It runs inside the plug-in's process and takes the
 same lines as `teams_media` (below), so the signalling is the same for both. A call uses it when
 `TEAMS_MEDIA_BIN` is not installed, or with `TEAMS_CALL_ENGINE=purplemedia` in the environment
-(`TEAMS_CALL_ENGINE=teams_media` picks the other).
+(`TEAMS_CALL_ENGINE=teams_media` picks the other). `TEAMS_CALL_ENGINE_FILE` names a file
+holding one of those two words instead, read at each call, so the engine can be switched between
+calls without restarting the process.
+
+Both engines print a `STATS` line every 5 s, which the plug-in logs as `media stats
+engine=<which> ...` (with `TEAMS_CALL_DEBUG`):
+
+    STATS t=<s> tx=<packets sent> rx=<packets received> jb_pushed= jb_lost= jb_late= jb_dup=
+          jb_jitter_us= peer_lost= peer_frac= rtt_ms= mic_peak=|mic_rms=
+
+`jb_*` are the audio jitterbuffer's own counts (`jb_jitter_us` is its average jitter; the
+worst of them if there are several). `peer_lost` and `peer_frac` come from the far side's last
+RTCP receiver report about our audio, and `peer_frac=-1` means there has been none. `rtt_ms` is
+-1 where it is not measured, which is always so for `teams_media` (it does not work one out).
+The counters do not mean quite the same thing in each engine:
+* `rx`: `teams_media` counts every packet from the network (RTCP and video too), PurpleMedia
+  only the far side's audio RTP.
+* The mic: `teams_media` gives the loudest sample of the interval (`mic_peak`, 0-32767),
+  PurpleMedia libpurple's send level, an RMS between 0 and 1 (`mic_rms`).
 
 What it does not do yet:
 
