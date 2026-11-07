@@ -218,3 +218,50 @@ teams_ice_candidate_format(const TeamsIceCand *c)
 		g_string_append_printf(s, " raddr %s rport %u", c->raddr, c->rport);
 	return g_string_free(s, FALSE);
 }
+
+gchar *
+teams_sdp_section(const char *sdp, const char *media)
+{
+	const char *p, *start = NULL, *end;
+	gsize ml;
+	if (!sdp || !media) return NULL;
+	ml = strlen(media);
+	for (p = sdp; p && *p; p = strchr(p, '\n') ? strchr(p, '\n') + 1 : NULL) {
+		if (p[0] == 'm' && p[1] == '=' && !strncmp(p + 2, media, ml) && p[2 + ml] == ' ') {
+			start = p;
+			break;
+		}
+	}
+	if (!start) return NULL;
+	if (!strncmp(start + 2 + ml, " 0 ", 3)) return NULL;   /* declined */
+	for (end = strchr(start, '\n'); end && end[1] && !(end[1] == 'm' && end[2] == '='); end = strchr(end + 1, '\n'))
+		;
+	return end && end[1] ? g_strndup(start, (gsize) (end + 1 - start)) : g_strdup(start);
+}
+
+/* the value of the section's first "a=<name>:" line, trimmed; NULL if none. g_free() it. */
+static gchar *
+section_attr(const char *sec, const char *name)
+{
+	gchar *key = g_strdup_printf("a=%s:", name), **lines, *ret = NULL;
+	int i;
+	if (!sec) { g_free(key); return NULL; }
+	lines = g_strsplit(sec, "\n", -1);
+	for (i = 0; lines[i] && !ret; i++) {
+		gchar *l = g_strstrip(lines[i]);
+		if (g_str_has_prefix(l, key) && l[strlen(key)]) ret = g_strdup(l + strlen(key));
+	}
+	g_strfreev(lines);
+	g_free(key);
+	return ret;
+}
+
+gboolean
+teams_sdp_video_ice_own(const char *sdp)
+{
+	gchar *a = teams_sdp_section(sdp, "audio"), *v = teams_sdp_section(sdp, "video");
+	gchar *auf = section_attr(a, "ice-ufrag"), *vuf = section_attr(v, "ice-ufrag"), *vpw = section_attr(v, "ice-pwd");
+	gboolean r = vuf && vpw && g_strcmp0(auf, vuf);
+	g_free(a); g_free(v); g_free(auf); g_free(vuf); g_free(vpw);
+	return r;
+}

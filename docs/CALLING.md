@@ -53,12 +53,21 @@ The counters do not mean quite the same thing in each engine:
 
 What it does not do yet:
 
-* Voice only. It has no video, so our SDP declines the video m-line, and it does not BUNDLE (each
-  Farstream session has an ICE stream of its own). Teams takes such an answer. Video would be a
-  second session on its own ICE stream, which Teams also takes (tested with `teams_media`).
+* The far side's video only. When an offer's m=video has ICE credentials of its own (the Teams
+  Android app's do, though its offers name BUNDLE), the plug-in starts a second session on its
+  own ICE stream (`VSTART`, `VRCAND`; the engine says `VUFRAG`, `VPWD`, `VCAND`, `VSSRC`) and
+  answers that m-line without BUNDLE: H264 107 only, no rtx, and of the feedback only the REMB and
+  PLI the engine sends. The picture goes to a gst-shm socket (`VSHM <path> <w> <h>`,
+  `TEAMS_PMEDIA_VIDEO_SHM`, default `/tmp/teams-video`) as I420, decoded by `avdec_h264`
+  (`droidvdec` is ranked out unless `TEAMS_PMEDIA_HW_DECODE` is set). Our camera is not sent:
+  `VIDEO 1` gets `VIDEOERR tx`, and the camera button is refused. An offer whose video shares the
+  audio's ICE, or that is voice only, gets the video m-line declined as before; so does a
+  renegotiation that moves the video to other ICE credentials. A call we place offers no video.
+  The STATS line adds `vrx=` (video RTP received), `vdec=` (frames decoded), `vpli=` and `vremb=`
+  (PLIs and REMBs sent).
 * No ICE restart: `RESTART` gets `ERR`, and a renegotiation that changes the far side's ICE
-  credentials is not answered.
-* No REMB or transport-cc (no video, so none needed yet).
+  credentials is not answered. One that keeps them, as Teams' do, is answered at once.
+* No transport-cc feedback (the answer does not offer it), and no NACK.
 * `RELAY turn` is ignored; only the STUN server is used.
 
 It plays and records through the PulseAudio devices `teams_media` uses (`voipcall`, `webcall`);

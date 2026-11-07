@@ -163,6 +163,11 @@ typedef struct {
 	gboolean     camera_sent;    /* the engine has been told VIDEO 1 */
 	int          vsend_w, vsend_h, vsend_kbps;  /* what the last offer lets us send */
 	GString     *our_cands;    /* accumulated "candidate:..." lines, one per line */
+	/* The unbundled engine's video session, on an ICE stream of its own (VUFRAG/VPWD/VCAND). */
+	gchar       *our_vufrag, *our_vpwd;
+	GString     *our_vcands;
+	gchar       *video_ruf;    /* the far side's video ufrag that session was started with */
+	gboolean     video_ok;     /* the offer being answered has that video ICE: answer the m-line */
 	gboolean     answered;
 	guint        answer_timer;
 	gboolean     gathered;
@@ -199,8 +204,8 @@ typedef struct {
 static TeamsMediaProc *g_mproc;
 
 /* The engine has no BUNDLE: the in-process PurpleMedia one (Farstream gives each session its own
- * ICE stream). Teams takes an answer without BUNDLE and with video declined (tested on a call
- * from the Teams Android app). */
+ * ICE stream). Teams takes an answer without BUNDLE, with video declined or on an ICE stream of
+ * its own (both tested on calls from the Teams Android app). */
 static gboolean
 media_engine_unbundled(const TeamsMediaProc *mp)
 {
@@ -210,6 +215,23 @@ media_engine_unbundled(const TeamsMediaProc *mp)
 	(void) mp;
 	return FALSE;
 #endif
+}
+
+/* Whether the engine can send our camera. The PurpleMedia engine receives the far side's video
+ * only for now (it answers VIDEO 1 with VIDEOERR tx), so with it the camera button is refused and
+ * no answer or offer of ours says we send. */
+static gboolean
+media_engine_sends_video(const TeamsMediaProc *mp)
+{
+	return mp && mp->our_vssrc && !media_engine_unbundled(mp);
+}
+
+/* Whether the engine receives the far side's video in the offer being answered: it has video, and
+ * an unbundled engine's video session is the one that offer's m=video names. */
+static gboolean
+media_engine_receives_video(const TeamsMediaProc *mp)
+{
+	return mp && mp->our_vssrc && (!media_engine_unbundled(mp) || mp->video_ok);
 }
 
 /* An async HTTP callback's handle on a call: the call itself may be gone by the time the
@@ -677,18 +699,31 @@ media_send(TeamsMediaProc *mp, const char *fmt, ...)
 	return TRUE;
 }
 
-/* Feed every a=candidate line of an SDP to the engine as RCAND. */
+/* Feed every a=candidate line of sdp to the engine as <cmd> (RCAND, or VRCAND for the
+ * unbundled engine's video session). */
 static void
-media_send_candidates(TeamsMediaProc *mp, const char *sdp)
+media_send_candidates_as(TeamsMediaProc *mp, const char *cmd, const char *sdp)
 {
-	gchar **lines = g_strsplit(sdp, "\n", -1);
+	gchar **lines;
 	int i;
+	if (!sdp) return;
+	lines = g_strsplit(sdp, "\n", -1);
 	for (i = 0; lines[i]; i++) {
 		gchar *l = g_strstrip(lines[i]);
 		if (g_str_has_prefix(l, "a=candidate:"))
-			media_send(mp, "RCAND %s\n", l + 2); /* strip "a=" -> "candidate:..." */
+			media_send(mp, "%s %s\n", cmd, l + 2); /* strip "a=" -> "candidate:..." */
 	}
 	g_strfreev(lines);
+}
+
+/* The far side's candidates for our audio: all of sdp's for a bundled engine, the m=audio
+ * section's for an unbundled one (its video section's are the video session's). */
+static void
+media_send_candidates(TeamsMediaProc *mp, const char *sdp)
+{
+	gchar *sec = media_engine_unbundled(mp) ? teams_sdp_section(sdp, "audio") : NULL;
+	media_send_candidates_as(mp, "RCAND", sec ? sec : sdp);
+	g_free(sec);
 }
 
 static void teams_calling_post_answer(TeamsCall *call);
@@ -698,12 +733,12 @@ static void call_http_post(TeamsAccount *sa, const gchar *full_url, const gchar 
 /* Our own connection address for c=/m=, from the first UDP host candidate (NOT the offerer's relay
  * IP - advertising the peer's address as ours confuses the NGC validator). */
 static gchar *
-our_host_address(TeamsMediaProc *mp, int *port)
+host_address_of(const GString *cands, int *port)
 {
 	gchar *ip = NULL;
 	*port = 3480;
-	if (mp->our_cands) {
-		gchar **cl = g_strsplit(mp->our_cands->str, "\n", -1); int i;
+	if (cands) {
+		gchar **cl = g_strsplit(cands->str, "\n", -1); int i;
 		for (i = 0; cl[i]; i++) {
 			/* "candidate:<f> <comp> UDP <pri> <ip> <port> typ host ..." */
 			if (strstr(cl[i], " UDP ") && strstr(cl[i], "typ host")) {
@@ -718,6 +753,26 @@ our_host_address(TeamsMediaProc *mp, int *port)
 		g_strfreev(cl);
 	}
 	return ip;
+}
+
+static gchar *
+our_host_address(TeamsMediaProc *mp, int *port)
+{
+	return host_address_of(mp->our_cands, port);
+}
+
+/* a=candidate lines for the UDP candidates in cands - Teams' NGC parser can reject the whole SDP
+ * over ICE-TCP lines */
+static void
+append_udp_candidates(GString *a, const GString *cands)
+{
+	gchar **cl;
+	int i;
+	if (!cands) return;
+	cl = g_strsplit(cands->str, "\n", -1);
+	for (i = 0; cl[i]; i++)
+		if (cl[i][0] && strstr(cl[i], " UDP ")) g_string_append_printf(a, "a=%s\r\n", cl[i]);
+	g_strfreev(cl);
 }
 
 /* The m-lines of offer other than audio and video, each declined as RFC 3264 has it (port 0, the
@@ -783,7 +838,8 @@ media_video_offer(TeamsMediaProc *mp, const char *sdp)
 static const char *
 media_video_answer(TeamsMediaProc *mp)
 {
-	mp->video_answer = teams_video_answer_direction(mp->video_offer, mp->our_vssrc != 0, mp->camera_wanted);
+	mp->video_answer = teams_video_answer_direction(mp->video_offer, media_engine_receives_video(mp),
+	                                                mp->camera_wanted && media_engine_sends_video(mp));
 	return mp->video_answer;
 }
 
@@ -809,7 +865,7 @@ teams_calling_set_camera(TeamsAccount *sa, gboolean on)
 	TeamsMediaProc *mp = g_mproc;
 	if (!mp || !mp->call || mp->call->sa != sa) return FALSE;
 	mp->camera_wanted = on;
-	if (on && !mp->our_vssrc) {
+	if (on && !media_engine_sends_video(mp)) {
 		video_event(mp, "VIDEOERR unavailable");
 		return FALSE;
 	}
@@ -817,7 +873,7 @@ teams_calling_set_camera(TeamsAccount *sa, gboolean on)
 		/* The call's media is negotiated once our answer went out, or, in a call we placed, the
 		 * far side's answer is applied; before that the first answer carries the camera. */
 		gboolean negotiated = mp->video_answer || (mp->is_caller && mp->call->answer_applied);
-		if (teams_video_needs_offer(on, mp->our_vssrc != 0, negotiated, mp->video_answer, mp->reneg_offer_pending)) {
+		if (teams_video_needs_offer(on, media_engine_sends_video(mp), negotiated, mp->video_answer, mp->reneg_offer_pending)) {
 			if (!send_reneg_offer(mp, on))
 				teams_call_log("video: camera %s, waiting for an offer to follow (answered %s)",
 				               on ? "on" : "off", mp->video_answer ? mp->video_answer : "no video");
@@ -848,29 +904,39 @@ teams_calling_set_camera(TeamsAccount *sa, gboolean on)
  * returned GString. */
 /* Our m=video section (in our answer, and in our offer for a video call): H264 PT 107 with rtx
  * PT 99, direction dir, our video SSRC declared when we send, bundled on the audio's ICE and
- * SDES key. */
+ * SDES key. The unbundled engine's has its own ICE stream (credentials and candidates, port and
+ * address from its host candidate) with the same key, and only what that engine does: H264 107
+ * without rtx (it sends no NACKs, so nothing would be retransmitted), and of the feedback, the
+ * REMB and PLI it sends; transport-cc it does not, and a sender that expects it lowers its rate. */
 static void
 append_video_mline(GString *a, TeamsMediaProc *mp, int port, const char *ip, const char *mid,
                    const char *dir)
 {
-	g_string_append_printf(a, "m=video %d RTP/SAVP 107 99\r\n", port);
+	gboolean own = media_engine_unbundled(mp);
+	g_string_append_printf(a, "m=video %d RTP/SAVP %s\r\n", port, own ? "107" : "107 99");
 	g_string_append_printf(a, "c=IN IP4 %s\r\n", ip);
 	g_string_append(a, "a=rtpmap:107 H264/90000\r\n");
-	g_string_append(a, "a=rtpmap:99 rtx/90000\r\n");
+	if (!own) g_string_append(a, "a=rtpmap:99 rtx/90000\r\n");
 	g_string_append(a, "a=fmtp:107 level-asymmetry-allowed=1;packetization-mode=1;"
 	                    "profile-level-id=42e01f;max-fs=8160;max-mbps=244800;max-fps=3000\r\n");
-	g_string_append(a, "a=fmtp:99 apt=107\r\n");
+	if (!own) g_string_append(a, "a=fmtp:99 apt=107\r\n");
 	g_string_append(a, "a=rtcp-fb:107 goog-remb\r\n");
-	g_string_append(a, "a=rtcp-fb:107 transport-cc\r\n");
-	g_string_append(a, "a=rtcp-fb:107 nack\r\n");
+	if (!own) {
+		g_string_append(a, "a=rtcp-fb:107 transport-cc\r\n");
+		g_string_append(a, "a=rtcp-fb:107 nack\r\n");
+	}
 	g_string_append(a, "a=rtcp-fb:107 nack pli\r\n");
 	g_string_append_printf(a, "a=mid:%s\r\n", mid);
 	g_string_append_printf(a, "a=%s\r\n", dir);
 	if (mp->our_vssrc && teams_video_dir_we_send(dir))
 		g_string_append_printf(a, "a=x-ssrc-range:%u-%u\r\n", mp->our_vssrc, mp->our_vssrc);
-	g_string_append_printf(a, "a=ice-ufrag:%s\r\n", mp->our_ufrag);
-	g_string_append_printf(a, "a=ice-pwd:%s\r\n", mp->our_pwd);
+	g_string_append_printf(a, "a=ice-ufrag:%s\r\n", own ? mp->our_vufrag : mp->our_ufrag);
+	g_string_append_printf(a, "a=ice-pwd:%s\r\n", own ? mp->our_vpwd : mp->our_pwd);
 	g_string_append_printf(a, "a=crypto:4 AEAD_AES_256_GCM inline:%s|2^31\r\n", mp->our_txkey);
+	if (own) {
+		append_udp_candidates(a, mp->our_vcands);
+		g_string_append(a, "a=ice-options:trickle\r\n");
+	}
 	g_string_append(a, "a=rtcp-mux\r\n");
 	g_string_append(a, "a=rtcp-rsize\r\n");
 	g_string_append(a, "a=label:main-video\r\n");
@@ -920,9 +986,16 @@ build_sdp(TeamsMediaProc *mp, const char *vdir)
 	g_string_append(a, "a=rtcp-mux\r\n");
 	g_string_append(a, "a=label:main-audio\r\n");
 
-	if (media_engine_unbundled(mp))   /* no video: declined, as RFC 3264 has it */
-		g_string_append(a, "m=video 0 RTP/SAVP 107\r\na=mid:video_1\r\n");
-	else
+	if (media_engine_unbundled(mp)) {
+		if (mp->video_ok && mp->our_vssrc && mp->our_vufrag && mp->our_vpwd) {
+			int vport;
+			gchar *vip = host_address_of(mp->our_vcands, &vport);
+			append_video_mline(a, mp, vport, vip ? vip : (our_ip ? our_ip : "127.0.0.1"), "video_1", vdir);
+			g_free(vip);
+		} else {   /* no video: declined, as RFC 3264 has it */
+			g_string_append(a, "m=video 0 RTP/SAVP 107\r\na=mid:video_1\r\n");
+		}
+	} else
 		append_video_mline(a, mp, our_port, our_ip ? our_ip : "127.0.0.1", "video_1", vdir);
 	/* A declined m-line is left out of the BUNDLE group above (RFC 8843). */
 	if (mp->declined_mlines) g_string_append(a, mp->declined_mlines);
@@ -1028,7 +1101,7 @@ media_send_offer(TeamsMediaProc *mp)
 	mp->answered = TRUE;
 
 	our_ip = our_host_address(mp, &our_port);
-	video = mp->camera_wanted && mp->our_vssrc;   /* a video call, and the engine has video */
+	video = mp->camera_wanted && media_engine_sends_video(mp);   /* a video call the engine can send */
 	sdp = g_string_new("v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nb=CT:4000\r\nt=0 0\r\n");
 	if (!media_engine_unbundled(mp))
 		g_string_append(sdp, video ? "a=group:BUNDLE 0 1\r\n" : "a=group:BUNDLE 0\r\n");
@@ -1384,7 +1457,7 @@ handle_reneg_offer_answer(TeamsAccount *sa, TeamsCall *call, TeamsMediaProc *mp,
 	video_event(mp, teams_video_dir_peer_sends(peer) ? "OFFERED 1" : "OFFERED 0");
 	media_video_apply(mp);
 	if (mp->camera_wanted != mp->reneg_offer_camera &&
-	    teams_video_needs_offer(mp->camera_wanted, mp->our_vssrc != 0, TRUE, mp->video_answer, FALSE)) {
+	    teams_video_needs_offer(mp->camera_wanted, media_engine_sends_video(mp), TRUE, mp->video_answer, FALSE)) {
 		teams_call_log("video: camera turned %s while our offer waited, offering again",
 		               mp->camera_wanted ? "on" : "off");
 		send_reneg_offer(mp, mp->camera_wanted);
@@ -1403,7 +1476,7 @@ media_engine_lost_cb(gpointer u)
 }
 #endif
 
-/* read UFRAG/PWD/TXKEY/SSRC/VSSRC/CAND/READY/ANSWERED/RESTARTED/AUDIOD/ERR and the video lines
+/* read UFRAG/PWD/TXKEY/SSRC/VSSRC/CAND/VUFRAG/VPWD/VCAND/READY/ANSWERED/RESTARTED/AUDIOD/ERR and the video lines
  * (VSHM/VPREVIEW/VTX/PEERVIDEO/VIDEOERR, passed to the front end) from teams_media's stdout */
 static gboolean
 media_on_output(GIOChannel *ch, GIOCondition cond, gpointer user)
@@ -1422,12 +1495,18 @@ media_on_output(GIOChannel *ch, GIOCondition cond, gpointer user)
 		}
 		else if (g_str_has_prefix(line, "SSRC ")) mp->our_ssrc = (guint32) g_ascii_strtoull(line + 5, NULL, 10);
 		else if (g_str_has_prefix(line, "VSSRC ")) mp->our_vssrc = (guint32) g_ascii_strtoull(line + 6, NULL, 10);
+		else if (g_str_has_prefix(line, "VUFRAG ")) { g_free(mp->our_vufrag); mp->our_vufrag = g_strdup(line + 7); }
+		else if (g_str_has_prefix(line, "VPWD ")) { g_free(mp->our_vpwd); mp->our_vpwd = g_strdup(line + 5); }
+		else if (g_str_has_prefix(line, "VCAND ")) g_string_append_printf(mp->our_vcands, "%s\n", line + 6);
 		else if (g_str_has_prefix(line, "VSHM ") || g_str_has_prefix(line, "VPREVIEW ") ||
 		         g_str_has_prefix(line, "VTX ") || g_str_has_prefix(line, "PEERVIDEO ") ||
 		         g_str_has_prefix(line, "VIDEOERR ")) {
 			teams_call_log("media %s", line);
 			if (g_str_has_prefix(line, "VIDEOERR tx")) mp->camera_sent = FALSE;   /* the engine stopped it */
-			if (!strcmp(line, "VIDEOERR build")) mp->our_vssrc = 0;        /* the call stays voice only */
+			if (!strcmp(line, "VIDEOERR build")) {   /* the call stays voice only */
+				mp->our_vssrc = 0;
+				mp->video_ok = FALSE;
+			}
 			video_event(mp, line);
 		}
 		else if (g_str_has_prefix(line, "CAND ")) g_string_append_printf(mp->our_cands, "%s\n", line + 5);
@@ -1619,6 +1698,7 @@ media_spawn(TeamsCall *call, gboolean is_caller)
 	mp->pm = pm;
 #endif
 	mp->our_cands = g_string_new("");
+	mp->our_vcands = g_string_new("");
 	mp->out_ch = g_io_channel_unix_new(outp[0]);
 	g_io_channel_set_close_on_unref(mp->out_ch, TRUE);
 	g_io_channel_set_encoding(mp->out_ch, NULL, NULL);
@@ -1628,6 +1708,45 @@ media_spawn(TeamsCall *call, gboolean is_caller)
 	if (r) teams_call_log("media: spawned %s %s pid=%d", TEAMS_MEDIA_BIN, argv[1], (int) pid);
 	else   teams_call_log("media: in-process PurpleMedia engine %s", argv[1]);
 	return mp;
+}
+
+/* The unbundled engine's video session, answering offer: VSTART with the m=video section's
+ * key (the audio's, audio_key, if it has none of its own), ICE credentials and candidates
+ * (VRCAND). Only when that section has ICE credentials of its own (teams_sdp_video_ice_own);
+ * otherwise the call's video is declined, as before. */
+static void
+media_start_video(TeamsMediaProc *mp, const char *offer, const char *audio_key)
+{
+	gchar *sec, *vuf, *vpw, *vkey;
+	if (!teams_sdp_video_ice_own(offer)) {
+		teams_call_log("video: the offer's video has no ICE of its own; declined");
+		return;
+	}
+	sec = teams_sdp_section(offer, "video");
+	vuf = sdp_line_val(sec, "a=ice-ufrag:");
+	vpw = sdp_line_val(sec, "a=ice-pwd:");
+	vkey = sdp_gcm_key(sec);
+	if (vuf && vpw && media_send(mp, "VSTART %s %s %s\n", vkey ? vkey : audio_key, vuf, vpw)) {
+		media_send_candidates_as(mp, "VRCAND", sec);
+		g_free(mp->video_ruf);
+		mp->video_ruf = g_strdup(vuf);
+		mp->video_ok = TRUE;
+		teams_call_log("video: receiving on an ICE stream of its own (key %s)", vkey ? "its own" : "the audio's");
+	}
+	if (vkey) explicit_bzero(vkey, strlen(vkey));
+	g_free(sec); g_free(vuf); g_free(vpw); g_free(vkey);
+}
+
+/* Whether offer's m=video is the one the unbundled engine's video session was started with (the
+ * same ufrag): the video m-line can be answered. A renegotiation that moves the video to new ICE
+ * credentials, or adds video the call did not start with, is declined. */
+static gboolean
+media_video_same_ice(TeamsMediaProc *mp, const char *offer)
+{
+	gchar *sec = teams_sdp_section(offer, "video"), *vuf = sdp_line_val(sec, "a=ice-ufrag:");
+	gboolean r = mp->video_ruf && vuf && !strcmp(mp->video_ruf, vuf);
+	g_free(sec); g_free(vuf);
+	return r;
 }
 
 /* Answerer: start an engine with the offer's keys, ICE credentials and candidates. */
@@ -1656,6 +1775,13 @@ teams_media_start(TeamsCall *call)
 	/* START <rx_master_b64> <remote_ufrag> <remote_pwd> <pt> */
 	ok = media_send(mp, "START %s %s %s %d\n", rxkey, ruf, rpw, pt);
 	if (ok) media_send_candidates(mp, call->sdp_offer);
+	if (ok && media_engine_unbundled(mp)) {
+		/* The PurpleMedia engine has no restart: a renegotiation offer with these credentials
+		 * (Teams keeps them) is answered at once instead of with a RESTART it would refuse. */
+		g_free(mp->last_restarted_ufrag);
+		mp->last_restarted_ufrag = g_strdup(ruf);
+		media_start_video(mp, call->sdp_offer, rxkey);
+	}
 	teams_call_log("media_start: START %s (pt=%d relay=%s)", ok ? "sent" : "failed", pt,
 	               call->udp_transport ? call->udp_transport : "(none)");
 	explicit_bzero(rxkey, strlen(rxkey));
@@ -1683,6 +1809,8 @@ teams_media_stop(void)
 	teams_pmedia_free(mp->pm);
 #endif
 	g_string_free(mp->our_cands, TRUE);
+	g_string_free(mp->our_vcands, TRUE);
+	g_free(mp->our_vufrag); g_free(mp->our_vpwd); g_free(mp->video_ruf);
 	if (mp->our_txkey) explicit_bzero(mp->our_txkey, strlen(mp->our_txkey));
 	g_free(mp->our_ufrag); g_free(mp->our_pwd); g_free(mp->our_txkey); g_free(mp->answer_ufrag);
 	g_free(mp->pending_reneg_answer_link);
@@ -2289,6 +2417,10 @@ teams_calling_handle_media_answer(TeamsAccount *sa, JsonObject *body_obj)
 	teams_call_log("mediaAnswer: applying peer answer -> ANSWER + RCAND to caller engine");
 	g_free(mp->answer_ufrag);
 	mp->answer_ufrag = g_strdup(ruf);
+	if (media_engine_unbundled(mp)) {   /* see teams_media_start */
+		g_free(mp->last_restarted_ufrag);
+		mp->last_restarted_ufrag = g_strdup(ruf);
+	}
 	if (media_send(mp, "ANSWER %s %s %s\n", rxkey, ruf, rpw))
 		media_send_candidates(mp, blob);
 	explicit_bzero(rxkey, strlen(rxkey));
@@ -2297,7 +2429,7 @@ teams_calling_handle_media_answer(TeamsAccount *sa, JsonObject *body_obj)
 	 * CAPTURED, teams.live.com placing a call: mediaAnswer 3.5 s after the call was
 	 * placed, callAcceptance 2.1 s later). The call is up on the acceptance. */
 	call->answer_applied = TRUE;
-	if (mp->camera_wanted && mp->our_vssrc) {
+	if (mp->camera_wanted && media_engine_sends_video(mp)) {
 		/* Our offer had video: the answer says what each side sends, and its fmtp how much. */
 		const char *peer = teams_sdp_video_direction(blob);
 		mp->video_offer = NULL;
@@ -2333,6 +2465,11 @@ teams_calling_handle_renegotiation(TeamsAccount *sa, JsonObject *body_obj)
 	sdp_log_shape("renegotiation offer", blob);
 	g_free(mp->declined_mlines);
 	mp->declined_mlines = sdp_declined_mlines(blob);
+	if (media_engine_unbundled(mp) && mp->video_ruf) {
+		gboolean same = media_video_same_ice(mp, blob);
+		if (mp->video_ok && !same) teams_call_log("video: the renegotiation moves the video to other ICE; declined");
+		mp->video_ok = same;
+	}
 	media_video_offer(mp, blob);
 
 	/* CAPTURED LIVE: a renegotiation push commonly swaps the peer to a brand-new

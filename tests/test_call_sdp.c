@@ -166,6 +166,46 @@ static void test_ice_candidate(void)
 	CHECK(c.port == 0 && !c.ip[0]);   /* left cleared on failure */
 }
 
+
+/* The Teams Android app's offer: BUNDLE named, yet each section has its own ICE (masked). */
+static const char *OFFER_OWN_ICE =
+	"v=0\r\na=group:BUNDLE audio_0 video_1\r\n"
+	"m=audio 3480 RTP/SAVP 102\r\na=ice-ufrag:AUDIOuf\r\na=ice-pwd:audiopwd\r\n"
+	"a=candidate:1 1 UDP 1 10.0.0.1 3480 typ host\r\na=mid:audio_0\r\n"
+	"m=video 3480 RTP/SAVP 107 99\r\na=ice-ufrag:VIDEOuf\r\na=ice-pwd:videopwd\r\n"
+	"a=candidate:2 1 UDP 1 10.0.0.1 3480 typ host\r\na=mid:video_1\r\n"
+	"m=application 9 RTP/SAVP 127\r\na=mid:data_2\r\n";
+static const char *OFFER_SHARED_ICE =
+	"v=0\r\nm=audio 1 RTP/SAVP 102\r\na=ice-ufrag:same\r\na=ice-pwd:p\r\n"
+	"m=video 1 RTP/SAVP 107\r\na=ice-ufrag:same\r\na=ice-pwd:p\r\n";
+static const char *OFFER_VIDEO_NO_PWD =
+	"v=0\r\nm=audio 1 RTP/SAVP 102\r\na=ice-ufrag:a\r\na=ice-pwd:p\r\n"
+	"m=video 1 RTP/SAVP 107\r\na=ice-ufrag:v\r\n";
+
+static void test_sections(void)
+{
+	gchar *a = teams_sdp_section(OFFER_OWN_ICE, "audio"), *v = teams_sdp_section(OFFER_OWN_ICE, "video");
+	gchar *x = teams_sdp_section(OFFER_OWN_ICE, "application"), *last = teams_sdp_section(OFFER_AUDIO, "audio");
+	CHECK(a && g_str_has_prefix(a, "m=audio 3480 ") && strstr(a, "AUDIOuf") && !strstr(a, "VIDEOuf"));
+	CHECK(a && g_str_has_suffix(a, "a=mid:audio_0\r\n"));
+	CHECK(v && g_str_has_prefix(v, "m=video 3480 ") && strstr(v, "VIDEOuf") && !strstr(v, "data_2"));
+	CHECK(x && !strcmp(x, "m=application 9 RTP/SAVP 127\r\na=mid:data_2\r\n"));   /* the last one */
+	CHECK(last && !strcmp(last, "m=audio 1 RTP/SAVP 102\r\na=sendonly\r\n"));
+	CHECK(teams_sdp_section(OFFER_DECLINED, "video") == NULL);
+	CHECK(teams_sdp_section(OFFER_AUDIO, "video") == NULL);
+	CHECK(teams_sdp_section(NULL, "video") == NULL);
+	g_free(a); g_free(v); g_free(x); g_free(last);
+	/* "m=video" must not match "m=videox" */
+	CHECK(teams_sdp_section("v=0\r\nm=videox 1 RTP/SAVP 1\r\n", "video") == NULL);
+
+	CHECK(teams_sdp_video_ice_own(OFFER_OWN_ICE));
+	CHECK(!teams_sdp_video_ice_own(OFFER_SHARED_ICE));
+	CHECK(!teams_sdp_video_ice_own(OFFER_VIDEO_NO_PWD));
+	CHECK(!teams_sdp_video_ice_own(OFFER_DECLINED));
+	CHECK(!teams_sdp_video_ice_own(OFFER_AUDIO));
+	CHECK(!teams_sdp_video_ice_own(NULL));
+}
+
 int main(void)
 {
 	test_ice_candidate();
@@ -173,6 +213,7 @@ int main(void)
 	test_sdp_direction();
 	test_answer_direction();
 	test_needs_offer();
+	test_sections();
 	if (failures) {
 		fprintf(stderr, "%d failure(s)\n", failures);
 		return 1;

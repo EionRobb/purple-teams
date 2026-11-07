@@ -16,6 +16,18 @@
  *      over and unsets them itself, so a second unset in the engine is a double free (ASan
  *      catches it). Nothing answers on that server, which slows ICE down, so the call in 1-3
  *      has none: its answerer's first RTP packet, which gives its SSRC, would come too late.
+ *   7. video: both sides add a video session (VSTART, VANSWER, VRCAND) on an ICE stream of its
+ *      own, print VUFRAG/VPWD/VCAND and VSSRC, and GATHERED only once both sessions have their
+ *      candidates; the caller sends a test picture (TEAMS_PMEDIA_VSRC) as H264, and the answerer
+ *      decodes it into its gst-shm socket (TEAMS_PMEDIA_VIDEO_SHM), says VSHM and PEERVIDEO 1,
+ *      and its RTCP carries REMB to the caller (counted on the caller's RTP session). VIDEO 1
+ *      is answered VIDEOERR tx (the engine does not send our camera yet).
+ * Video needs an H264 encoder Farstream can pick, and avdec_h264; the script sets
+ * TEAMS_PMEDIA_VSRC=1 and TEAMS_PMEDIA_VIDEO_SHM. With PMTEST_H264_CLIP=<an Annex B H264 file,
+ * one access unit per frame, each starting with an access unit delimiter, SPS and PPS in it> the test registers an
+ * encoder of its own (pmtestenc, ranked above every other): for each raw frame it is given it
+ * pushes the clip's next access unit, with that frame's timestamps, so that no hardware encoder
+ * (droidvenc) takes part. The clip loops, so it should start with an IDR and have a few more.
  */
 #include "teams_call_pmedia.h"
 
@@ -27,6 +39,7 @@
 #include <util.h>
 
 #include <gst/gst.h>
+#include <gst/rtp/gstrtcpbuffer.h>
 #include <glib.h>
 #include <errno.h>
 #include <stdio.h>
@@ -34,6 +47,156 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+/* ---- pmtestenc: an "encoder" that sends a recorded clip (PMTEST_H264_CLIP) ----
+ * It puts out stream-format=avc as droidvenc does: Farstream keeps one H264 blueprint, the one
+ * whose payloader caps say avc, and a byte-stream encoder would not be in it. */
+static GPtrArray *clip_aus;   /* GBytes, one access unit each: 4-byte lengths, no delimiters */
+static GBytes *clip_avcc;     /* codec_data, from the clip's first SPS and PPS */
+
+/* the next NAL unit of d[0..n) at or after *pos: its start and length; FALSE at the end */
+static gboolean clip_next_nal(const guint8 *d, gsize n, gsize *pos, gsize *start, gsize *len)
+{
+	gsize i = *pos, s;
+	while (i + 3 <= n && !(d[i] == 0 && d[i + 1] == 0 && d[i + 2] == 1)) i++;
+	if (i + 3 > n) return FALSE;
+	s = i + 3;
+	i = s;
+	while (i + 3 <= n && !(d[i] == 0 && d[i + 1] == 0 && (d[i + 2] == 1 || (d[i + 2] == 0 && i + 3 < n && d[i + 3] == 1)))) i++;
+	if (i + 3 > n) i = n;
+	*start = s;
+	*len = i - s;
+	*pos = i;
+	return *len > 0;
+}
+
+static gboolean clip_load(const char *path)
+{
+	gchar *raw = NULL;
+	gsize n = 0, pos = 0, st, len;
+	const guint8 *d;
+	GByteArray *au = NULL;
+	const guint8 *sps = NULL, *pps = NULL;
+	gsize sps_len = 0, pps_len = 0;
+	if (!g_file_get_contents(path, &raw, &n, NULL)) return FALSE;
+	d = (const guint8 *) raw;
+	clip_aus = g_ptr_array_new_with_free_func((GDestroyNotify) g_bytes_unref);
+	while (clip_next_nal(d, n, &pos, &st, &len)) {
+		guint8 t = d[st] & 0x1f, be[4];
+		if (t == 9) {   /* an access unit delimiter: the last one is complete */
+			if (au && au->len) g_ptr_array_add(clip_aus, g_byte_array_free_to_bytes(au));
+			else if (au) g_byte_array_unref(au);
+			au = g_byte_array_new();
+			continue;
+		}
+		if (t == 7 && !sps) { sps = d + st; sps_len = len; }
+		if (t == 8 && !pps) { pps = d + st; pps_len = len; }
+		if (!au) au = g_byte_array_new();
+		be[0] = (guint8) (len >> 24); be[1] = (guint8) (len >> 16); be[2] = (guint8) (len >> 8); be[3] = (guint8) len;
+		g_byte_array_append(au, be, 4);
+		g_byte_array_append(au, d + st, (guint) len);
+	}
+	if (au && au->len) g_ptr_array_add(clip_aus, g_byte_array_free_to_bytes(au));
+	else if (au) g_byte_array_unref(au);
+	if (sps && pps && sps_len >= 4 && sps_len < 65536 && pps_len < 65536) {
+		GByteArray *c = g_byte_array_new();
+		guint8 h[8] = { 1, sps[1], sps[2], sps[3], 0xff, 0xe1, (guint8) (sps_len >> 8), (guint8) sps_len };
+		guint8 p[3] = { 1, (guint8) (pps_len >> 8), (guint8) pps_len };
+		g_byte_array_append(c, h, 8);
+		g_byte_array_append(c, sps, (guint) sps_len);
+		g_byte_array_append(c, p, 3);
+		g_byte_array_append(c, pps, (guint) pps_len);
+		clip_avcc = g_byte_array_free_to_bytes(c);
+	}
+	g_free(raw);
+	return clip_aus->len > 0 && clip_avcc;
+}
+
+/* whether an access unit (4-byte lengths) holds an IDR slice */
+static gboolean clip_au_is_idr(GBytes *au)
+{
+	gsize n, i = 0;
+	const guint8 *d = g_bytes_get_data(au, &n);
+	while (i + 5 <= n) {
+		guint32 l = ((guint32) d[i] << 24) | ((guint32) d[i + 1] << 16) | ((guint32) d[i + 2] << 8) | d[i + 3];
+		if ((d[i + 4] & 0x1f) == 5) return TRUE;
+		if (l > n - i - 4) break;
+		i += 4 + l;
+	}
+	return FALSE;
+}
+
+typedef struct { GstElement parent; GstPad *sink, *src; guint next; gboolean caps_sent; } PmTestEnc;
+typedef struct { GstElementClass parent_class; } PmTestEncClass;
+GType pm_test_enc_get_type(void);
+G_DEFINE_TYPE(PmTestEnc, pm_test_enc, GST_TYPE_ELEMENT)
+
+static GstStaticPadTemplate enc_sink_t = GST_STATIC_PAD_TEMPLATE("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
+	GST_STATIC_CAPS("video/x-raw"));
+static GstStaticPadTemplate enc_src_t = GST_STATIC_PAD_TEMPLATE("src", GST_PAD_SRC, GST_PAD_ALWAYS,
+	GST_STATIC_CAPS("video/x-h264, stream-format=(string)avc, alignment=(string)au, "
+	                "profile=(string)constrained-baseline, width=(int)320, height=(int)240, framerate=(fraction)15/1"));
+
+static GstFlowReturn pm_test_enc_chain(GstPad *pad, GstObject *parent, GstBuffer *in)
+{
+	PmTestEnc *e = (PmTestEnc *) parent;
+	GBytes *au = g_ptr_array_index(clip_aus, e->next % clip_aus->len);
+	GstBuffer *out = gst_buffer_new_wrapped_bytes(au);
+	(void) pad;
+	GST_BUFFER_PTS(out) = GST_BUFFER_PTS(in);
+	GST_BUFFER_DTS(out) = GST_BUFFER_PTS(in);
+	GST_BUFFER_DURATION(out) = GST_BUFFER_DURATION(in);
+	if (!clip_au_is_idr(au)) GST_BUFFER_FLAG_SET(out, GST_BUFFER_FLAG_DELTA_UNIT);
+	e->next++;
+	gst_buffer_unref(in);
+	return gst_pad_push(e->src, out);
+}
+
+static gboolean pm_test_enc_sink_event(GstPad *pad, GstObject *parent, GstEvent *ev)
+{
+	PmTestEnc *e = (PmTestEnc *) parent;
+	/* the raw caps stay here; the src side gets the clip's caps in their place, so they still
+	 * come between stream-start and segment */
+	if (GST_EVENT_TYPE(ev) == GST_EVENT_CAPS) {
+		gst_event_unref(ev);
+		if (!e->caps_sent) {
+			GstCaps *c = gst_caps_make_writable(gst_static_pad_template_get_caps(&enc_src_t));
+			GstBuffer *cd = gst_buffer_new_wrapped_bytes(clip_avcc);
+			gst_caps_set_simple(c, "codec_data", GST_TYPE_BUFFER, cd, NULL);
+			gst_buffer_unref(cd);
+			e->caps_sent = gst_pad_push_event(e->src, gst_event_new_caps(c));
+			gst_caps_unref(c);
+		}
+		return TRUE;
+	}
+	return gst_pad_event_default(pad, parent, ev);
+}
+
+static void pm_test_enc_init(PmTestEnc *e)
+{
+	e->sink = gst_pad_new_from_static_template(&enc_sink_t, "sink");
+	e->src = gst_pad_new_from_static_template(&enc_src_t, "src");
+	gst_pad_set_chain_function(e->sink, pm_test_enc_chain);
+	gst_pad_set_event_function(e->sink, pm_test_enc_sink_event);
+	GST_PAD_SET_PROXY_ALLOCATION(e->sink);
+	gst_pad_use_fixed_caps(e->src);
+	gst_element_add_pad(GST_ELEMENT(e), e->sink);
+	gst_element_add_pad(GST_ELEMENT(e), e->src);
+}
+
+static void pm_test_enc_class_init(PmTestEncClass *k)
+{
+	GstElementClass *ek = GST_ELEMENT_CLASS(k);
+	gst_element_class_add_static_pad_template(ek, &enc_sink_t);
+	gst_element_class_add_static_pad_template(ek, &enc_src_t);
+	gst_element_class_set_static_metadata(ek, "pmtest H264 clip", "Codec/Encoder/Video",
+		"Sends a recorded H264 clip, one access unit per raw frame", "pmtest");
+}
+
+static gboolean pm_test_enc_plugin_init(GstPlugin *p)
+{
+	return gst_element_register(p, "pmtestenc", GST_RANK_PRIMARY + 100, pm_test_enc_get_type());
+}
 
 static int failures;
 #define CHECK(c) do { if (!(c)) { failures++; fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } \
@@ -81,6 +244,11 @@ typedef struct {
 	int          errs;
 	gchar       *last_err;
 	guint        ssrc;
+	gchar       *vufrag, *vpwd, *vshm, *stats;
+	GString     *vcands;
+	guint        vssrc;
+	gboolean     peervideo, vtx_err;
+	gboolean     vcreds_before_ready;   /* VUFRAG came before READY */
 } Side;
 
 static GMainLoop *loop;
@@ -106,6 +274,14 @@ static void side_line(Side *s, const char *l)
 	else if (g_str_has_prefix(l, "PWD ")) { g_free(s->pwd); s->pwd = g_strdup(l + 4); }
 	else if (g_str_has_prefix(l, "CAND ")) g_string_append_printf(s->cands, "%s\n", l + 5);
 	else if (g_str_has_prefix(l, "SSRC ")) s->ssrc = (guint) g_ascii_strtoull(l + 5, NULL, 10);
+	else if (g_str_has_prefix(l, "VUFRAG ")) { g_free(s->vufrag); s->vufrag = g_strdup(l + 7); s->vcreds_before_ready = !s->ready; }
+	else if (g_str_has_prefix(l, "VPWD ")) { g_free(s->vpwd); s->vpwd = g_strdup(l + 5); }
+	else if (g_str_has_prefix(l, "VCAND ")) g_string_append_printf(s->vcands, "%s\n", l + 6);
+	else if (g_str_has_prefix(l, "VSSRC ")) s->vssrc = (guint) g_ascii_strtoull(l + 6, NULL, 10);
+	else if (g_str_has_prefix(l, "VSHM ")) { gchar **t = g_strsplit(l + 5, " ", 2); g_free(s->vshm); s->vshm = g_strdup(t[0]); g_strfreev(t); }
+	else if (!strcmp(l, "PEERVIDEO 1")) s->peervideo = TRUE;
+	else if (!strcmp(l, "VIDEOERR tx")) s->vtx_err = TRUE;
+	else if (g_str_has_prefix(l, "STATS ")) { g_free(s->stats); s->stats = g_strdup(l + 6); }
 	else if (!strcmp(l, "READY")) s->ready = TRUE;
 	else if (!strcmp(l, "GATHERED")) s->gathered = TRUE;
 	else if (!strcmp(l, "AUDIOD 1")) s->audiod = TRUE;
@@ -141,6 +317,7 @@ static void side_start(Side *s, const char *name, PurpleAccount *test_account, g
 	s->name = name;
 	s->in = g_string_new("");
 	s->cands = g_string_new("");
+	s->vcands = g_string_new("");
 	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, a) || socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, b))
 		abort();
 	s->cmd = a[0]; s->out = b[0];
@@ -156,6 +333,19 @@ static void side_send_cands(Side *to, const Side *from)
 	int i;
 	for (i = 0; cl[i]; i++) if (*cl[i]) side_send(to, "RCAND %s\n", cl[i]);
 	g_strfreev(cl);
+	cl = g_strsplit(from->vcands->str, "\n", -1);
+	for (i = 0; cl[i]; i++) if (*cl[i]) side_send(to, "VRCAND %s\n", cl[i]);
+	g_strfreev(cl);
+}
+
+/* A STATS field's value, -1 if it is not there. */
+static long stat_field(const Side *s, const char *key)
+{
+	gchar *k = g_strdup_printf(" %s=", key);
+	const char *p = s->stats ? strstr(s->stats, k) : NULL;
+	long v = p ? strtol(p + strlen(k), NULL, 10) : -1;
+	g_free(k);
+	return v;
 }
 
 static void side_free(Side *s)
@@ -164,8 +354,9 @@ static void side_free(Side *s)
 	teams_pmedia_free(s->pm);
 	g_source_remove_by_user_data(s);
 	close(s->out);
-	g_string_free(s->in, TRUE); g_string_free(s->cands, TRUE);
+	g_string_free(s->in, TRUE); g_string_free(s->cands, TRUE); g_string_free(s->vcands, TRUE);
 	g_free(s->txkey); g_free(s->ufrag); g_free(s->pwd); g_free(s->last_err);
+	g_free(s->vufrag); g_free(s->vpwd); g_free(s->vshm); g_free(s->stats);
 }
 
 /* ---- counting what reaches the sinks ---- */
@@ -180,6 +371,56 @@ static GstPadProbeReturn count_probe(GstPad *pad, GstPadProbeInfo *info, gpointe
 }
 
 static gint n_bufs, n_lists;
+static gint shm_bufs;        /* frames into a shmsink: the answerer's published video */
+static gint remb_seen, pli_seen;   /* feedback an RTP session got */
+static GHashTable *sess_seen;
+
+static GstPadProbeReturn shm_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
+{
+	(void) pad; (void) info; (void) u;
+	g_atomic_int_inc(&shm_bufs);
+	return GST_PAD_PROBE_OK;
+}
+
+/* gst-droid's droidvenc, once it runs, answers a caps query on its sink with EMPTY (it
+ * intersects the filter with its H264 output caps), and Farstream queries again mid-stream, so
+ * the test's sender stops with not-negotiated. The test answers that query with the caps the pad
+ * already has. Only the test's sending side meets it: the engine does not send video yet. */
+static GstPadProbeReturn venc_caps_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
+{
+	GstQuery *q = GST_PAD_PROBE_INFO_QUERY(info);
+	GstCaps *cur, *filter = NULL, *res;
+	(void) u;
+	if (!q || GST_QUERY_TYPE(q) != GST_QUERY_CAPS || !(cur = gst_pad_get_current_caps(pad))) return GST_PAD_PROBE_OK;
+	gst_query_parse_caps(q, &filter);
+	res = filter ? gst_caps_intersect(cur, filter) : gst_caps_ref(cur);
+	gst_query_set_caps_result(q, res);
+	gst_caps_unref(res);
+	gst_caps_unref(cur);
+	return GST_PAD_PROBE_HANDLED;
+}
+
+/* Put venc_caps_probe on each droidvenc as it is added, before it negotiates: the test's
+ * polling (probe_sinks) comes too late for the first mid-stream query. */
+static void on_deep_added(GstBin *bin, GstBin *sub, GstElement *e, gpointer u)
+{
+	GstElementFactory *f = gst_element_get_factory(e);
+	GstPad *p;
+	(void) bin; (void) sub; (void) u;
+	if (!f || strcmp(GST_OBJECT_NAME(f), "droidvenc") || !(p = gst_element_get_static_pad(e, "sink"))) return;
+	gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_QUERY_UPSTREAM, venc_caps_probe, NULL, NULL);
+	gst_object_unref(p);
+}
+
+static void on_feedback(GObject *sess, guint type, guint fbtype, guint sender, guint media, GstBuffer *fci, gpointer u)
+{
+	guint8 h[4];
+	(void) sess; (void) sender; (void) media; (void) u;
+	if (type == GST_RTCP_TYPE_PSFB && fbtype == GST_RTCP_PSFB_TYPE_PLI) g_atomic_int_inc(&pli_seen);
+	if (type == GST_RTCP_TYPE_PSFB && fbtype == GST_RTCP_PSFB_TYPE_AFB && fci &&
+	    gst_buffer_extract(fci, 0, h, 4) == 4 && !memcmp(h, "REMB", 4))
+		g_atomic_int_inc(&remb_seen);
+}
 static GHashTable *nice_seen;
 static GstPadProbeReturn nice_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
 {
@@ -220,6 +461,17 @@ static void probe_sinks(void)
 				GstPad *p = gst_element_get_static_pad(e, "src");
 				g_hash_table_add(nice_seen, e);
 				if (p) { gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST, nice_probe, NULL, NULL); gst_object_unref(p); }
+			}
+			if (f && !strcmp(GST_OBJECT_NAME(f), "shmsink") && !g_hash_table_contains(sess_seen, e)) {
+				GstPad *p = gst_element_get_static_pad(e, "sink");
+				g_hash_table_add(sess_seen, e);
+				if (p) { gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER, shm_probe, NULL, NULL); gst_object_unref(p); }
+			}
+			if (f && !strcmp(GST_OBJECT_NAME(f), "rtpsession") && !g_hash_table_contains(sess_seen, e)) {
+				GObject *sess = NULL;
+				g_hash_table_add(sess_seen, e);
+				g_object_get(e, "internal-session", &sess, NULL);
+				if (sess) { g_signal_connect(sess, "on-feedback-rtcp", G_CALLBACK(on_feedback), NULL); g_object_unref(sess); }
 			}
 			if (f && !strcmp(GST_OBJECT_NAME(f), "fakesink") && !g_hash_table_contains(counts, e) &&
 			    fed_by_level(e)) {
@@ -296,26 +548,30 @@ static gboolean tick(gpointer u)
 	ticks++;
 	probe_sinks();
 	switch (step) {
-	case 0:   /* A places the call */
+	case 0:   /* A places the call, with video */
 		side_send(&A, "START 102\n");
+		side_send(&A, "VSTART\n");
 		step = 1;
 		break;
-	case 1:   /* A's offer is complete: B answers it */
-		if (A.gathered && A.txkey && A.ufrag && A.pwd) {
+	case 1:   /* A's offer is complete: B answers it, video too (the same key: our m-lines share it) */
+		if (A.gathered && A.txkey && A.ufrag && A.pwd && A.vufrag && A.vpwd) {
 			side_send(&B, "START %s %s %s 102\n", A.txkey, A.ufrag, A.pwd);
+			side_send(&B, "VSTART %s %s %s\n", A.txkey, A.vufrag, A.vpwd);
 			side_send_cands(&B, &A);
 			step = 2;
 		}
 		break;
 	case 2:   /* B's answer is complete: A takes it */
-		if (B.gathered && B.txkey && B.ufrag && B.pwd) {
+		if (B.gathered && B.txkey && B.ufrag && B.pwd && B.vufrag && B.vpwd) {
 			side_send(&A, "ANSWER %s %s %s\n", B.txkey, B.ufrag, B.pwd);
+			side_send(&A, "VANSWER %s %s %s\n", B.txkey, B.vufrag, B.vpwd);
 			side_send_cands(&A, &B);
 			step = 3; ticks = 0;
 		}
 		break;
-	case 3:   /* let audio run for 6 s, then a RESTART */
-		if (ticks >= 12) {
+	case 3:   /* let audio and video run for 8 s, then VIDEO 1 and a RESTART */
+		if (ticks == 10) side_send(&B, "VIDEO 1 640 480 800\n");
+		if (ticks >= 16) {
 			ssrc_a_ok = session_sends_ssrc(A.ssrc);
 			ssrc_b_ok = session_sends_ssrc(B.ssrc);
 			side_send(&B, "RESTART - x y\n"); step = 4; ticks = 0;
@@ -344,6 +600,19 @@ static gboolean tick(gpointer u)
 	return G_SOURCE_CONTINUE;
 }
 
+/* PMTEST_ABORT_ON=<text>: abort on a log message holding it, for a stack under ASan
+ * (handle_abort=1) or a core; every other message goes out as usual. */
+static GLogWriterOutput abort_on_writer(GLogLevelFlags level, const GLogField *f, gsize n, gpointer u)
+{
+	gsize i;
+	for (i = 0; i < n; i++)
+		if (!strcmp(f[i].key, "MESSAGE") && f[i].length < 0 && strstr(f[i].value, (const char *) u)) {
+			g_log_writer_default(level, f, n, NULL);
+			abort();
+		}
+	return g_log_writer_default(level, f, n, NULL);
+}
+
 int main(int argc, char **argv)
 {
 	gchar *home = g_build_filename(g_get_current_dir(), "pmtest-home", NULL);
@@ -352,17 +621,33 @@ int main(int argc, char **argv)
 	guint sinks = 0, fed = 0;
 	(void) argc; (void) argv;
 
+	if (g_getenv("PMTEST_ABORT_ON"))
+		g_log_set_writer_func(abort_on_writer, g_strdup(g_getenv("PMTEST_ABORT_ON")), g_free);
 	if (!g_getenv("TEAMS_PMEDIA_SINK")) { fprintf(stderr, "set TEAMS_PMEDIA_SRC/TEAMS_PMEDIA_SINK\n"); return 2; }
 	counts = g_hash_table_new(NULL, NULL);
+	sess_seen = g_hash_table_new(NULL, NULL);
 	nice_seen = g_hash_table_new(NULL, NULL);
 	purple_util_set_user_dir(home);
 	purple_debug_set_enabled(g_getenv("PMTEST_DEBUG") != NULL);
 	purple_eventloop_set_ui_ops(&loop_ops);
+	if (g_getenv("PMTEST_H264_CLIP")) {
+		gst_init(NULL, NULL);
+		if (!clip_load(g_getenv("PMTEST_H264_CLIP")) ||
+		    !gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "pmtestenc", "pmtest H264 clip",
+		                                pm_test_enc_plugin_init, "1.0", "LGPL", "pmtest", "pmtest", "pmtest")) {
+			fprintf(stderr, "cannot load %s\n", g_getenv("PMTEST_H264_CLIP"));
+			return 2;
+		}
+	}
 	if (!purple_core_init("pmtest")) { fprintf(stderr, "purple_core_init failed\n"); return 2; }
 	test_account = purple_account_new("pmtest@localhost", "prpl-pmtest");
 	/* not added to the account list: without its protocol plugin, libpurple cannot destroy it
 	 * cleanly (purple_presence_destroy), so it is left for the process exit */
 	loop = g_main_loop_new(NULL, FALSE);
+	{
+		GstElement *pipe = purple_media_manager_get_pipeline(purple_media_manager_get());
+		if (pipe) g_signal_connect(pipe, "deep-element-added", G_CALLBACK(on_deep_added), NULL);
+	}
 
 	side_start(&A, "A", test_account, TRUE);
 	side_start(&B, "B", test_account, FALSE);
@@ -390,6 +675,22 @@ int main(int argc, char **argv)
 	CHECK(A.errs == 0);
 	CHECK(C.errs >= 1 && C.closed);
 	CHECK(D.txkey && D.errs == 0 && !D.closed);
+	/* 7: video */
+	CHECK(A.vufrag && A.vpwd && A.vcands->len && B.vufrag && B.vpwd && B.vcands->len);
+	CHECK(g_strcmp0(A.vufrag, A.ufrag) && g_strcmp0(B.vufrag, B.ufrag));   /* streams of their own */
+	CHECK(A.vcreds_before_ready && B.vcreds_before_ready);                 /* READY waited for them */
+	CHECK(A.vssrc && B.vssrc && A.vssrc != A.ssrc && B.vssrc != B.ssrc);
+	fprintf(stderr, "B video: shm %s, %d frames published, stats: %s\n", B.vshm ? B.vshm : "-",
+	        g_atomic_int_get(&shm_bufs), B.stats ? B.stats : "-");
+	fprintf(stderr, "feedback seen: %d REMB, %d PLI\n", g_atomic_int_get(&remb_seen), g_atomic_int_get(&pli_seen));
+	CHECK(B.vshm && g_file_test(B.vshm, G_FILE_TEST_EXISTS));
+	CHECK(B.peervideo);
+	CHECK(g_atomic_int_get(&shm_bufs) > 30);
+	CHECK(stat_field(&B, "vrx") > 50 && stat_field(&B, "vdec") > 30);
+	CHECK(stat_field(&B, "vremb") > 2 && g_atomic_int_get(&remb_seen) > 2);
+	/* the audio stats count the audio jitterbuffer only, not the video session's next to it */
+	CHECK(stat_field(&B, "jb_pushed") > 0 && stat_field(&B, "jb_pushed") <= stat_field(&B, "rx") + 25);
+	CHECK(B.vtx_err);
 
 	side_send(&A, "STOP\n");
 	side_free(&A);
@@ -399,6 +700,8 @@ int main(int argc, char **argv)
 	purple_core_quit();
 	g_main_loop_unref(loop);
 	g_hash_table_destroy(counts);
+	if (clip_aus) g_ptr_array_unref(clip_aus);
+	if (clip_avcc) g_bytes_unref(clip_avcc);
 	g_free(home);
 	if (failures) { fprintf(stderr, "%d failure(s)\n", failures); return 1; }
 	printf("PASS test_pmedia_loopback\n");

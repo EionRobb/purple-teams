@@ -49,6 +49,18 @@ const char *teams_video_offer_direction(gboolean camera);
 
 gchar *teams_negotiation_tag(const char *participant_id, guint n);
 
+/* The first m=<media> section of sdp ("audio", "video"): from its m= line up to the next m=
+ * line, as it is in sdp. NULL if there is none or that m-line is declined (port 0). g_free() it.
+ * An unbundled engine (one ICE stream per session) takes each section's ICE credentials, key and
+ * candidates from here. */
+gchar *teams_sdp_section(const char *sdp, const char *media);
+
+/* Whether the first m=video section has ICE credentials of its own: an a=ice-ufrag and
+ * a=ice-pwd that differ from the first m=audio section's. The Teams Android app's offers do,
+ * though they name BUNDLE; an offer whose sections share one ufrag means one transport for all,
+ * which an unbundled answer cannot give the video. */
+gboolean teams_sdp_video_ice_own(const char *sdp);
+
 /* One ICE candidate, as an SDP a=candidate line has it (RFC 5245 15.1):
  * "candidate:<foundation> <component> <transport> <priority> <ip> <port> typ <type>
  * [raddr <ip> rport <port>] [<name> <value>]...". */
