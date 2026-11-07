@@ -868,7 +868,10 @@ pm_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw)
 	g_value_init(&params[n].value, G_TYPE_BOOLEAN); g_value_set_boolean(&params[n].value, FALSE); n++;
 	if (pm->stun_ip) {
 		params[n].name = "stun-ip";
-		g_value_init(&params[n].value, G_TYPE_STRING); g_value_set_string(&params[n].value, pm->stun_ip); n++;
+		/* Static: libpurple's create_stream copies the GValues and unsets them itself, so the
+		 * string must not be freed by either unset (pm owns it, and Farstream copies it). */
+		g_value_init(&params[n].value, G_TYPE_STRING);
+		g_value_set_static_string(&params[n].value, pm->stun_ip); n++;
 		params[n].name = "stun-port";
 		g_value_init(&params[n].value, G_TYPE_UINT); g_value_set_uint(&params[n].value, pm->stun_port); n++;
 	}
@@ -876,6 +879,8 @@ pm_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw)
 	pm_each_rtpsession(pm_note_session, pm->other_sessions);
 	ok = purple_media_add_stream(pm->media, PM_SESSION, PM_PEER, PURPLE_MEDIA_AUDIO, pm->caller,
 	                             "nice", n, params);
+	/* For the paths where libpurple returns before create_stream; a no-op for the others, as
+	 * nothing here owns any memory. */
 	for (i = 0; i < n; i++) g_value_unset(&params[i].value);
 	if (!ok) { pm_fatal(pm, "the audio stream could not be added"); return; }
 

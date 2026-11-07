@@ -11,6 +11,11 @@
  *   3. RESTART is answered ERR, and the call goes on
  *   4. a START whose key has the wrong length gives ERR, and the engine closes its output
  *   5. STOP and teams_pmedia_free end it all without a crash (ASan/valgrind runs check leaks)
+ *   6. a fourth engine, given a STUN server first (RELAY stun) as every real call is, starts
+ *      without a crash: stun-ip is a string, and libpurple takes the stream parameters' values
+ *      over and unsets them itself, so a second unset in the engine is a double free (ASan
+ *      catches it). Nothing answers on that server, which slows ICE down, so the call in 1-3
+ *      has none: its answerer's first RTP packet, which gives its SSRC, would come too late.
  */
 #include "teams_call_pmedia.h"
 
@@ -280,7 +285,7 @@ static gboolean session_sends_ssrc(guint ssrc)
 static gboolean ssrc_a_ok, ssrc_b_ok;
 
 /* ---- the test ---- */
-static Side A, B, C;
+static Side A, B, C, D;
 static int step;
 static guint ticks;
 static PurpleAccount *test_account;
@@ -323,8 +328,16 @@ static gboolean tick(gpointer u)
 			step = 5; ticks = 0;
 		}
 		break;
-	case 5:
-		if (ticks >= 4) { g_main_loop_quit(loop); return G_SOURCE_REMOVE; }
+	case 5:   /* a fourth engine, with a STUN server */
+		if (ticks >= 4) {
+			side_start(&D, "D", test_account, TRUE);
+			side_send(&D, "RELAY stun 127.0.0.1 3478\n");
+			side_send(&D, "START 102\n");
+			step = 6; ticks = 0;
+		}
+		break;
+	case 6:
+		if (D.txkey || ticks >= 10) { g_main_loop_quit(loop); return G_SOURCE_REMOVE; }
 		break;
 	}
 	if (ticks > 120) { fprintf(stderr, "timed out at step %d\n", step); g_main_loop_quit(loop); return G_SOURCE_REMOVE; }
@@ -376,11 +389,13 @@ int main(int argc, char **argv)
 	CHECK(!B.closed && !A.closed);
 	CHECK(A.errs == 0);
 	CHECK(C.errs >= 1 && C.closed);
+	CHECK(D.txkey && D.errs == 0 && !D.closed);
 
 	side_send(&A, "STOP\n");
 	side_free(&A);
 	side_free(&B);
 	side_free(&C);
+	side_free(&D);
 	purple_core_quit();
 	g_main_loop_unref(loop);
 	g_hash_table_destroy(counts);
