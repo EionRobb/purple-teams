@@ -20,6 +20,9 @@
  *                              m-line's ("-": the audio's), our key the same as the audio's
  *   VANSWER <rxkey> <ufrag> <pwd>  (placing the call) the far side's for the video session
  *   VRCAND <candidate:...>     a remote candidate for the video session
+ *   VRESTART <rxkey> <ufrag> <pwd>  a renegotiation moved the far side's video to new ICE:
+ *                              the video session is replaced by a new one answering it, whose
+ *                              VUFRAG/VPWD/VCAND lines follow, then VSSRC and VRESTARTED
  *   VIDEO 1 ...                answered VIDEOERR tx: this engine does not send our camera yet
  *   VIDEO 0                    nothing to stop
  *   STOP, or the command socket closing: the media ends
@@ -141,6 +144,10 @@ struct _TeamsPMedia {
 
 	/* the video session (VSTART); vx NULL without one */
 	PmVideo       *vx;
+	gchar         *vsid;           /* its libpurple session id: "video", then "video2", ... */
+	guint          vgen;           /* how many video sessions the call has had */
+	GPtrArray     *vnice;          /* its nicesink elements (references), see pm_video_restart */
+	gboolean       vrestarting;    /* VRESTART: VRESTARTED is due once its candidates are complete */
 	gchar         *vruf, *vrpw;
 	GList         *vrcands_held;
 	gboolean       vcreds_sent, vgathered, vpaired;
@@ -280,35 +287,69 @@ pm_free_held_cands(TeamsPMedia *pm)
  * libpurple, which stops the source before the conference, hangs in gst_pad_stop_task().
  * Stopping each nicesink first unlocks it (it returns FLUSHING); locking its state keeps the
  * conference's own state changes off it until the conference goes. */
-static void
-pm_release_transport(TeamsPMedia *pm)
+/* The call's FsRtpConference: the bin above our audio rtpsession. A reference, or NULL. */
+static GstElement *
+pm_conference(TeamsPMedia *pm)
 {
 	GstElement *e = pm->rtpsession ? gst_object_ref(pm->rtpsession) : NULL;
-	GstIterator *it;
-	GValue v = G_VALUE_INIT;
 	while (e && g_strcmp0(G_OBJECT_TYPE_NAME(e), "FsRtpConference")) {
 		GstObject *up = gst_object_get_parent(GST_OBJECT(e));
 		gst_object_unref(e);
 		e = up && GST_IS_ELEMENT(up) ? GST_ELEMENT(up) : NULL;
 		if (up && !e) gst_object_unref(up);
 	}
-	if (!e) return;
-	it = gst_bin_iterate_recurse(GST_BIN(e));
+	return e;
+}
+
+/* The conference's nicesink elements, each with a reference (the table's keys). */
+static GHashTable *
+pm_nicesinks(TeamsPMedia *pm)
+{
+	GHashTable *t = g_hash_table_new_full(NULL, NULL, gst_object_unref, NULL);
+	GstElement *conf = pm_conference(pm);
+	GstIterator *it;
+	GValue v = G_VALUE_INIT;
+	if (!conf) return t;
+	it = gst_bin_iterate_recurse(GST_BIN(conf));
 	for (;;) {
 		GstIteratorResult r = gst_iterator_next(it, &v);
 		if (r == GST_ITERATOR_RESYNC) { gst_iterator_resync(it); continue; }
 		if (r != GST_ITERATOR_OK) break;
 		GstElement *s = g_value_get_object(&v);
 		GstElementFactory *f = gst_element_get_factory(s);
-		if (f && !g_strcmp0(GST_OBJECT_NAME(f), "nicesink")) {
-			gst_element_set_locked_state(s, TRUE);
-			gst_element_set_state(s, GST_STATE_NULL);
-		}
+		if (f && !g_strcmp0(GST_OBJECT_NAME(f), "nicesink") && !g_hash_table_contains(t, s))
+			g_hash_table_add(t, gst_object_ref(s));
 		g_value_reset(&v);
 	}
 	g_value_unset(&v);
 	gst_iterator_free(it);
-	gst_object_unref(e);
+	gst_object_unref(conf);
+	return t;
+}
+
+/* Stop a nicesink for good: it returns FLUSHING to whoever is blocked in it, and its state is
+ * locked so that the conference's own state changes leave it alone. */
+static void
+pm_stop_nicesink(gpointer e, gpointer unused, gpointer u)
+{
+	(void) unused; (void) u;
+	gst_element_set_locked_state(e, TRUE);
+	gst_element_set_state(e, GST_STATE_NULL);
+}
+
+/* The call's ICE transport, released before libpurple takes the call down. nicesink waits,
+ * with no timeout, when it is given a packet for a component with no selected pair yet (an
+ * unanswered call, or ICE that never connected): non-reliable libnice says WOULD_BLOCK, and
+ * nicesink waits for a "writable" that only reliable agents signal. Its upstream streaming
+ * thread (the microphone's, rtpsession's RTCP) then holds its stream lock for good, and
+ * libpurple, which stops the source before the conference, hangs in gst_pad_stop_task().
+ * Stopping each nicesink first unlocks it. */
+static void
+pm_release_transport(TeamsPMedia *pm)
+{
+	GHashTable *t = pm_nicesinks(pm);
+	g_hash_table_foreach(t, pm_stop_nicesink, NULL);
+	g_hash_table_destroy(t);
 }
 
 static void
@@ -1249,6 +1290,7 @@ pm_video_stop(TeamsPMedia *pm)
 		g_object_remove_weak_pointer(G_OBJECT(pm->vrtpsession), (gpointer *) &pm->vrtpsession);
 		pm->vrtpsession = NULL;
 	}
+	if (pm->vnice) { g_ptr_array_unref(pm->vnice); pm->vnice = NULL; }
 	if (pm->media) g_object_set_data(G_OBJECT(pm->media), PM_VX_KEY, NULL);
 	pm_vx_unref(pm->vx);
 	pm->vx = NULL;
@@ -1268,6 +1310,15 @@ pm_cand_type(PurpleMediaCandidateType t)
 	}
 }
 
+/* Which of our sessions sid is: 0 audio, 1 the current video one, -1 neither (a video session
+ * pm_video_restart ended, still signalling on its way out). */
+static int
+pm_sid_kind(const TeamsPMedia *pm, const char *sid)
+{
+	if (!g_strcmp0(sid, PM_SESSION)) return 0;
+	return pm->vsid && !g_strcmp0(sid, pm->vsid) ? 1 : -1;
+}
+
 static void
 pm_on_new_candidate(PurpleMedia *media, gchar *sid, gchar *who, PurpleMediaCandidate *cand, gpointer u)
 {
@@ -1275,9 +1326,11 @@ pm_on_new_candidate(PurpleMedia *media, gchar *sid, gchar *who, PurpleMediaCandi
 	TeamsIceCand c;
 	const char *type = pm_cand_type(purple_media_candidate_get_candidate_type(cand));
 	gchar *foundation, *ip, *base_ip, *line;
-	gboolean video = !g_strcmp0(sid, PM_VSESSION);
+	int kind = pm_sid_kind(pm, sid);
+	gboolean video = kind == 1;
 	gboolean *creds_sent = video ? &pm->vcreds_sent : &pm->creds_sent;
 	(void) media; (void) who;
+	if (kind < 0) return;
 
 	if (purple_media_candidate_get_component_id(cand) != PURPLE_MEDIA_COMPONENT_RTP ||
 	    purple_media_candidate_get_protocol(cand) != PURPLE_MEDIA_NETWORK_PROTOCOL_UDP || !type)
@@ -1332,10 +1385,24 @@ static void
 pm_on_candidates_prepared(PurpleMedia *media, gchar *sid, gchar *who, gpointer u)
 {
 	TeamsPMedia *pm = u;
-	gboolean video = !g_strcmp0(sid, PM_VSESSION);
+	int kind = pm_sid_kind(pm, sid);
+	gboolean video = kind == 1;
 	(void) media; (void) who;
-	if (video ? pm->vgathered : pm->gathered) return;
+	if (kind < 0 || (video ? pm->vgathered : pm->gathered)) return;
 	if (video) pm->vgathered = TRUE; else pm->gathered = TRUE;
+	if (video && pm->vrestarting) {
+		/* the new video session's credentials and candidates are out: the answer can go */
+		pm->vrestarting = FALSE;
+		if (!pm->vcreds_sent) {
+			pm_log("the new video session has no local UDP candidates; the call stays voice only");
+			pm_emit(pm, "VIDEOERR build\n");
+			return;
+		}
+		if (pm->vx && g_atomic_int_get(&pm->vx->our_ssrc))
+			pm_emit(pm, "VSSRC %u\n", (guint) g_atomic_int_get(&pm->vx->our_ssrc));
+		pm_emit(pm, "VRESTARTED\n");
+		return;
+	}
 	if (!(video ? pm->vcreds_sent : pm->creds_sent)) {
 		pm_fatal(pm, video ? "no local UDP candidates for video" : "no local UDP candidates");
 		return;
@@ -1348,9 +1415,13 @@ pm_on_pair(PurpleMedia *media, gchar *sid, gchar *who, PurpleMediaCandidate *loc
            PurpleMediaCandidate *remote, gpointer u)
 {
 	TeamsPMedia *pm = u;
-	gchar *lip = purple_media_candidate_get_ip(local), *rip = purple_media_candidate_get_ip(remote);
-	gboolean video = !g_strcmp0(sid, PM_VSESSION);
+	gchar *lip, *rip;
+	int kind = pm_sid_kind(pm, sid);
+	gboolean video = kind == 1;
 	(void) media; (void) who;
+	if (kind < 0) return;
+	lip = purple_media_candidate_get_ip(local);
+	rip = purple_media_candidate_get_ip(remote);
 	pm_log("%sICE pair %s:%u <-> %s:%u", video ? "video " : "", lip ? lip : "?",
 	       purple_media_candidate_get_port(local), rip ? rip : "?", purple_media_candidate_get_port(remote));
 	g_free(lip); g_free(rip);
@@ -1452,7 +1523,7 @@ pm_set_remote_vcreds(TeamsPMedia *pm, const char *ruf, const char *rpw)
 	g_free(pm->vruf); g_free(pm->vrpw);
 	pm->vruf = g_strdup(ruf); pm->vrpw = g_strdup(rpw);
 	if (pm->vrcands_held && pm->media && pm->vx) {
-		pm_add_remote_cands(pm, PM_VSESSION, pm->vruf, pm->vrpw, pm->vrcands_held);
+		pm_add_remote_cands(pm, pm->vsid, pm->vruf, pm->vrpw, pm->vrcands_held);
 		pm_log("%u held remote video candidate(s) added", g_list_length(pm->vrcands_held));
 	}
 	g_list_free_full(pm->vrcands_held, g_object_unref);
@@ -1485,7 +1556,7 @@ pm_rcand(TeamsPMedia *pm, const char *line, gboolean video)
 	}
 	{
 		GList one = { pc, NULL, NULL };
-		pm_add_remote_cands(pm, video ? PM_VSESSION : PM_SESSION, uf, pw, &one);
+		pm_add_remote_cands(pm, video ? pm->vsid : PM_SESSION, uf, pw, &one);
 	}
 	g_object_unref(pc);
 }
@@ -1495,7 +1566,7 @@ G_GNUC_BEGIN_IGNORE_DEPRECATIONS
  * 0), UDP only, with the STUN server if there is one; libpurple adds controlling-mode from the
  * initiator flag. */
 static gboolean
-pm_add_stream(TeamsPMedia *pm, const char *sid, PurpleMediaSessionType type)
+pm_add_stream(TeamsPMedia *pm, const char *sid, PurpleMediaSessionType type, gboolean initiator)
 {
 	GParameter params[4];
 	guint n = 0, i;
@@ -1514,7 +1585,7 @@ pm_add_stream(TeamsPMedia *pm, const char *sid, PurpleMediaSessionType type)
 		params[n].name = "stun-port";
 		g_value_init(&params[n].value, G_TYPE_UINT); g_value_set_uint(&params[n].value, pm->stun_port); n++;
 	}
-	ok = purple_media_add_stream(pm->media, sid, PM_PEER, type, pm->caller, "nice", n, params);
+	ok = purple_media_add_stream(pm->media, sid, PM_PEER, type, initiator, "nice", n, params);
 	/* For the paths where libpurple returns before create_stream; a no-op for the others, as
 	 * nothing here owns any memory. */
 	for (i = 0; i < n; i++) g_value_unset(&params[i].value);
@@ -1537,7 +1608,7 @@ pm_new_rtpsession(GHashTable *before)
  * from its video m-line when answering, with VANSWER when placing the call. Receive only: our
  * camera is not sent yet (VIDEO 1 is answered VIDEOERR tx). */
 static void
-pm_video_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw)
+pm_video_build(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw, gboolean initiator)
 {
 	PurpleMediaManager *manager = purple_media_manager_get();
 	gboolean send = pm->caller && g_getenv("TEAMS_PMEDIA_VSRC") != NULL;   /* the loopback test */
@@ -1546,9 +1617,7 @@ pm_video_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *
 	GList *codecs;
 	GObject *sess = NULL;
 
-	if (!pm->media) { pm_emit(pm, "ERR VSTART before START\n"); return; }
-	if (pm->vx) { pm_emit(pm, "ERR video already started\n"); return; }
-	if (pm->ready_sent) { pm_emit(pm, "ERR VSTART after READY\n"); return; }
+	GHashTable *nice_before;
 	if (!g_getenv("TEAMS_PMEDIA_HW_DECODE")) {
 		/* droidvdec (sargo) ranks above avdec_h264, so Farstream would decode with it; the
 		 * decoder teams_media uses, and the Phone app's picture has been tested with, is
@@ -1568,8 +1637,10 @@ pm_video_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *
 
 	before = g_hash_table_new(NULL, NULL);
 	pm_each_rtpsession(pm_note_session, before);
-	if (!pm_add_stream(pm, PM_VSESSION, send ? PURPLE_MEDIA_VIDEO : PURPLE_MEDIA_RECV_VIDEO)) {
+	nice_before = pm_nicesinks(pm);
+	if (!pm_add_stream(pm, pm->vsid, send ? PURPLE_MEDIA_VIDEO : PURPLE_MEDIA_RECV_VIDEO, initiator)) {
 		g_hash_table_destroy(before);
+		g_hash_table_destroy(nice_before);
 		pm_log("the video stream could not be added; the call stays voice only");
 		pm_emit(pm, "VIDEOERR build\n");
 		pm_video_stop(pm);
@@ -1577,6 +1648,18 @@ pm_video_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *
 	}
 	pm->vrtpsession = pm_new_rtpsession(before);
 	g_hash_table_destroy(before);
+	{
+		/* this session's nicesinks: the ones it added (Farstream makes them with the stream) */
+		GHashTable *now = pm_nicesinks(pm);
+		GHashTableIter hi;
+		gpointer k;
+		pm->vnice = g_ptr_array_new_with_free_func(gst_object_unref);
+		g_hash_table_iter_init(&hi, now);
+		while (g_hash_table_iter_next(&hi, &k, NULL))
+			if (!g_hash_table_contains(nice_before, k)) g_ptr_array_add(pm->vnice, gst_object_ref(k));
+		g_hash_table_destroy(now);
+		g_hash_table_destroy(nice_before);
+	}
 	if (pm->vrtpsession) {
 		g_object_add_weak_pointer(G_OBJECT(pm->vrtpsession), (gpointer *) &pm->vrtpsession);
 		if (pm->other_sessions) g_hash_table_insert(pm->other_sessions, pm->vrtpsession, pm->vrtpsession);
@@ -1602,13 +1685,13 @@ pm_video_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *
 		                                      pm_vx_ref(pm->vx), pm_vx_closure_unref, 0);
 	}
 
-	purple_media_set_send_rtcp_mux(pm->media, PM_VSESSION, PM_PEER, TRUE);
-	purple_media_set_require_encryption(pm->media, PM_VSESSION, PM_PEER, TRUE);
-	if (!purple_media_set_encryption_parameters(pm->media, PM_VSESSION, PM_CIPHER, PM_AUTH,
+	purple_media_set_send_rtcp_mux(pm->media, pm->vsid, PM_PEER, TRUE);
+	purple_media_set_require_encryption(pm->media, pm->vsid, PM_PEER, TRUE);
+	if (!purple_media_set_encryption_parameters(pm->media, pm->vsid, PM_CIPHER, PM_AUTH,
 	                                            (const gchar *) pm->txkey, sizeof pm->txkey)) {
 		pm_log("our SRTP key was not taken for video; the call stays voice only");
 		pm_emit(pm, "VIDEOERR build\n");
-		purple_media_end(pm->media, PM_VSESSION, NULL);
+		purple_media_end(pm->media, pm->vsid, NULL);
 		pm_video_stop(pm);
 		return;
 	}
@@ -1618,25 +1701,71 @@ pm_video_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *
 	purple_media_codec_add_optional_parameter(h264, "packetization-mode", "1");
 	purple_media_codec_add_optional_parameter(h264, "profile-level-id", "42e01f");
 	codecs = g_list_append(NULL, h264);
-	if (!purple_media_set_remote_codecs(pm->media, PM_VSESSION, PM_PEER, codecs))
+	if (!purple_media_set_remote_codecs(pm->media, pm->vsid, PM_PEER, codecs))
 		pm_log("H264/%d was not taken as the remote video codec", PM_H264_PT);
 	purple_media_codec_list_free(codecs);
-	purple_media_set_output_window(pm->media, PM_VSESSION, PM_PEER, 0);
+	purple_media_set_output_window(pm->media, pm->vsid, PM_PEER, 0);
 
 	if (ruf && rpw) {
-		if (!rxkey || !pm_set_rx_key(pm, PM_VSESSION, rxkey)) {
+		if (!rxkey || !pm_set_rx_key(pm, pm->vsid, rxkey)) {
 			pm_log("the far side's video key was not taken; the call stays voice only");
 			pm_emit(pm, "VIDEOERR build\n");
-			purple_media_end(pm->media, PM_VSESSION, NULL);
+			purple_media_end(pm->media, pm->vsid, NULL);
 			pm_video_stop(pm);
 			return;
 		}
 		pm_set_remote_vcreds(pm, ruf, rpw);
-		purple_media_stream_info(pm->media, PURPLE_MEDIA_INFO_ACCEPT, PM_VSESSION, PM_PEER, TRUE);
+		purple_media_stream_info(pm->media, PURPLE_MEDIA_INFO_ACCEPT, pm->vsid, PM_PEER, TRUE);
 	}
 	pm->vtick = g_timeout_add(PM_VTICK_MS, pm_vtick, pm);
-	pm_log("video session started (%s), H264 PT %d, our RTCP SSRC %u", send ? "send and receive" : "receive",
-	       PM_H264_PT, (guint) g_atomic_int_get(&pm->vx->our_ssrc));
+	pm_log("video session %s started (%s), H264 PT %d, our RTCP SSRC %u", pm->vsid,
+	       send ? "send and receive" : "receive", PM_H264_PT, (guint) g_atomic_int_get(&pm->vx->our_ssrc));
+}
+
+static void
+pm_video_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw)
+{
+	if (!pm->media) { pm_emit(pm, "ERR VSTART before START\n"); return; }
+	if (pm->vx) { pm_emit(pm, "ERR video already started\n"); return; }
+	if (pm->ready_sent) { pm_emit(pm, "ERR VSTART after READY\n"); return; }
+	pm->vgen = 1;
+	g_free(pm->vsid);
+	pm->vsid = g_strdup(PM_VSESSION);
+	pm_video_build(pm, rxkey, ruf, rpw, pm->caller);
+}
+
+/* VRESTART: the far side moved its video to new ICE credentials (a renegotiation that brings
+ * the m=video back after dropping it, as Teams does after accepting a call we placed). Farstream
+ * would restart ICE for a stream given no candidates, but libpurple always hands it every remote
+ * candidate it was given, so the stream cannot take new credentials. Instead the video session
+ * is replaced: the old one's nicesinks stopped (they may be blocked, see pm_release_transport),
+ * the session ended, and a new one made under the next id, answering the far side's offer. Its
+ * credentials and candidates go out as at the start (VUFRAG, VPWD, VCAND), then VRESTARTED. */
+static void
+pm_video_restart(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw)
+{
+	gchar *old;
+	if (!pm->media || !pm->vx || !pm->vsid) { pm_emit(pm, "ERR VRESTART without a video session\n"); return; }
+	old = pm->vsid;
+	pm->vsid = NULL;    /* its signals from here on are an ended session's (pm_sid_kind) */
+	if (pm->vnice) {
+		guint i;
+		for (i = 0; i < pm->vnice->len; i++) pm_stop_nicesink(g_ptr_array_index(pm->vnice, i), NULL, NULL);
+	}
+	pm_video_stop(pm);
+	purple_media_end(pm->media, old, NULL);
+	pm_log("video session %s ended for the far side's new ICE", old);
+	g_free(old);
+	g_free(pm->vruf); g_free(pm->vrpw);
+	pm->vruf = pm->vrpw = NULL;
+	g_list_free_full(pm->vrcands_held, g_object_unref);
+	pm->vrcands_held = NULL;
+	pm->vcreds_sent = pm->vgathered = pm->vpaired = FALSE;
+	pm->vgen++;
+	pm->vsid = g_strdup_printf("%s%u", PM_VSESSION, pm->vgen);
+	pm->vrestarting = TRUE;
+	pm_video_build(pm, rxkey, ruf, rpw, FALSE);
+	if (!pm->vx) pm->vrestarting = FALSE;   /* it failed, and said so (VIDEOERR build) */
 }
 
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS
@@ -1672,7 +1801,7 @@ pm_start(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *rpw)
 
 	pm->other_sessions = g_hash_table_new(NULL, NULL);
 	pm_each_rtpsession(pm_note_session, pm->other_sessions);
-	ok = pm_add_stream(pm, PM_SESSION, PURPLE_MEDIA_AUDIO);
+	ok = pm_add_stream(pm, PM_SESSION, PURPLE_MEDIA_AUDIO, pm->caller);
 	if (!ok) { pm_fatal(pm, "the audio stream could not be added"); return; }
 	/* ours now, before a video session adds a second one (pm_find_ssrc looks again if not) */
 	pm_each_rtpsession(pm_pick_session, pm);
@@ -1820,11 +1949,13 @@ pm_handle_line(TeamsPMedia *pm, gchar *line)
 		else pm_emit(pm, "ERR VSTART without the far side's key and ICE credentials\n");
 	} else if (!strcmp(t[0], "VANSWER") && n >= 4) {
 		if (!pm->vx) pm_emit(pm, "ERR VANSWER without a video session\n");
-		else if (!pm_set_rx_key(pm, PM_VSESSION, t[1])) pm_emit(pm, "VIDEOERR rx key\n");
+		else if (!pm_set_rx_key(pm, pm->vsid, t[1])) pm_emit(pm, "VIDEOERR rx key\n");
 		else {
 			pm_set_remote_vcreds(pm, t[2], t[3]);
-			purple_media_stream_info(pm->media, PURPLE_MEDIA_INFO_ACCEPT, PM_VSESSION, PM_PEER, TRUE);
+			purple_media_stream_info(pm->media, PURPLE_MEDIA_INFO_ACCEPT, pm->vsid, PM_PEER, TRUE);
 		}
+	} else if (!strcmp(t[0], "VRESTART") && n >= 4) {
+		pm_video_restart(pm, t[1], t[2], t[3]);
 	} else if (!strcmp(t[0], "VIDEO")) {
 		/* our camera: not sent by this engine yet */
 		if (n > 1 && !strcmp(t[1], "1")) {
@@ -1937,5 +2068,6 @@ teams_pmedia_free(TeamsPMedia *pm)
 	g_free(pm->rpw);
 	g_free(pm->vruf);
 	g_free(pm->vrpw);
+	g_free(pm->vsid);
 	g_free(pm);
 }

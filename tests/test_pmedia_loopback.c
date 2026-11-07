@@ -22,6 +22,12 @@
  *      decodes it into its gst-shm socket (TEAMS_PMEDIA_VIDEO_SHM), says VSHM and PEERVIDEO 1,
  *      and its RTCP carries REMB to the caller (counted on the caller's RTP session). VIDEO 1
  *      is answered VIDEOERR tx (the engine does not send our camera yet).
+ *   8. VRESTART: the video moves to new ICE credentials, as the Teams Android app does on a call
+ *      we placed. B (the far side) makes a new video session (VRESTART), then A replaces its own
+ *      for B's new credentials and candidates (VRESTART, VRCAND), and B takes A's answer
+ *      (VANSWER). Each prints new VUFRAG/VPWD/VCAND, then VRESTARTED, and the old sessions'
+ *      signals change nothing; the video gets through again on the new sessions (B publishes
+ *      more frames), and the audio goes on.
  * Video needs an H264 encoder Farstream can pick, and avdec_h264; the script sets
  * TEAMS_PMEDIA_VSRC=1 and TEAMS_PMEDIA_VIDEO_SHM. With PMTEST_H264_CLIP=<an Annex B H264 file,
  * one access unit per frame, each starting with an access unit delimiter, SPS and PPS in it> the test registers an
@@ -249,6 +255,7 @@ typedef struct {
 	guint        vssrc;
 	gboolean     peervideo, vtx_err;
 	gboolean     vcreds_before_ready;   /* VUFRAG came before READY */
+	int          vrestarted;            /* VRESTARTED lines */
 } Side;
 
 static GMainLoop *loop;
@@ -274,13 +281,14 @@ static void side_line(Side *s, const char *l)
 	else if (g_str_has_prefix(l, "PWD ")) { g_free(s->pwd); s->pwd = g_strdup(l + 4); }
 	else if (g_str_has_prefix(l, "CAND ")) g_string_append_printf(s->cands, "%s\n", l + 5);
 	else if (g_str_has_prefix(l, "SSRC ")) s->ssrc = (guint) g_ascii_strtoull(l + 5, NULL, 10);
-	else if (g_str_has_prefix(l, "VUFRAG ")) { g_free(s->vufrag); s->vufrag = g_strdup(l + 7); s->vcreds_before_ready = !s->ready; }
+	else if (g_str_has_prefix(l, "VUFRAG ")) { g_free(s->vufrag); s->vufrag = g_strdup(l + 7); s->vcreds_before_ready |= !s->ready; }   /* the first: 8 makes more */
 	else if (g_str_has_prefix(l, "VPWD ")) { g_free(s->vpwd); s->vpwd = g_strdup(l + 5); }
 	else if (g_str_has_prefix(l, "VCAND ")) g_string_append_printf(s->vcands, "%s\n", l + 6);
 	else if (g_str_has_prefix(l, "VSSRC ")) s->vssrc = (guint) g_ascii_strtoull(l + 6, NULL, 10);
 	else if (g_str_has_prefix(l, "VSHM ")) { gchar **t = g_strsplit(l + 5, " ", 2); g_free(s->vshm); s->vshm = g_strdup(t[0]); g_strfreev(t); }
 	else if (!strcmp(l, "PEERVIDEO 1")) s->peervideo = TRUE;
 	else if (!strcmp(l, "VIDEOERR tx")) s->vtx_err = TRUE;
+	else if (!strcmp(l, "VRESTARTED")) s->vrestarted++;
 	else if (g_str_has_prefix(l, "STATS ")) { g_free(s->stats); s->stats = g_strdup(l + 6); }
 	else if (!strcmp(l, "READY")) s->ready = TRUE;
 	else if (!strcmp(l, "GATHERED")) s->gathered = TRUE;
@@ -536,6 +544,39 @@ static gboolean session_sends_ssrc(guint ssrc)
 }
 static gboolean ssrc_a_ok, ssrc_b_ok;
 
+/* 8: a side's video credentials and candidates before VRESTART, and what went on after it */
+static gchar *a_vufrag0, *b_vufrag0;
+static gint shm_before_vrestart, shm_after_vrestart, audio_before_vrestart, audio_after_vrestart;
+static guint vrestart_gap;   /* ticks the video took to come back */
+
+/* the frames A's receive sink (audio) got: the call's audio goes on */
+static gint audio_bufs(void)
+{
+	GHashTableIter hi;
+	gpointer k, v;
+	gint n = 0;
+	g_hash_table_iter_init(&hi, counts);
+	while (g_hash_table_iter_next(&hi, &k, &v)) n += (gint) GPOINTER_TO_UINT(v);
+	return n;
+}
+
+static void side_forget_video(Side *s, gchar **old)
+{
+	g_free(*old);
+	*old = s->vufrag;
+	s->vufrag = NULL;
+	g_free(s->vpwd); s->vpwd = NULL;
+	g_string_truncate(s->vcands, 0);
+}
+
+static void side_send_vcands(Side *to, const Side *from)
+{
+	gchar **cl = g_strsplit(from->vcands->str, "\n", -1);
+	int i;
+	for (i = 0; cl[i]; i++) if (*cl[i]) side_send(to, "VRCAND %s\n", cl[i]);
+	g_strfreev(cl);
+}
+
 /* ---- the test ---- */
 static Side A, B, C, D;
 static int step;
@@ -574,6 +615,36 @@ static gboolean tick(gpointer u)
 		if (ticks >= 16) {
 			ssrc_a_ok = session_sends_ssrc(A.ssrc);
 			ssrc_b_ok = session_sends_ssrc(B.ssrc);
+			step = 30; ticks = 0;
+		}
+		break;
+	case 30:   /* 8: the far side (B) moves its video to new ICE */
+		shm_before_vrestart = g_atomic_int_get(&shm_bufs);
+		audio_before_vrestart = audio_bufs();
+		side_send(&B, "VRESTART %s %s %s\n", A.txkey, A.vufrag, A.vpwd);
+		side_forget_video(&B, &b_vufrag0);
+		step = 31; ticks = 0;
+		break;
+	case 31:   /* its offer is complete: A replaces its video session for it */
+		if (B.vrestarted == 1 && B.vufrag && B.vpwd && B.vcands->len) {
+			side_send(&A, "VRESTART %s %s %s\n", B.txkey, B.vufrag, B.vpwd);
+			side_send_vcands(&A, &B);
+			side_forget_video(&A, &a_vufrag0);
+			step = 32; ticks = 0;
+		}
+		break;
+	case 32:   /* A's answer is complete: B takes it */
+		if (A.vrestarted == 1 && A.vufrag && A.vpwd && A.vcands->len) {
+			side_send(&B, "VANSWER %s %s %s\n", A.txkey, A.vufrag, A.vpwd);
+			side_send_vcands(&B, &A);
+			shm_after_vrestart = g_atomic_int_get(&shm_bufs);
+			step = 33; ticks = 0;
+		}
+		break;
+	case 33:   /* video again, for up to 10 s, then the RESTART of 3 */
+		if (!vrestart_gap && g_atomic_int_get(&shm_bufs) > shm_after_vrestart + 30) vrestart_gap = ticks;
+		if (vrestart_gap ? ticks >= vrestart_gap + 4 : ticks >= 20) {
+			audio_after_vrestart = audio_bufs();
 			side_send(&B, "RESTART - x y\n"); step = 4; ticks = 0;
 		}
 		break;
@@ -691,6 +762,16 @@ int main(int argc, char **argv)
 	/* the audio stats count the audio jitterbuffer only, not the video session's next to it */
 	CHECK(stat_field(&B, "jb_pushed") > 0 && stat_field(&B, "jb_pushed") <= stat_field(&B, "rx") + 25);
 	CHECK(B.vtx_err);
+	/* 8: VRESTART */
+	fprintf(stderr, "VRESTART: shm frames %d before, %d at the answer, %d at the end (back after %u ticks); "
+	        "audio buffers %d -> %d\n", shm_before_vrestart, shm_after_vrestart, g_atomic_int_get(&shm_bufs),
+	        vrestart_gap, audio_before_vrestart, audio_after_vrestart);
+	CHECK(A.vrestarted == 1 && B.vrestarted == 1);
+	CHECK(A.vufrag && B.vufrag && a_vufrag0 && b_vufrag0);
+	CHECK(g_strcmp0(A.vufrag, a_vufrag0) && g_strcmp0(B.vufrag, b_vufrag0));   /* new ICE */
+	CHECK(A.vcands->len && B.vcands->len);
+	CHECK(vrestart_gap > 0);                                                   /* video again */
+	CHECK(audio_after_vrestart > audio_before_vrestart + 100);                 /* audio went on */
 
 	side_send(&A, "STOP\n");
 	side_free(&A);
@@ -703,6 +784,7 @@ int main(int argc, char **argv)
 	if (clip_aus) g_ptr_array_unref(clip_aus);
 	if (clip_avcc) g_bytes_unref(clip_avcc);
 	g_free(home);
+	g_free(a_vufrag0); g_free(b_vufrag0);
 	if (failures) { fprintf(stderr, "%d failure(s)\n", failures); return 1; }
 	printf("PASS test_pmedia_loopback\n");
 	return 0;
