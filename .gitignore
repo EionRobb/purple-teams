@@ -9,3 +9,4 @@ libteams-personal.dll
 *.xml
 *.deb
 results/
+tests/test_call_sdp

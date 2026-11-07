@@ -45,6 +45,14 @@ static void purple_conversation_write_img_message(
 		PurpleMessageFlags flags, time_t ts) {
 	PurpleMessage *pmsg;
 
+	// A NULL conv reaches purple_conversation_write_message -> purple_conversation_get_im_data
+	// which asserts conv != NULL and then derefs it -> SIGSEGV that takes the whole libpurple process down
+	// (seen on Teams image send/receive when no PurpleConversation exists yet for `who`). Guard it.
+	if (conv == NULL) {
+		purple_debug_warning("teams", "write_img_message: no conversation for %s, dropping inline image\n", who ? who : "(null)");
+		return;
+	}
+
 	if (flags & PURPLE_MESSAGE_SEND) {
 		pmsg = purple_message_new_outgoing(who, msg, flags);
 		purple_message_set_time(pmsg, ts);
@@ -73,6 +81,7 @@ typedef struct {
 	gchar *url;
 	gchar *id;
 	TeamsAccount *sa;
+	gboolean is_image; // send as an inline AMSImage picture, not a File.1 attachment
 } TeamsFileTransfer;
 
 static guint active_icon_downloads = 0;
@@ -462,7 +471,11 @@ teams_download_uri_to_conv(TeamsAccount *sa, const gchar *uri, PurpleConversatio
 	
 	static GRegex *skype_token_uri_regex = NULL;
 	if (skype_token_uri_regex == NULL) {
-		skype_token_uri_regex = g_regex_new("^https://api\\.asm\\.skype\\.com/|^https://[^\\.]*\\.asyncgw\\.teams\\.microsoft\\.com/", G_REGEX_OPTIMIZE, 0, NULL);
+		// match ANY *.asm.skype.com host, not just bare "api.asm.skype.com". Consumer/personal
+		// Teams serves media from region-prefixed hosts (us-api.asm.skype.com, nus1-api.asm.skype.com,
+		// ...); the old exact-match failed those, so the image download went out WITHOUT the skype_token
+		// cookie -> 401 -> an HTML/JSON body -> teams_got_imagemessage bailed -> empty bubble, no image.
+		skype_token_uri_regex = g_regex_new("^https://[^/]*\\.asm\\.skype\\.com/|^https://[^\\.]*\\.asyncgw\\.teams\\.microsoft\\.com/", G_REGEX_OPTIMIZE, 0, NULL);
 	}
 
 	//Only for skype domains
@@ -587,7 +600,8 @@ teams_got_vm_download_info(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	obj = json_node_get_object(node);
 	
 	files = json_object_get_array_member(obj, "files");
-	file = json_array_get_object_element(files, 0);
+	/* "files" may be absent or empty */
+	file = (json_array_get_length(files) >= 1) ? json_array_get_object_element(files, 0) : NULL;
 	if (file != NULL) {
 		status = json_object_get_string_member(file, "status");
 		if (status && g_str_equal(status, "ok")) {
@@ -818,7 +832,7 @@ got_file_send_progress(PurpleHttpConnection *http_conn, PurpleHttpResponse *resp
 	if (obj == NULL) {
 		return;
 	}
-	
+
 	//{"content_length":0,"content_full_length":0,"view_length":0,"content_state":"no content","view_state":"none","view_location":"https://nus1-api.asm.skype.com/v1/objects/0-cus-d1-61121cfae8cf601944627a66afdb77ad/views/original","status_location":"https://nus1-api.asm.skype.com/v1/objects/0-cus-d1-61121cfae8cf601944627a66afdb77ad/views/original/status"}
 	
 	if (json_object_has_member(obj, "status_location")) {
@@ -920,8 +934,38 @@ teams_xfer_send_done(PurpleHttpConnection *conn, PurpleHttpResponse *resp, gpoin
 	const gchar *data = purple_http_response_get_data(resp, &len);
 	const gchar *error = purple_http_response_get_error(resp);
 	int code = purple_http_response_get_code(resp);
+	TeamsFileTransfer *swft = user_data;
 	purple_debug_info("teams", "Finished [%d]: %s\n", code, error);
 	purple_debug_info("teams", "Server message: %s\n", data);
+
+	if (swft->is_image) {
+		// the image content is uploaded -> send it as an inline AMSImage <img> now, exactly like
+		// the paste-an-image path (teams_conversation_send_image_part2_cb) -- no status poll. The
+		// recipient fetches /views/imgo and renders it inline (a File.1 URIObject shows "Unsupported
+		// Content" instead). teams_send_message tags a non-<URIObject> body as RichText/Html.
+		TeamsAccount *sa = swft->sa;
+		PurpleXfer *xfer = swft->xfer;
+		gchar *image_url = g_strdup_printf("https://%s/v1/objects/%s/views/imgo", TEAMS_XFER_HOST, purple_url_encode(swft->id));
+		gchar *html = g_strdup_printf(
+			"<p><img itemscope=\"image\" style=\"vertical-align:bottom\" src=\"%s\" alt=\"image\" "
+			"itemtype=\"http://schema.skype.com/AMSImage\" height=\"250\" id=\"%s\" itemid=\"%s\" "
+			"href=\"%s\" target-src=\"%s\"></p>",
+			image_url, swft->id, swft->id, image_url, image_url);
+		purple_xfer_set_completed(xfer, TRUE);
+#if PURPLE_VERSION_CHECK(3, 0, 0)
+		PurpleMessage *m = purple_message_new_outgoing(swft->from, html, PURPLE_MESSAGE_SEND);
+		teams_send_im(sa->pc, m);
+		purple_message_destroy(m);
+#else
+		teams_send_im(sa->pc, swft->from, html, PURPLE_MESSAGE_SEND);
+#endif
+		g_free(html);
+		g_free(image_url);
+		teams_free_xfer(xfer);
+		purple_xfer_unref(xfer);
+		return;
+	}
+
 	g_timeout_add_seconds(1, poll_file_send_progress, user_data);
 }
 
@@ -943,10 +987,12 @@ teams_xfer_send_begin(gpointer user_data)
 
 	PurpleHttpRequest *request = purple_http_request_new("");
 	purple_http_request_set_keepalive_pool(request, sa->keepalive_pool);
-	purple_http_request_set_url_printf(request, "https://%s/v1/objects/%s/content/original", TEAMS_XFER_HOST, purple_url_encode(swft->id));
+	// images upload to the image content view (imgpsh) as octet-stream; generic files to the
+	// original view as multipart/form-data (the recipient renders the former inline, see is_image).
+	purple_http_request_set_url_printf(request, "https://%s/v1/objects/%s/content/%s", TEAMS_XFER_HOST, purple_url_encode(swft->id), swft->is_image ? "imgpsh" : "original");
 	purple_http_request_set_method(request, "PUT");
 	purple_http_request_header_set(request, "Host", TEAMS_XFER_HOST);
-	purple_http_request_header_set(request, "Content-Type", "multipart/form-data");
+	purple_http_request_header_set(request, "Content-Type", swft->is_image ? "application/octet-stream" : "multipart/form-data");
 	purple_http_request_header_set_printf(request, "Content-Length", "%" G_GSIZE_FORMAT, (gsize) purple_xfer_get_size(xfer));
 	purple_http_request_header_set_printf(request, "Authorization", "skype_token %s", sa->skype_token);
 	purple_http_request_set_contents_reader(request, teams_xfer_send_contents_reader, purple_xfer_get_size(xfer), user_data);
@@ -969,11 +1015,17 @@ teams_got_object_for_file(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
 	
 	data = purple_http_response_get_data(response, &len);
 	obj = json_decode_object(data, len);
-	
+
 	//Get back {"id": "0-cus-d3-deadbeefdeadbeef012345678"}
 	if (obj == NULL || !json_object_has_member(obj, "id")) {
+		// swft is still the xfer's protocol data, and purple_xfer_cancel_local() fires the
+		// cancel_send_fnc (teams_free_xfer), which frees swft->from + swft a SECOND time -> a
+		// double-free that aborts the whole libpurple process whenever a Teams image/file object-creation
+		// POST comes back without an id. NULL the protocol data first so teams_free_xfer's
+		// g_return_if_fail(swft != NULL) bails instead of re-freeing what we free here.
 		g_free(swft->from);
 		g_free(swft);
+		purple_xfer_set_protocol_data(xfer, NULL);
 		purple_xfer_cancel_local(xfer);
 		if (obj != NULL) {
 			json_object_unref(obj);
@@ -1008,9 +1060,23 @@ teams_xfer_send_init(PurpleXfer *xfer)
 	
 	purple_xfer_set_filename(xfer, basename);
 	purple_xfer_ref(xfer);
-	
-	json_object_set_string_member(obj, "type", "sharing/file");
+
+	// an image must be created as a "pish/image" (Inline) object so it gets the /views/imgo image
+	// view and can be sent as an inline AMSImage <img> (which the recipient renders). A generic
+	// "sharing/file" object goes as a File.1 URIObject that modern Teams shows as "Unsupported Content".
+	{
+		const gchar *dot = strrchr(basename, '.');
+		swft->is_image = dot != NULL && (
+			g_ascii_strcasecmp(dot, ".png")  == 0 || g_ascii_strcasecmp(dot, ".jpg") == 0 ||
+			g_ascii_strcasecmp(dot, ".jpeg") == 0 || g_ascii_strcasecmp(dot, ".gif") == 0 ||
+			g_ascii_strcasecmp(dot, ".webp") == 0 || g_ascii_strcasecmp(dot, ".bmp") == 0);
+	}
+
+	json_object_set_string_member(obj, "type", swft->is_image ? "pish/image" : "sharing/file");
 	json_object_set_string_member(obj, "filename", basename);
+	if (swft->is_image) {
+		json_object_set_string_member(obj, "sharingMode", "Inline");
+	}
 	
 	id = g_strconcat(teams_user_url_prefix(swft->from), swft->from, NULL);
 	json_array_add_string_element(userpermissions, "read");
@@ -1125,6 +1191,10 @@ teams_chat_can_receive_file(PurpleConnection *pc, int id)
 }
 
 
+#ifdef ENABLE_TEAMS_PERSONAL
+static void teams_get_skype_contacts_before_login(TeamsAccount *sa);
+#endif
+
 static void
 teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
@@ -1137,27 +1207,42 @@ teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		return;
 	userobj = json_node_get_object(node);
 	
-	if (!json_object_has_member(userobj, "skypeName")) {
-		purple_debug_error("teams", "No skypeName in self details\n");
+	/* Personal/TFL: only accounts migrated from a classic Skype account carry a
+	 * skypeName; personal accounts created later (MSN/Microsoft, post-merger) have
+	 * none and expose only primaryMemberName (the MSA MRI, e.g. "live:.cid.<hex>").
+	 * The stock code bailed when skypeName was absent, so teams_do_all_the_things()
+	 * never ran and login never completed (stayed offline). Fall back to
+	 * primaryMemberName when skypeName is absent so those accounts can finish login
+	 * and fetch the buddy list. */
+	if (json_object_has_member(userobj, "skypeName")) {
+		username = json_object_get_string_member(userobj, "skypeName");
+	} else if (json_object_has_member(userobj, "primaryMemberName")) {
+		username = json_object_get_string_member(userobj, "primaryMemberName");
+		purple_debug_info("teams", "No skypeName in self details; using primaryMemberName '%s' as identity\n", username ? username : "(null)");
+	} else {
+		purple_debug_error("teams", "No skypeName or primaryMemberName in self details\n");
 		return;
 	}
-	username = json_object_get_string_member(userobj, "skypeName");
 	g_free(sa->username); sa->username = g_strdup(username);
 	purple_connection_set_display_name(sa->pc, sa->username);
-	
+
 	old_alias = purple_account_get_private_alias(sa->account);
-	if (!old_alias || !*old_alias) {
+	/* Consumer self-details omit userDetails entirely — guard the parse (the stock
+	 * json_decode_object(NULL) / has_member(NULL) path would misbehave). */
+	if ((!old_alias || !*old_alias) && json_object_has_member(userobj, "userDetails")) {
 		JsonObject *userDetails = json_decode_object(json_object_get_string_member(userobj, "userDetails"), -1);
-		
-		if (json_object_has_member(userDetails, "name"))
-			displayname = json_object_get_string_member(userDetails, "name");
-		if (!displayname || purple_strequal(displayname, username))
-			displayname = json_object_get_string_member(userDetails, "upn");
-	
-		if (displayname)
-			purple_account_set_private_alias(sa->account, displayname);
-		
-		json_object_unref(userDetails);
+
+		if (userDetails) {
+			if (json_object_has_member(userDetails, "name"))
+				displayname = json_object_get_string_member(userDetails, "name");
+			if ((!displayname || purple_strequal(displayname, username)) && json_object_has_member(userDetails, "upn"))
+				displayname = json_object_get_string_member(userDetails, "upn");
+
+			if (displayname)
+				purple_account_set_private_alias(sa->account, displayname);
+
+			json_object_unref(userDetails);
+		}
 	}
 	
 	if (json_object_has_member(userobj, "primaryMemberName")) {
@@ -1165,8 +1250,25 @@ teams_got_self_details(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		sa->primary_member_name = g_strdup(json_object_get_string_member(userobj, "primaryMemberName"));
 	}
 	
-	if (!PURPLE_CONNECTION_IS_CONNECTED(sa->pc)) {
+	/* Personal/TFL: gate on our own logged_in flag, NOT IS_CONNECTED. The
+	 * early-CONNECTED watchdog fix sets the connection CONNECTED during the device-
+	 * code wait, so an IS_CONNECTED check here would be true on the first pass and
+	 * skip teams_do_all_the_things() -> no friend list. logged_in is only set once
+	 * the full setup has actually run (else-branch of teams_do_all_the_things). */
+	if (!sa->logged_in) {
+#ifdef ENABLE_TEAMS_PERSONAL
+		/* Personal/TFL: load the Skype buddy roster into libpurple's blist BEFORE
+		 * we report the connection CONNECTED. A headless transport UI may run a
+		 * ONE-SHOT buddy-list consolidation the instant the login-state reaches
+		 * "retrieving-buddies" (i.e. at CONNECTED), reading the in-memory blist at
+		 * that exact moment — with no way to re-query. If our async contacts fetch lands after
+		 * that, the UI keeps an EMPTY buddy list forever. So fetch the contacts,
+		 * populate the blist, THEN connect. Falls through to teams_do_all_the_things()
+		 * even if the fetch fails, so login never hangs. */
+		teams_get_skype_contacts_before_login(sa);
+#else
 		teams_do_all_the_things(sa);
+#endif
 	}
 }
 
@@ -2243,12 +2345,15 @@ teams_get_friend_suggestions_cb(TeamsAccount *sa, JsonNode *node, gpointer user_
 	GSList *users_to_fetch = NULL;
 	guint index, length;
 
-	if (node == NULL)
+	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT)
 		return;
 
 	obj = json_node_get_object(node);
 	groups = json_object_get_array_member(obj, "Groups");
-	firstgroup = json_array_get_object_element(groups, 0);
+	/* "Groups" may be absent or empty: then there is nothing to suggest */
+	firstgroup = (json_array_get_length(groups) >= 1) ? json_array_get_object_element(groups, 0) : NULL;
+	if (firstgroup == NULL)
+		return;
 	suggestions = json_object_get_array_member(firstgroup, "Suggestions");
 	length = json_array_get_length(suggestions);
 	
@@ -2583,6 +2688,142 @@ teams_get_buddylist_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 
 
 
+#ifdef ENABLE_TEAMS_PERSONAL
+/* Personal/TFL: parse the classic Skype contacts service response
+ * (contacts.skype.com/contacts/v2/users/SELF). For consumer/Teams-for-Life
+ * accounts this — NOT the mt/beta buddylist (which is empty) — is where the real
+ * contacts live. Schema (verified live):
+ *   {"contacts":[{"mri":"8:live:.cid.xxxxxxxx","display_name":"…","authorized":true,
+ *                 "blocked":false,"profile":{…}}, …],"blocklist":[],"groups":[]}  */
+static void
+teams_got_skype_contacts_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	JsonObject *obj;
+	JsonArray *contacts;
+	PurpleGroup *group = teams_get_blist_group(sa);
+	GSList *users_to_fetch = NULL;
+	guint index, length;
+
+	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT) {
+		purple_debug_warning("teams", "skype_contacts: response is not a JSON object - 0 buddies\n");
+		return;
+	}
+	obj = json_node_get_object(node);
+	if (!json_object_has_member(obj, "contacts")) {
+		GList *mk = json_object_get_members(obj), *it;
+		GString *keys = g_string_new("");
+		for (it = mk; it; it = it->next) g_string_append_printf(keys, "%s ", (const gchar *) it->data);
+		purple_debug_warning("teams", "skype_contacts: no 'contacts' member - 0 buddies; top-level keys: [%s]\n", keys->str);
+		g_string_free(keys, TRUE);
+		g_list_free(mk);
+		return;
+	}
+	contacts = json_object_get_array_member(obj, "contacts");
+	length = json_array_get_length(contacts);
+	purple_debug_info("teams", "skype_contacts: %u contact(s) in response\n", length);
+
+	for (index = 0; index < length; index++) {
+		JsonObject *contact = json_array_get_object_element(contacts, index);
+		const gchar *mri = json_object_has_member(contact, "mri") ?
+			json_object_get_string_member(contact, "mri") : NULL;
+		const gchar *display_name = json_object_has_member(contact, "display_name") ?
+			json_object_get_string_member(contact, "display_name") : NULL;
+		gboolean blocked = json_object_has_member(contact, "blocked") &&
+			json_object_get_boolean_member(contact, "blocked");
+		PurpleBuddy *buddy;
+		TeamsBuddy *sbuddy;
+		const gchar *id;
+
+		if (!mri || !*mri)
+			continue;
+		id = teams_strip_user_prefix(mri);
+		if (!id || !*id)
+			continue;
+		/* never add ourselves */
+		if (purple_strequal(id, sa->primary_member_name))
+			continue;
+
+		buddy = purple_blist_find_buddy(sa->account, id);
+		if (!buddy) {
+			buddy = purple_buddy_new(sa->account, id, display_name);
+			purple_blist_add_buddy(buddy, NULL, group, NULL);
+		}
+
+		sbuddy = purple_buddy_get_protocol_data(buddy);
+		if (sbuddy == NULL) {
+			sbuddy = g_new0(TeamsBuddy, 1);
+			sbuddy->skypename = g_strdup(id);
+			sbuddy->sa = sa;
+			sbuddy->buddy = buddy;
+			purple_buddy_set_protocol_data(buddy, sbuddy);
+		}
+
+		if (display_name && *display_name) {
+			g_free(sbuddy->display_name);
+			sbuddy->display_name = g_strdup(display_name);
+			if (!purple_strequal(purple_buddy_get_local_alias(buddy), sbuddy->display_name))
+				purple_serv_got_alias(sa->pc, id, sbuddy->display_name);
+		}
+
+		teams_get_icon(buddy);
+
+		if (blocked) {
+			purple_account_privacy_deny_add(sa->account, id, TRUE);
+		} else {
+			users_to_fetch = g_slist_prepend(users_to_fetch, sbuddy->skypename);
+		}
+	}
+
+	if (users_to_fetch) {
+		teams_get_friend_profiles(sa, users_to_fetch);
+		teams_subscribe_to_contact_status(sa, users_to_fetch);
+		g_slist_free(users_to_fetch);
+	}
+}
+
+void
+teams_get_skype_contacts(TeamsAccount *sa)
+{
+	if (!PURPLE_IS_CONNECTION(sa->pc))
+		return;
+	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST,
+		"/contacts/v2/users/SELF?delta=&reason=default", NULL,
+		teams_got_skype_contacts_cb, NULL, TRUE);
+}
+
+/* Pre-login variant: add the buddies to the blist, THEN report CONNECTED (via
+ * teams_do_all_the_things) so the transport's login-time buddy-list consolidation
+ * sees a populated roster. Runs teams_do_all_the_things even on fetch failure (node
+ * NULL) so a network hiccup can't wedge the login. */
+static void
+teams_skype_contacts_before_login_cb(TeamsAccount *sa, JsonNode *node, gpointer user_data)
+{
+	teams_got_skype_contacts_cb(sa, node, user_data);
+	teams_do_all_the_things(sa);
+}
+
+/* teams_post_or_get invokes NEITHER callback when it receives a non-empty but
+ * unparseable body (e.g. an HTML proxy/auth error page). Without an error callback
+ * that would stall login forever, so advance login regardless. */
+static void
+teams_skype_contacts_before_login_err_cb(TeamsAccount *sa, const gchar *data, gssize len, gpointer user_data)
+{
+	teams_do_all_the_things(sa);
+}
+
+static void
+teams_get_skype_contacts_before_login(TeamsAccount *sa)
+{
+	if (!PURPLE_IS_CONNECTION(sa->pc)) {
+		teams_do_all_the_things(sa);
+		return;
+	}
+	teams_post_or_get_with_error(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_NEW_CONTACTS_HOST,
+		"/contacts/v2/users/SELF?delta=&reason=default", NULL,
+		teams_skype_contacts_before_login_cb, teams_skype_contacts_before_login_err_cb, NULL, TRUE);
+}
+#endif /* ENABLE_TEAMS_PERSONAL */
+
 gboolean
 teams_get_friend_list(TeamsAccount *sa)
 {
@@ -2590,6 +2831,12 @@ teams_get_friend_list(TeamsAccount *sa)
 	if (!PURPLE_IS_CONNECTION(pc)) {
 		return FALSE;
 	}
+
+#ifdef ENABLE_TEAMS_PERSONAL
+	/* Personal/TFL: consumer/TFL contacts come from the classic Skype contacts
+	 * service, not the (empty) mt/beta buddylist. Fetch them. */
+	teams_get_skype_contacts(sa);
+#endif
 
 	// Remove any meeting chats that were persisted from previous sessions
 	teams_purge_meeting_chats_from_blist(sa);
@@ -2618,6 +2865,28 @@ teams_get_friend_list(TeamsAccount *sa)
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, "aus.loki.delve.office.com", search_url, NULL, teams_get_workingwith_cb, NULL, TRUE);
 	g_free(search_url);
 
+	// The mt/beta endpoints need the MT bearer token, which may not have arrived yet
+	// on the first pass; teams_mt_oauth_cb() re-runs just these once it has.
+	teams_get_mt_beta_contacts(sa);
+
+	// Look up all the contacts in the buddy list
+	teams_lookup_buddy_list_contacts(sa);
+
+	return FALSE;
+}
+
+/* The two mt/beta contact endpoints (People app contactsv3 + the personal buddy
+ * list) are the only friend-list calls that depend on sa->mt_access_token. Split
+ * them out so teams_mt_oauth_cb() can retry ONLY these when the MT token arrives,
+ * instead of re-running the whole ~7-call teams_get_friend_list() pipeline. */
+void
+teams_get_mt_beta_contacts(TeamsAccount *sa)
+{
+	const gchar *url;
+
+	if (!PURPLE_IS_CONNECTION(sa->pc))
+		return;
+
 	// Search the People app
 	url = "/api/mt/beta/contactsv3/";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_friend_list_cb, NULL, TRUE);
@@ -2625,11 +2894,6 @@ teams_get_friend_list(TeamsAccount *sa)
 	// Teams personal has a buddy list?!@
 	url = "/api/mt/beta/contacts/buddylist?migrationRequested=true&federatedContactsSupported=true";
 	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_BASE_ORIGIN_HOST, url, NULL, teams_get_buddylist_cb, NULL, TRUE);
-
-	// Look up all the contacts in the buddy list
-	teams_lookup_buddy_list_contacts(sa);
-
-	return FALSE;
 }
 
 typedef struct {

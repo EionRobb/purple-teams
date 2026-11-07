@@ -36,7 +36,18 @@ teams_post_or_get_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 	gsize len;
 	
 	data = purple_http_response_get_data(response, &len);
-	
+
+	/* Opt-in diagnostic: response bodies can carry names, MRIs and tokens, so only
+	 * emit them when the user has explicitly enabled verbose + unsafe debugging
+	 * (purple_debug -U / -V), never at the default level. */
+	if (purple_debug_is_verbose() && purple_debug_is_unsafe()) {
+		int code = purple_http_response_get_code(response);
+		const gchar *errmsg = purple_http_response_get_error(response);
+		purple_debug_info("teams", "HTTP-DIAG url=%s code=%d len=%u err=%s body=%.240s\n",
+			conn->url ? conn->url : "(null)", code, (unsigned)len,
+			errmsg ? errmsg : "-", (len && data) ? data : "");
+	}
+
 	if (conn->callback != NULL) {
 		if (!len)
 		{
@@ -65,10 +76,10 @@ teams_post_or_get_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *respon
 	teams_destroy_connection(conn);
 }
 
-TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
+TeamsConnection *teams_post_or_get_with_error(TeamsAccount *sa, TeamsMethod method,
 		const gchar *host, const gchar *url, const gchar *postdata,
-		TeamsProxyCallbackFunc callback_func, gpointer user_data,
-		gboolean keepalive)
+		TeamsProxyCallbackFunc callback_func, TeamsProxyCallbackErrorFunc error_callback_func,
+		gpointer user_data, gboolean keepalive)
 {
 	TeamsConnection *conn;
 	PurpleHttpRequest *request;
@@ -125,9 +136,20 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 	if ((g_str_equal(host, TEAMS_CONTACTS_HOST) || g_str_equal(host, TEAMS_VIDEOMAIL_HOST) || g_str_equal(host, TEAMS_NEW_CONTACTS_HOST)) &&
 		(!g_str_equal(host, TEAMS_BASE_ORIGIN_HOST) || g_str_has_prefix(url, "/api/chatsvc"))) {
 #ifdef ENABLE_TEAMS_PERSONAL
-		purple_http_request_header_set_printf(request, "Authentication", "skypetoken=%s", sa->skype_token);
-		purple_http_request_header_set(request, "ms-ic3-product", "tfl");
-		purple_http_request_header_set(request, "ms-ic3-additional-product", "Sfl");
+		/* Personal/TFL: consumer auth splits by host (both verified live against MS):
+		 *  - contacts.skype.com (TEAMS_NEW_CONTACTS_HOST, the classic Skype contacts svc)
+		 *    wants "X-Skypetoken" ONLY — "Authentication: skypetoken=" gets 401 there.
+		 *  - teams.live.com chatsvc/consumer wants "Authentication: skypetoken=" + ms-ic3
+		 *    product tfl — and rejects X-Skypetoken.
+		 * (The mt/beta endpoints are NOT here — they need Bearer<mtsvc>+X-Skypetoken and
+		 * fall through to the TEAMS_BASE_ORIGIN_HOST branch below.) */
+		if (g_str_equal(host, TEAMS_NEW_CONTACTS_HOST)) {
+			purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
+		} else {
+			purple_http_request_header_set_printf(request, "Authentication", "skypetoken=%s", sa->skype_token);
+			purple_http_request_header_set(request, "ms-ic3-product", "tfl");
+			purple_http_request_header_set(request, "ms-ic3-additional-product", "Sfl");
+		}
 #else
 		purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
 #endif
@@ -177,7 +199,17 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 			purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->csa_access_token);
 #endif
 		} else {
-			purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", sa->id_token);
+			/* mt/beta endpoints (contacts/buddylist, contactsv3, users/searchV2, …).
+			 * Personal/TFL — VERIFIED live against MS: the CONSUMER mt/beta needs
+			 * BOTH an AAD Bearer for the mtsvc audience AND X-Skypetoken; either alone
+			 * 401s (Bearer-alone → "UnauthorizedAccess/Workload Unknown"). The right
+			 * Bearer is the mt_access_token minted for the
+			 * https://mtsvc.fl.teams.microsoft.com/teams.mt.readwrite scope
+			 * (teams_login.c). Falls back to id_token until that token arrives (first
+			 * fetch may 401; teams_mt_oauth_cb re-fetches once it's in). Work/corporate
+			 * uses the same shape with its own mtsvc-audience token. */
+			const gchar *mt_bearer = sa->mt_access_token ? sa->mt_access_token : sa->id_token;
+			purple_http_request_header_set_printf(request, "Authorization", "Bearer %s", mt_bearer);
 		}
 		purple_http_request_header_set(request, "X-Skypetoken", sa->skype_token);
 		purple_http_request_header_set(request, "Accept", "application/json");
@@ -199,13 +231,26 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 	conn->user_data = user_data;
 	conn->url = real_url;
 	conn->callback = callback_func;
-	
+	conn->error_callback = error_callback_func;
+
 	conn->http_conn = purple_http_request(sa->pc, request, teams_post_or_get_cb, conn);
 	if (conn->http_conn != NULL) {
 		purple_http_connection_set_add(sa->conns, conn->http_conn);
 	}
 	
 	purple_http_request_unref(request);
-	
+
 	return conn;
+}
+
+/* Back-compat wrapper: most callers don't need a distinct error callback (the parse
+ * failure is just logged). Those that must advance state even on an unparseable body
+ * call teams_post_or_get_with_error() directly. */
+TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
+		const gchar *host, const gchar *url, const gchar *postdata,
+		TeamsProxyCallbackFunc callback_func, gpointer user_data,
+		gboolean keepalive)
+{
+	return teams_post_or_get_with_error(sa, method, host, url, postdata,
+			callback_func, NULL, user_data, keepalive);
 }
