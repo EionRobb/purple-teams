@@ -272,6 +272,45 @@ pm_free_held_cands(TeamsPMedia *pm)
 	pm->vrcands_held = NULL;
 }
 
+/* The call's ICE transport, released before libpurple takes the call down. nicesink waits,
+ * with no timeout, when it is given a packet for a component with no selected pair yet (an
+ * unanswered call, or ICE that never connected): non-reliable libnice says WOULD_BLOCK, and
+ * nicesink waits for a "writable" that only reliable agents signal. Its upstream streaming
+ * thread (the microphone's, rtpsession's RTCP) then holds its stream lock for good, and
+ * libpurple, which stops the source before the conference, hangs in gst_pad_stop_task().
+ * Stopping each nicesink first unlocks it (it returns FLUSHING); locking its state keeps the
+ * conference's own state changes off it until the conference goes. */
+static void
+pm_release_transport(TeamsPMedia *pm)
+{
+	GstElement *e = pm->rtpsession ? gst_object_ref(pm->rtpsession) : NULL;
+	GstIterator *it;
+	GValue v = G_VALUE_INIT;
+	while (e && g_strcmp0(G_OBJECT_TYPE_NAME(e), "FsRtpConference")) {
+		GstObject *up = gst_object_get_parent(GST_OBJECT(e));
+		gst_object_unref(e);
+		e = up && GST_IS_ELEMENT(up) ? GST_ELEMENT(up) : NULL;
+		if (up && !e) gst_object_unref(up);
+	}
+	if (!e) return;
+	it = gst_bin_iterate_recurse(GST_BIN(e));
+	for (;;) {
+		GstIteratorResult r = gst_iterator_next(it, &v);
+		if (r == GST_ITERATOR_RESYNC) { gst_iterator_resync(it); continue; }
+		if (r != GST_ITERATOR_OK) break;
+		GstElement *s = g_value_get_object(&v);
+		GstElementFactory *f = gst_element_get_factory(s);
+		if (f && !g_strcmp0(GST_OBJECT_NAME(f), "nicesink")) {
+			gst_element_set_locked_state(s, TRUE);
+			gst_element_set_state(s, GST_STATE_NULL);
+		}
+		g_value_reset(&v);
+	}
+	g_value_unset(&v);
+	gst_iterator_free(it);
+	gst_object_unref(e);
+}
+
 static void
 pm_end_media(TeamsPMedia *pm)
 {
@@ -284,6 +323,7 @@ pm_end_media(TeamsPMedia *pm)
 	if (pm->ssrc_check) { g_source_remove(pm->ssrc_check); pm->ssrc_check = 0; }
 	pm_video_stop(pm);
 	pm_wire_stop(pm);
+	if (media) pm_release_transport(pm);
 	if (pm->rtpsession) {
 		g_object_remove_weak_pointer(G_OBJECT(pm->rtpsession), (gpointer *) &pm->rtpsession);
 		pm->rtpsession = NULL;
