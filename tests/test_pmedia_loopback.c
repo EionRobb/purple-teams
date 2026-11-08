@@ -31,7 +31,7 @@
  *      (VANSWER). Each prints new VUFRAG/VPWD/VCAND, then VRESTARTED, and the old sessions'
  *      signals change nothing; the video gets through again on the new sessions (B publishes
  *      more frames), and the audio goes on.
- *  10. the camera off and at once on again (as the Phone app's camera button does): A's camera
+ *  10. the camera off and at once on again (as a front end's camera button does): A's camera
  *      head gets frames again (counted on its pmvout queue), and VTX 0 and VTX 1 again.
  *   9. a camera error does not end the call: an error posted from A's running camera source
  *      (as droidcamsrc posts one when another user takes the camera) gives VTX 0 and

@@ -41,9 +41,9 @@
  * session can send our camera (see pm_camera_usable), before the credentials.
  *
  * Audio goes through PulseAudio's call devices, as teams_media's does: capture from webcall,
- * playback to voipcall (palm-policy routes those for a call). The far side's video is decoded
+ * playback to voipcall (the platform's audio policy routes those for a call). The far side's video is decoded
  * (avdec_h264: the HAL decoder is ranked out of Farstream's choice, see pm_video_start) and
- * published as I420 on a gst-shm socket for the Phone app, as teams_media publishes it. Farstream
+ * published as I420 on a gst-shm socket for the front end, as teams_media publishes it. Farstream
  * gets no RTCP feedback parameters through libpurple, so the engine adds what a WebRTC-style
  * sender needs itself: a PLI when the decoder needs a keyframe, and REMB in every report. */
 
@@ -83,7 +83,7 @@
 #define PM_VSESSION     "video"
 #define PM_VSINK_ID     "teams-videoshm"
 #define PM_VSRC_ID      "teams-camera"
-#define PM_PREVIEW_SHM  "/tmp/teams-preview"   /* device-side socket: the Phone app opens it */
+#define PM_PREVIEW_SHM  "/tmp/teams-preview"   /* device-side socket: the front end opens it */
 #define PM_PREVIEW_W    320
 #define PM_PREVIEW_H    240
 #define PM_VIDEO_MTU    1200    /* our video's RTP packets at most (bytes, before SRTP) */
@@ -91,7 +91,7 @@
 #define PM_H264_PT      107
 #define PM_VIDEO_W      640
 #define PM_VIDEO_H      480
-#define PM_VIDEO_SHM    "/tmp/teams-video"     /* device-side socket: the Phone app opens it */
+#define PM_VIDEO_SHM    "/tmp/teams-video"     /* device-side socket: the front end opens it */
 #define PM_SHM_SIZE     (8u << 20)
 #define PM_VTICK_MS     100
 #define PM_PLI_GAP_US   500000                 /* at most two keyframe requests a second */
@@ -925,7 +925,7 @@ pm_rx_frame_size(gint w, gint h, gint *ow, gint *oh)
 	*oh = (gint) MAX(lh & ~(gint64) 1, 2);
 }
 
-/* shmsink would answer the allocation query with its shared memory, and when the Phone app does
+/* shmsink would answer the allocation query with its shared memory, and when the front end does
  * not read, the whole chain then blocks ahead of the leaky queue (teams_media's
  * tm_no_shm_allocation): no allocation query, so upstream allocates and shmsink copies. */
 static GstPadProbeReturn
@@ -1026,7 +1026,7 @@ pm_cw_for_degrees(gint deg)
 
 /* Quarter turns clockwise for the front camera's picture (teams_media's tm_camera_cw):
  * TEAMS_PMEDIA_VIDEO_ROTATION, else the sensor orientation of a droidcamsrc that is never
- * started (it has it from the HAL's camera list; sargo: 270), else 0. */
+ * started (it has it from the HAL's camera list, e.g. 270), else 0. */
 static gint
 pm_camera_cw(void)
 {
@@ -1738,7 +1738,7 @@ pm_vtick(gpointer u)
 		path = g_strdup(vx->pv_path);
 		g_mutex_unlock(&vx->lock);
 		if (path) {
-			/* the head turns the picture upright already: no turns left for the Phone app */
+			/* the head turns the picture upright already: no turns left for the front end */
 			pm_log("our camera's picture: %s %dx%d", path, vx->pv_w, vx->pv_h);
 			pm_emit(pm, "VPREVIEW %s %d %d 0 %d\n", path, vx->pv_w, vx->pv_h, vx->mirrored ? 1 : 0);
 		}
@@ -2202,8 +2202,8 @@ pm_video_build(TeamsPMedia *pm, const char *rxkey, const char *ruf, const char *
 
 	GHashTable *nice_before;
 	if (!g_getenv("TEAMS_PMEDIA_HW_DECODE")) {
-		/* droidvdec (sargo) ranks above avdec_h264, so Farstream would decode with it; the
-		 * decoder teams_media uses, and the Phone app's picture has been tested with, is
+		/* droidvdec (gst-droid) ranks above avdec_h264, so Farstream would decode with it; the
+		 * decoder teams_media uses, and the front end's picture has been tested with, is
 		 * avdec_h264. Process-wide, and only GStreamer's calls use it here. */
 		GstPluginFeature *f = gst_registry_lookup_feature(gst_registry_get(), "droidvdec");
 		if (f) {
