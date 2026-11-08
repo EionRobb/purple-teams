@@ -20,14 +20,22 @@
  *      own, print VUFRAG/VPWD/VCAND and VSSRC, and GATHERED only once both sessions have their
  *      candidates; the caller sends a test picture (TEAMS_PMEDIA_VSRC) as H264, and the answerer
  *      decodes it into its gst-shm socket (TEAMS_PMEDIA_VIDEO_SHM), says VSHM and PEERVIDEO 1,
- *      and its RTCP carries REMB to the caller (counted on the caller's RTP session). VIDEO 1
- *      is answered VIDEOERR tx (the engine does not send our camera yet).
+ *      and its RTCP carries REMB to the caller (counted on the caller's RTP session). Both say
+ *      VCAMERA 1 (the session can send), and the caller sends only once its camera is on
+ *      (VIDEO 1). At 5 s the answerer turns its camera on too: the caller gets its picture
+ *      (PEERVIDEO 1). Each prints VTX 1 and VPREVIEW, its self-view socket gets frames, and
+ *      STATS counts the frames into Farstream (vtxf). After 8 the answerer turns it off (VTX 0).
  *   8. VRESTART: the video moves to new ICE credentials, as the Teams Android app does on a call
  *      we placed. B (the far side) makes a new video session (VRESTART), then A replaces its own
  *      for B's new credentials and candidates (VRESTART, VRCAND), and B takes A's answer
  *      (VANSWER). Each prints new VUFRAG/VPWD/VCAND, then VRESTARTED, and the old sessions'
  *      signals change nothing; the video gets through again on the new sessions (B publishes
  *      more frames), and the audio goes on.
+ *  10. the camera off and at once on again (as the Phone app's camera button does): A's camera
+ *      head gets frames again (counted on its pmvout queue), and VTX 0 and VTX 1 again.
+ *   9. a camera error does not end the call: an error posted from A's running camera source
+ *      (as droidcamsrc posts one when another user takes the camera) gives VTX 0 and
+ *      VIDEOERR tx-camera, no ERR, and the audio goes on.
  * Video needs an H264 encoder Farstream can pick, and avdec_h264; the script sets
  * TEAMS_PMEDIA_VSRC=1 and TEAMS_PMEDIA_VIDEO_SHM. With PMTEST_H264_CLIP=<an Annex B H264 file,
  * one access unit per frame, each starting with an access unit delimiter, SPS and PPS in it> the test registers an
@@ -256,6 +264,10 @@ typedef struct {
 	gboolean     peervideo, vtx_err;
 	gboolean     vcreds_before_ready;   /* VUFRAG came before READY */
 	int          vrestarted;            /* VRESTARTED lines */
+	gboolean     vcamera;               /* VCAMERA 1: the video session can send */
+	int          vtx_on, vtx_off;       /* VTX 1 / VTX 0 lines */
+	gboolean     cam_err;               /* VIDEOERR tx-camera */
+	gchar       *vpreview;              /* the last VPREVIEW line */
 } Side;
 
 static GMainLoop *loop;
@@ -288,7 +300,12 @@ static void side_line(Side *s, const char *l)
 	else if (g_str_has_prefix(l, "VSHM ")) { gchar **t = g_strsplit(l + 5, " ", 2); g_free(s->vshm); s->vshm = g_strdup(t[0]); g_strfreev(t); }
 	else if (!strcmp(l, "PEERVIDEO 1")) s->peervideo = TRUE;
 	else if (!strcmp(l, "VIDEOERR tx")) s->vtx_err = TRUE;
+	else if (!strcmp(l, "VIDEOERR tx-camera")) s->cam_err = TRUE;
 	else if (!strcmp(l, "VRESTARTED")) s->vrestarted++;
+	else if (!strcmp(l, "VCAMERA 1")) s->vcamera = TRUE;
+	else if (!strcmp(l, "VTX 1")) s->vtx_on++;
+	else if (!strcmp(l, "VTX 0")) s->vtx_off++;
+	else if (g_str_has_prefix(l, "VPREVIEW ")) { g_free(s->vpreview); s->vpreview = g_strdup(l + 9); }
 	else if (g_str_has_prefix(l, "STATS ")) { g_free(s->stats); s->stats = g_strdup(l + 6); }
 	else if (!strcmp(l, "READY")) s->ready = TRUE;
 	else if (!strcmp(l, "GATHERED")) s->gathered = TRUE;
@@ -356,6 +373,16 @@ static long stat_field(const Side *s, const char *key)
 	return v;
 }
 
+/* an unsigned 32-bit field of the last STATS line (an SSRC), 0 if none */
+static guint stat_u32(const Side *s, const char *key)
+{
+	gchar *k = g_strdup_printf(" %s=", key);
+	const char *p = s->stats ? strstr(s->stats, k) : NULL;
+	guint v = p ? (guint) g_ascii_strtoull(p + strlen(k), NULL, 10) : 0;
+	g_free(k);
+	return v;
+}
+
 static void side_free(Side *s)
 {
 	if (s->cmd >= 0) close(s->cmd);
@@ -364,11 +391,12 @@ static void side_free(Side *s)
 	close(s->out);
 	g_string_free(s->in, TRUE); g_string_free(s->cands, TRUE); g_string_free(s->vcands, TRUE);
 	g_free(s->txkey); g_free(s->ufrag); g_free(s->pwd); g_free(s->last_err);
-	g_free(s->vufrag); g_free(s->vpwd); g_free(s->vshm); g_free(s->stats);
+	g_free(s->vufrag); g_free(s->vpwd); g_free(s->vshm); g_free(s->stats); g_free(s->vpreview);
 }
 
 /* ---- counting what reaches the sinks ---- */
-static GHashTable *counts;   /* GstElement* -> buffers: our receive sinks (TEAMS_PMEDIA_SINK) */
+static GHashTable *counts;   /* GstElement* (a reference) -> buffers: our receive sinks (TEAMS_PMEDIA_SINK);
+                              * referenced, so the results can name them after a media ended */
 
 static GstPadProbeReturn count_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
 {
@@ -389,35 +417,12 @@ static GstPadProbeReturn shm_probe(GstPad *pad, GstPadProbeInfo *info, gpointer 
 	g_atomic_int_inc(&shm_bufs);
 	return GST_PAD_PROBE_OK;
 }
-
-/* gst-droid's droidvenc, once it runs, answers a caps query on its sink with EMPTY (it
- * intersects the filter with its H264 output caps), and Farstream queries again mid-stream, so
- * the test's sender stops with not-negotiated. The test answers that query with the caps the pad
- * already has. Only the test's sending side meets it: the engine does not send video yet. */
-static GstPadProbeReturn venc_caps_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
+static gint preview_bufs;     /* frames into a self-view socket */
+static GstPadProbeReturn preview_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
 {
-	GstQuery *q = GST_PAD_PROBE_INFO_QUERY(info);
-	GstCaps *cur, *filter = NULL, *res;
-	(void) u;
-	if (!q || GST_QUERY_TYPE(q) != GST_QUERY_CAPS || !(cur = gst_pad_get_current_caps(pad))) return GST_PAD_PROBE_OK;
-	gst_query_parse_caps(q, &filter);
-	res = filter ? gst_caps_intersect(cur, filter) : gst_caps_ref(cur);
-	gst_query_set_caps_result(q, res);
-	gst_caps_unref(res);
-	gst_caps_unref(cur);
-	return GST_PAD_PROBE_HANDLED;
-}
-
-/* Put venc_caps_probe on each droidvenc as it is added, before it negotiates: the test's
- * polling (probe_sinks) comes too late for the first mid-stream query. */
-static void on_deep_added(GstBin *bin, GstBin *sub, GstElement *e, gpointer u)
-{
-	GstElementFactory *f = gst_element_get_factory(e);
-	GstPad *p;
-	(void) bin; (void) sub; (void) u;
-	if (!f || strcmp(GST_OBJECT_NAME(f), "droidvenc") || !(p = gst_element_get_static_pad(e, "sink"))) return;
-	gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_QUERY_UPSTREAM, venc_caps_probe, NULL, NULL);
-	gst_object_unref(p);
+	(void) pad; (void) info; (void) u;
+	g_atomic_int_inc(&preview_bufs);
+	return GST_PAD_PROBE_OK;
 }
 
 static void on_feedback(GObject *sess, guint type, guint fbtype, guint sender, guint media, GstBuffer *fci, gpointer u)
@@ -452,6 +457,48 @@ static gboolean fed_by_level(GstElement *sink)
 	return r;
 }
 
+static gint vout_bufs;                  /* 10: frames out of the camera heads (pmvout) */
+static gint vout_at_toggle, vout_after_toggle;
+
+static GstPadProbeReturn vout_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
+{
+	(void) pad; (void) info; (void) u;
+	g_atomic_int_inc(&vout_bufs);
+	return GST_PAD_PROBE_OK;
+}
+
+/* PMTEST_DUMP_RTP=<file>: every H264 RTP packet an RTP session sends, as a 4-byte big-endian
+ * length and the packet, for a look at what our encoder and payloader make. */
+static FILE *rtp_dump;
+static GMutex rtp_dump_lock;
+
+static void dump_rtp(GstBuffer *b)
+{
+	GstMapInfo m;
+	if (!gst_buffer_map(b, &m, GST_MAP_READ)) return;
+	if (m.size >= 12 && (m.data[1] & 0x7f) == 107) {
+		guint8 len[4] = { (guint8) (m.size >> 24), (guint8) (m.size >> 16), (guint8) (m.size >> 8), (guint8) m.size };
+		g_mutex_lock(&rtp_dump_lock);
+		fwrite(len, 1, 4, rtp_dump);
+		fwrite(m.data, 1, m.size, rtp_dump);
+		g_mutex_unlock(&rtp_dump_lock);
+	}
+	gst_buffer_unmap(b, &m);
+}
+
+static GstPadProbeReturn dump_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
+{
+	(void) pad; (void) u;
+	if (info->type & GST_PAD_PROBE_TYPE_BUFFER_LIST) {
+		GstBufferList *l = GST_PAD_PROBE_INFO_BUFFER_LIST(info);
+		guint i;
+		for (i = 0; i < gst_buffer_list_length(l); i++) dump_rtp(gst_buffer_list_get(l, i));
+	} else if (GST_PAD_PROBE_INFO_BUFFER(info)) {
+		dump_rtp(GST_PAD_PROBE_INFO_BUFFER(info));
+	}
+	return GST_PAD_PROBE_OK;
+}
+
 static void probe_sinks(void)
 {
 	GstElement *pipe = purple_media_manager_get_pipeline(purple_media_manager_get());
@@ -471,9 +518,17 @@ static void probe_sinks(void)
 				if (p) { gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST, nice_probe, NULL, NULL); gst_object_unref(p); }
 			}
 			if (f && !strcmp(GST_OBJECT_NAME(f), "shmsink") && !g_hash_table_contains(sess_seen, e)) {
+				/* the far side's picture; our self-view's (pmpreview) apart */
+				gboolean pv = g_str_has_prefix(GST_OBJECT_NAME(e), "pmpreview");
 				GstPad *p = gst_element_get_static_pad(e, "sink");
 				g_hash_table_add(sess_seen, e);
-				if (p) { gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER, shm_probe, NULL, NULL); gst_object_unref(p); }
+				if (p) { gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER, pv ? preview_probe : shm_probe, NULL, NULL); gst_object_unref(p); }
+			}
+			if (f && !strcmp(GST_OBJECT_NAME(f), "queue") && !strcmp(GST_OBJECT_NAME(e), "pmvout") &&
+			    !g_hash_table_contains(sess_seen, e)) {
+				GstPad *p = gst_element_get_static_pad(e, "src");
+				g_hash_table_add(sess_seen, e);
+				if (p) { gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER, vout_probe, NULL, NULL); gst_object_unref(p); }
 			}
 			if (f && !strcmp(GST_OBJECT_NAME(f), "rtpsession") && !g_hash_table_contains(sess_seen, e)) {
 				GObject *sess = NULL;
@@ -481,10 +536,22 @@ static void probe_sinks(void)
 				g_object_get(e, "internal-session", &sess, NULL);
 				if (sess) { g_signal_connect(sess, "on-feedback-rtcp", G_CALLBACK(on_feedback), NULL); g_object_unref(sess); }
 			}
+			if (g_getenv("PMTEST_DUMP_RTP") && f && !strcmp(GST_OBJECT_NAME(f), "rtpsession") &&
+			    !g_hash_table_contains(nice_seen, e)) {
+				/* its send side comes when Farstream links it: looked for again each tick */
+				GstPad *p;
+				if (!rtp_dump) rtp_dump = fopen(g_getenv("PMTEST_DUMP_RTP"), "wb");
+				p = rtp_dump ? gst_element_get_static_pad(e, "send_rtp_src") : NULL;
+				if (p) {
+					g_hash_table_add(nice_seen, e);
+					gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST, dump_probe, NULL, NULL);
+					gst_object_unref(p);
+				}
+			}
 			if (f && !strcmp(GST_OBJECT_NAME(f), "fakesink") && !g_hash_table_contains(counts, e) &&
 			    fed_by_level(e)) {
 				GstPad *p = gst_element_get_static_pad(e, "sink");
-				g_hash_table_insert(counts, e, GUINT_TO_POINTER(0));
+				g_hash_table_insert(counts, gst_object_ref(e), GUINT_TO_POINTER(0));
 				if (p) gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER, count_probe, e, NULL);
 				{
 					GString *path = g_string_new(GST_OBJECT_NAME(e));
@@ -543,6 +610,39 @@ static gboolean session_sends_ssrc(guint ssrc)
 	return found;
 }
 static gboolean ssrc_a_ok, ssrc_b_ok;
+
+/* 9: the camera source that runs (pm_make_vcam's "pmcam", not in locked state), or NULL */
+static GstElement *running_camera(void)
+{
+	GstElement *pipe = purple_media_manager_get_pipeline(purple_media_manager_get()), *found = NULL;
+	GstIterator *it = gst_bin_iterate_recurse(GST_BIN(pipe));
+	GValue v = G_VALUE_INIT;
+	gboolean done = FALSE;
+	int n = 0;
+	while (!done) {
+		switch (gst_iterator_next(it, &v)) {
+		case GST_ITERATOR_OK: {
+			GstElement *e = g_value_get_object(&v);
+			if (!strcmp(GST_OBJECT_NAME(e), "pmcam") && !gst_element_is_locked_state(e)) {
+				n++;
+				if (!found) found = gst_object_ref(e);
+			}
+			g_value_reset(&v);
+			break;
+		}
+		case GST_ITERATOR_RESYNC: gst_iterator_resync(it); break;
+		default: done = TRUE;
+		}
+	}
+	g_value_unset(&v);
+	gst_iterator_free(it);
+	if (n != 1 && found) { gst_object_unref(found); found = NULL; }   /* only A's may run */
+	fprintf(stderr, "running cameras: %d\n", n);
+	return found;
+}
+static gboolean cam_error_posted;
+
+static gint audio_at_cam_error, audio_after_cam_error;
 
 /* 8: a side's video credentials and candidates before VRESTART, and what went on after it */
 static gchar *a_vufrag0, *b_vufrag0;
@@ -607,10 +707,14 @@ static gboolean tick(gpointer u)
 			side_send(&A, "ANSWER %s %s %s\n", B.txkey, B.ufrag, B.pwd);
 			side_send(&A, "VANSWER %s %s %s\n", B.txkey, B.vufrag, B.vpwd);
 			side_send_cands(&A, &B);
+			side_send(&A, "VIDEO 1 320 240 300\n");
 			step = 3; ticks = 0;
 		}
 		break;
 	case 3:   /* let audio and video run for 8 s, then VIDEO 1 and a RESTART */
+		if (ticks == 3) side_send(&A, "VIDEO 0\n");                 /* 10 */
+		if (ticks == 4) { side_send(&A, "VIDEO 1 320 240 300\n"); vout_at_toggle = g_atomic_int_get(&vout_bufs); }
+		if (ticks == 9) vout_after_toggle = g_atomic_int_get(&vout_bufs);
 		if (ticks == 10) side_send(&B, "VIDEO 1 640 480 800\n");
 		if (ticks >= 16) {
 			ssrc_a_ok = session_sends_ssrc(A.ssrc);
@@ -645,6 +749,26 @@ static gboolean tick(gpointer u)
 		if (!vrestart_gap && g_atomic_int_get(&shm_bufs) > shm_after_vrestart + 30) vrestart_gap = ticks;
 		if (vrestart_gap ? ticks >= vrestart_gap + 4 : ticks >= 20) {
 			audio_after_vrestart = audio_bufs();
+			side_send(&B, "VIDEO 0\n");
+			step = 34; ticks = 0;
+		}
+		break;
+	case 34:   /* 9: B's camera is off; A's camera source fails */
+		if (B.vtx_off == 1 || ticks >= 6) {
+			GstElement *cam = running_camera();
+			if (cam) {
+				GError *err = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_BUSY, "pmtest: camera taken");
+				cam_error_posted = gst_element_post_message(cam, gst_message_new_error(GST_OBJECT(cam), err, "pmtest"));
+				g_error_free(err);
+				gst_object_unref(cam);
+			}
+			audio_at_cam_error = audio_bufs();
+			step = 35; ticks = 0;
+		}
+		break;
+	case 35:   /* the call goes on: then the RESTART of 3 */
+		if (ticks >= 6) {
+			audio_after_cam_error = audio_bufs();
 			side_send(&B, "RESTART - x y\n"); step = 4; ticks = 0;
 		}
 		break;
@@ -715,10 +839,6 @@ int main(int argc, char **argv)
 	/* not added to the account list: without its protocol plugin, libpurple cannot destroy it
 	 * cleanly (purple_presence_destroy), so it is left for the process exit */
 	loop = g_main_loop_new(NULL, FALSE);
-	{
-		GstElement *pipe = purple_media_manager_get_pipeline(purple_media_manager_get());
-		if (pipe) g_signal_connect(pipe, "deep-element-added", G_CALLBACK(on_deep_added), NULL);
-	}
 
 	side_start(&A, "A", test_account, TRUE);
 	side_start(&B, "B", test_account, FALSE);
@@ -761,7 +881,34 @@ int main(int argc, char **argv)
 	CHECK(stat_field(&B, "vremb") > 2 && g_atomic_int_get(&remb_seen) > 2);
 	/* the audio stats count the audio jitterbuffer only, not the video session's next to it */
 	CHECK(stat_field(&B, "jb_pushed") > 0 && stat_field(&B, "jb_pushed") <= stat_field(&B, "rx") + 25);
-	CHECK(B.vtx_err);
+	/* our camera */
+	fprintf(stderr, "camera: A vtxf=%ld, B vtxf=%ld, %d self-view frames; previews A %s, B %s\n",
+	        stat_field(&A, "vtxf"), stat_field(&B, "vtxf"), g_atomic_int_get(&preview_bufs),
+	        A.vpreview ? A.vpreview : "-", B.vpreview ? B.vpreview : "-");
+	CHECK(A.vcamera && B.vcamera);
+	CHECK(!A.vtx_err && !B.vtx_err);
+	CHECK(A.vtx_on == 3 && B.vtx_on == 2);   /* on, (A: on again, 10), and on in the new session (8) */
+	CHECK(A.vtx_off == 2 && B.vtx_off == 1);  /* A's: 10, and the camera error of 9 */
+	fprintf(stderr, "camera off and on: %d frames out of the heads, %d at VIDEO 1, %d 2.5 s later\n",
+	        g_atomic_int_get(&vout_bufs), vout_at_toggle, vout_after_toggle);
+	CHECK(vout_after_toggle > vout_at_toggle + 15);   /* 10 */
+	CHECK(A.peervideo && A.vshm);            /* B's camera reached A */
+	CHECK(A.vpreview && B.vpreview && g_strcmp0(A.vpreview, B.vpreview));
+	CHECK(g_atomic_int_get(&preview_bufs) > 30);
+	CHECK(stat_field(&A, "vtxf") > 30 && stat_field(&B, "vtxf") > 30);
+	/* our H264 goes with the SSRC VSSRC announced: Teams forwards video by it */
+	fprintf(stderr, "video SSRC: A sends %u, announced %u; B sends %u, announced %u\n", stat_u32(&A, "vtxssrc"),
+	        A.vssrc, stat_u32(&B, "vtxssrc"), B.vssrc);
+	CHECK(A.vssrc && stat_u32(&A, "vtxssrc") == A.vssrc);
+	CHECK(B.vssrc && stat_u32(&B, "vtxssrc") == B.vssrc);
+	/* SPS and PPS go with every keyframe, not once only: B sent several keyframes in 8 (the
+	 * first can go before the engine counts RTP: its probe is put on at the next tick) */
+	fprintf(stderr, "B: %ld keyframes, %ld RTP packets with an SPS; PLI %ld\n", stat_field(&B, "vtxk"),
+	        stat_field(&B, "vtxsps"), stat_field(&A, "vrpli"));
+	CHECK(stat_field(&B, "vtxk") > 2 && stat_field(&B, "vtxsps") + 1 >= stat_field(&B, "vtxk"));
+	/* packets small enough for Teams' relays: 1200 bytes at most */
+	fprintf(stderr, "largest video RTP packet: A %ld, B %ld bytes\n", stat_field(&A, "vtxmax"), stat_field(&B, "vtxmax"));
+	CHECK(stat_field(&B, "vtxmax") > 1000 && stat_field(&B, "vtxmax") <= 1200);
 	/* 8: VRESTART */
 	fprintf(stderr, "VRESTART: shm frames %d before, %d at the answer, %d at the end (back after %u ticks); "
 	        "audio buffers %d -> %d\n", shm_before_vrestart, shm_after_vrestart, g_atomic_int_get(&shm_bufs),
@@ -772,6 +919,12 @@ int main(int argc, char **argv)
 	CHECK(A.vcands->len && B.vcands->len);
 	CHECK(vrestart_gap > 0);                                                   /* video again */
 	CHECK(audio_after_vrestart > audio_before_vrestart + 100);                 /* audio went on */
+	/* 9: a camera error */
+	fprintf(stderr, "camera error: posted %d, audio buffers %d -> %d\n", cam_error_posted,
+	        audio_at_cam_error, audio_after_cam_error);
+	CHECK(cam_error_posted);
+	CHECK(A.cam_err && !B.cam_err);
+	CHECK(audio_after_cam_error > audio_at_cam_error + 100);
 
 	side_send(&A, "STOP\n");
 	side_free(&A);
@@ -780,11 +933,14 @@ int main(int argc, char **argv)
 	side_free(&D);
 	purple_core_quit();
 	g_main_loop_unref(loop);
+	g_hash_table_iter_init(&hi, counts);
+	while (g_hash_table_iter_next(&hi, &k, NULL)) gst_object_unref(k);
 	g_hash_table_destroy(counts);
 	if (clip_aus) g_ptr_array_unref(clip_aus);
 	if (clip_avcc) g_bytes_unref(clip_avcc);
 	g_free(home);
 	g_free(a_vufrag0); g_free(b_vufrag0);
+	if (rtp_dump) fclose(rtp_dump);
 	if (failures) { fprintf(stderr, "%d failure(s)\n", failures); return 1; }
 	printf("PASS test_pmedia_loopback\n");
 	return 0;

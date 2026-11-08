@@ -168,7 +168,9 @@ typedef struct {
 	GString     *our_vcands;
 	gchar       *video_ruf;    /* the far side's video ufrag that session was started with */
 	gboolean     video_ok;     /* the offer being answered has that video ICE: answer the m-line */
-	gboolean     video_offered;   /* our offer (a call we placed) has the receive-only m=video */
+	gboolean     video_offered;   /* our offer (a call we placed) has the m=video on ICE of its own */
+	gboolean     video_offered_send;   /* ... sendrecv: our camera can go out on it */
+	gboolean     engine_camera;   /* VCAMERA 1: the unbundled engine's video session can send our camera */
 	gboolean     vrestarting;  /* VRESTART sent; VRESTARTED or VIDEOERR build not back yet */
 	gboolean     answered;
 	guint        answer_timer;
@@ -232,8 +234,13 @@ media_engine_unbundled(const TeamsMediaProc *mp)
 static gboolean
 media_engine_sends_video(const TeamsMediaProc *mp)
 {
-	return mp && mp->our_vssrc && !media_engine_unbundled(mp);
+	if (!mp || !mp->our_vssrc) return FALSE;
+	if (!media_engine_unbundled(mp)) return TRUE;
+	/* the unbundled engine: its video session has our camera (VCAMERA), and the call has it */
+	return mp->engine_camera && (mp->video_ok || mp->video_offered);
 }
+
+static gboolean media_video_same_ice(TeamsMediaProc *mp, const char *offer);
 
 /* Whether the engine receives the far side's video in the offer being answered: it has video, and
  * an unbundled engine's video session is the one that offer's m=video names. */
@@ -1151,10 +1158,13 @@ media_send_offer(TeamsMediaProc *mp)
 	else if (mp->video_offered) {
 		int vport;
 		gchar *vip = host_address_of(mp->our_vcands, &vport);
-		append_video_mline(sdp, mp, vport, vip ? vip : (our_ip ? our_ip : "0.0.0.0"), "1", "recvonly");
+		mp->video_offered_send = mp->engine_camera;
+		append_video_mline(sdp, mp, vport, vip ? vip : (our_ip ? our_ip : "0.0.0.0"), "1",
+		                   mp->video_offered_send ? "sendrecv" : "recvonly");
 		g_free(vip);
 	}
-	teams_call_log("video: offering %s", video ? "sendrecv" : mp->video_offered ? "recvonly (own ICE)" : "no video");
+	teams_call_log("video: offering %s", video ? "sendrecv" : !mp->video_offered ? "no video"
+	               : mp->video_offered_send ? "sendrecv (own ICE)" : "recvonly (own ICE)");
 	g_free(our_ip);
 	media_take_mids(mp, sdp->str);   /* our answers to the far side's renegotiations: see amid */
 
@@ -1499,6 +1509,12 @@ handle_reneg_offer_answer(TeamsAccount *sa, TeamsCall *call, TeamsMediaProc *mp,
 		               ack_url && *ack_url ? "yes" : "no (no link)");
 		g_free(uf); g_free(cur);
 	}
+	if (media_engine_unbundled(mp) && mp->video_ruf && teams_sdp_video_ice_own(blob) &&
+	    !media_video_same_ice(mp, blob)) {
+		/* our video session was offered with the ICE it has; it cannot take the far side's
+		 * new credentials as the offerer (VRESTART answers an offer) */
+		teams_call_log("video: the answer to our offer moves the video to other ICE (not applied)");
+	}
 	peer = teams_sdp_video_direction(blob);
 	mp->video_offer = NULL;
 	mp->video_answer = teams_video_our_direction(peer);
@@ -1548,11 +1564,18 @@ media_on_output(GIOChannel *ch, GIOCondition cond, gpointer user)
 		else if (g_str_has_prefix(line, "VUFRAG ")) { g_free(mp->our_vufrag); mp->our_vufrag = g_strdup(line + 7); }
 		else if (g_str_has_prefix(line, "VPWD ")) { g_free(mp->our_vpwd); mp->our_vpwd = g_strdup(line + 5); }
 		else if (g_str_has_prefix(line, "VCAND ")) g_string_append_printf(mp->our_vcands, "%s\n", line + 6);
+		else if (!strcmp(line, "VCAMERA 1")) {
+			if (!mp->engine_camera) teams_call_log("video: the engine can send our camera");
+			mp->engine_camera = TRUE;
+		}
 		else if (g_str_has_prefix(line, "VSHM ") || g_str_has_prefix(line, "VPREVIEW ") ||
 		         g_str_has_prefix(line, "VTX ") || g_str_has_prefix(line, "PEERVIDEO ") ||
 		         g_str_has_prefix(line, "VIDEOERR ")) {
 			teams_call_log("media %s", line);
-			if (g_str_has_prefix(line, "VIDEOERR tx")) mp->camera_sent = FALSE;   /* the engine stopped it */
+			if (g_str_has_prefix(line, "VIDEOERR tx")) {   /* the engine stopped it, or has none */
+				mp->camera_sent = FALSE;
+				if (media_engine_unbundled(mp)) mp->engine_camera = FALSE;
+			}
 			if (!strcmp(line, "VIDEOERR build")) {   /* the call stays voice only */
 				mp->our_vssrc = 0;
 				mp->video_ok = FALSE;
@@ -2480,13 +2503,18 @@ teams_calling_handle_media_answer(TeamsAccount *sa, JsonObject *body_obj)
 	if (media_send(mp, "ANSWER %s %s %s\n", rxkey, ruf, rpw)) {
 		media_send_candidates(mp, blob);
 		if (media_engine_unbundled(mp) && mp->video_offered) {
-			/* our offer's video was receive-only: we send none, whatever the answer says */
+			/* our offer's video: sendrecv if our camera can go out on it, else receive-only and
+			 * we send none, whatever the answer says */
 			const char *peer = teams_sdp_video_direction(blob);
 			media_start_video(mp, blob, rxkey, "VANSWER");
 			mp->video_offer = NULL;
-			mp->video_answer = mp->video_ok && teams_video_dir_peer_sends(peer) ? "recvonly" : "inactive";
+			if (!mp->video_ok) mp->video_answer = "inactive";
+			else if (mp->video_offered_send) mp->video_answer = teams_video_our_direction(peer);
+			else mp->video_answer = teams_video_dir_peer_sends(peer) ? "recvonly" : "inactive";
+			teams_video_send_params(blob, &mp->vsend_w, &mp->vsend_h, &mp->vsend_kbps);
 			teams_call_log("video: answer %s, so we %s", peer ? peer : "none", mp->video_answer);
 			video_event(mp, mp->video_ok && teams_video_dir_peer_sends(peer) ? "OFFERED 1" : "OFFERED 0");
+			media_video_apply(mp);
 		}
 	}
 	explicit_bzero(rxkey, strlen(rxkey));
@@ -2495,7 +2523,7 @@ teams_calling_handle_media_answer(TeamsAccount *sa, JsonObject *body_obj)
 	 * CAPTURED, teams.live.com placing a call: mediaAnswer 3.5 s after the call was
 	 * placed, callAcceptance 2.1 s later). The call is up on the acceptance. */
 	call->answer_applied = TRUE;
-	if (mp->camera_wanted && media_engine_sends_video(mp)) {
+	if (mp->camera_wanted && media_engine_sends_video(mp) && !media_engine_unbundled(mp)) {
 		/* Our offer had video: the answer says what each side sends, and its fmtp how much. */
 		const char *peer = teams_sdp_video_direction(blob);
 		mp->video_offer = NULL;
