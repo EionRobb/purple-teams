@@ -12,8 +12,8 @@
  *
  * This module parses the notification into a TeamsCall, tracks call state, drives the call
  * control plane (answer/reject/hangup/dial) over the links, and hands the media parameters to
- * the separate media engine (TEAMS_MEDIA_BIN), which carries the audio and video. Calls are 1:1,
- * voice or video. docs/CALLING.md describes the signalling and the engine's line protocol.
+ * the media engine (PurpleMedia in-process, or TEAMS_MEDIA_BIN), which carries the audio and
+ * video. Calls are 1:1, voice or video. docs/CALLING.md describes the signalling and the engine's line protocol.
  *
  * A front end (a UI that rings, shows and drives calls) registers the callbacks below and calls
  * the actions. Without one, an incoming call is announced as a message, as before.

@@ -6,8 +6,9 @@
  *   - STATE:   drive incoming/dialing/active/disconnected and notify the front end.
  *   - CONTROL: answer (attach -> accept with our SDP answer), reject, hang up and dial (cpconv)
  *     over the call control plane.
- *   - MEDIA:   the out-of-process teams_media engine (TEAMS_MEDIA_BIN), one per call, driven over
- *     its stdin/stdout line protocol (docs/CALLING.md).
+ *   - MEDIA:   the media engine, one per call, driven over a line protocol (docs/CALLING.md): the
+ *     in-process one on PurpleMedia (TEAMS_PURPLEMEDIA, the default), or an out-of-process one
+ *     (TEAMS_MEDIA_BIN) when built in and TEAMS_CALL_ENGINE=teams_media asks for it.
  *
  * Message shapes marked CAPTURED were read from the teams.live.com web client's traffic.
  */
@@ -28,8 +29,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#ifndef TEAMS_MEDIA_BIN
-#error "TEAMS_MEDIA_BIN (the path of the teams_media engine) must be defined"
+#if !defined(TEAMS_PURPLEMEDIA) && !defined(TEAMS_MEDIA_BIN)
+#error "calls need an engine: TEAMS_PURPLEMEDIA (in-process) or TEAMS_MEDIA_BIN (the teams_media path)"
 #endif
 
 /* ------------------------------------------------------------------ logging */
@@ -1661,6 +1662,7 @@ media_kill_cb(gpointer user)
 	return G_SOURCE_REMOVE;
 }
 
+#ifdef TEAMS_MEDIA_BIN
 /* Reap an engine. If it belongs to the current call, the call has lost its media: end it. */
 static void
 media_child_exited(GPid pid, gint status, gpointer user)
@@ -1686,10 +1688,11 @@ media_child_exited(GPid pid, gint status, gpointer user)
 	}
 	g_free(r);
 }
+#endif
 
-#ifdef TEAMS_PURPLEMEDIA
-/* Which engine a call gets: TEAMS_CALL_ENGINE=purplemedia or =teams_media in the environment
- * chooses; without it, teams_media when it is installed and the in-process one when not. */
+#if defined(TEAMS_PURPLEMEDIA) && defined(TEAMS_MEDIA_BIN)
+/* Which engine a call gets when both are built in: the in-process one, unless
+ * TEAMS_CALL_ENGINE=teams_media in the environment asks for the other. */
 static gboolean
 media_use_pmedia(void)
 {
@@ -1700,12 +1703,12 @@ media_use_pmedia(void)
 	/* For comparing the engines call by call: the engine named in this file, read at each call,
 	 * so it can change without restarting the process. */
 	if (f && g_file_get_contents(f, &fc, NULL, NULL)) e = g_strstrip(fc);
-	if (e && !g_ascii_strcasecmp(e, "purplemedia")) r = TRUE;
-	else if (e && !g_ascii_strcasecmp(e, "teams_media")) r = FALSE;
-	else r = !g_file_test(TEAMS_MEDIA_BIN, G_FILE_TEST_IS_EXECUTABLE);
+	r = !(e && !g_ascii_strcasecmp(e, "teams_media"));
 	g_free(fc);
 	return r;
 }
+#elif defined(TEAMS_PURPLEMEDIA)
+static gboolean media_use_pmedia(void) { return TRUE; }
 #endif
 
 /* Start an engine for call (none may be running): stdin is a socketpair, stdout a pipe, stderr
@@ -1714,9 +1717,11 @@ media_use_pmedia(void)
 static TeamsMediaProc *
 media_spawn(TeamsCall *call, gboolean is_caller)
 {
-	const gchar *argv[] = { TEAMS_MEDIA_BIN, is_caller ? "--caller" : "--answer", NULL };
+	const gchar *mode = is_caller ? "--caller" : "--answer";
 	int sv[2], outp[2];
+#ifdef TEAMS_MEDIA_BIN
 	GPid pid = 0;
+#endif
 	GError *err = NULL;
 	TeamsMediaProc *mp;
 	MediaReaper *r = NULL;
@@ -1751,9 +1756,11 @@ media_spawn(TeamsCall *call, gboolean is_caller)
 			close(sv[0]); close(outp[0]);
 			return NULL;
 		}
-	} else
+	}
 #endif
-	{
+#ifdef TEAMS_MEDIA_BIN
+	if (!in_process) {
+		const gchar *argv[] = { TEAMS_MEDIA_BIN, mode, NULL };
 		if (!g_spawn_async_with_fds(NULL, (gchar **) argv, NULL, G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL,
 		                            &pid, sv[1], outp[1], -1, &err)) {
 			teams_call_log("media: spawn %s failed: %s", TEAMS_MEDIA_BIN, err->message);
@@ -1767,6 +1774,7 @@ media_spawn(TeamsCall *call, gboolean is_caller)
 		r->pid = pid;
 		g_child_watch_add(pid, media_child_exited, r);
 	}
+#endif
 
 	mp = g_new0(TeamsMediaProc, 1);
 	mp->call = call; mp->reaper = r; mp->in_fd = sv[0]; mp->is_caller = is_caller;
@@ -1781,8 +1789,11 @@ media_spawn(TeamsCall *call, gboolean is_caller)
 	g_io_channel_set_flags(mp->out_ch, G_IO_FLAG_NONBLOCK, NULL);
 	mp->out_watch = g_io_add_watch(mp->out_ch, G_IO_IN | G_IO_HUP | G_IO_ERR, media_on_output, mp);
 	g_mproc = mp;
-	if (r) teams_call_log("media: spawned %s %s pid=%d", TEAMS_MEDIA_BIN, argv[1], (int) pid);
-	else   teams_call_log("media: in-process PurpleMedia engine %s", argv[1]);
+#ifdef TEAMS_MEDIA_BIN
+	if (r) teams_call_log("media: spawned %s %s pid=%d", TEAMS_MEDIA_BIN, mode, (int) pid);
+	else
+#endif
+	teams_call_log("media: in-process PurpleMedia engine %s", mode);
 	return mp;
 }
 

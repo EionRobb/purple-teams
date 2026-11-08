@@ -85,17 +85,22 @@ C_FILES = \
 PURPLE_COMPAT_FILES := purple2compat/http.c purple2compat/purple-socket.c
 PURPLE_C_FILES := libteams.c $(C_FILES)
 
-# 1:1 calls (personal accounts only, see docs/CALLING.md): build with TEAMS_CALLING=1 and
-# TEAMS_MEDIA_BIN=<path of the media engine>. A front end has to register to ring and drive
-# calls; without one an incoming call is still announced as a message.
+# 1:1 calls (personal accounts only, see docs/CALLING.md): build with TEAMS_CALLING=1. A front
+# end has to register to ring and drive calls; without one an incoming call is still announced
+# as a message. The audio and video run in libpurple's own voice and video (PurpleMedia,
+# Farstream; libpurple 2 built with it), in-process: TEAMS_PURPLEMEDIA=0 leaves that engine out.
+# TEAMS_MEDIA_BIN=<path> adds an out-of-process engine (teams_media, one process per call); with
+# both built in, TEAMS_CALL_ENGINE=teams_media in the environment picks it over PurpleMedia.
 ifdef TEAMS_CALLING
-TEAMS_MEDIA_BIN ?= /usr/libexec/teams_media
+TEAMS_PURPLEMEDIA ?= 1
 TEAMS_CALL_FILES = teams_calling.c teams_call_sdp.c
-TEAMS_CALL_FLAGS = -DTEAMS_CALLING -DTEAMS_MEDIA_BIN='"$(TEAMS_MEDIA_BIN)"'
-# TEAMS_PURPLEMEDIA=1 adds the in-process engine on libpurple's own voice and video (PurpleMedia,
-# Farstream; libpurple 2 built with it), used when teams_media is not installed or with
-# TEAMS_CALL_ENGINE=purplemedia. Voice, and the far side's video.
-ifdef TEAMS_PURPLEMEDIA
+TEAMS_CALL_FLAGS = -DTEAMS_CALLING
+ifneq ($(TEAMS_MEDIA_BIN),)
+TEAMS_CALL_FLAGS += -DTEAMS_MEDIA_BIN='"$(TEAMS_MEDIA_BIN)"'
+else ifneq ($(TEAMS_PURPLEMEDIA),1)
+$(error TEAMS_CALLING needs an engine: TEAMS_PURPLEMEDIA=1 or TEAMS_MEDIA_BIN=<path>)
+endif
+ifeq ($(TEAMS_PURPLEMEDIA),1)
 TEAMS_CALL_FILES += teams_call_pmedia.c
 TEAMS_CALL_FLAGS += -DTEAMS_PURPLEMEDIA $(shell $(PKG_CONFIG) gstreamer-1.0 gstreamer-rtp-1.0 gio-2.0 gmodule-2.0 --cflags)
 TEAMS_CALL_LIBS += $(shell $(PKG_CONFIG) gstreamer-1.0 gstreamer-rtp-1.0 gio-2.0 gmodule-2.0 --libs)

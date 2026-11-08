@@ -1,8 +1,9 @@
 # 1:1 calls
 
 The plug-in can take and place 1:1 Teams calls, voice and video, on personal (Teams for Life)
-accounts. It does the signalling; the audio and video run in a separate media engine, and a front
-end (a UI) rings, shows and drives the calls. Both are replaceable.
+accounts. It does the signalling; the audio and video run in a media engine (libpurple's
+PurpleMedia by default), and a front end (a UI) rings, shows and drives the calls. Both are
+replaceable.
 
 Tested with a personal account against the Teams Android app, in both directions, with audio and
 video. Not tested yet: turning the camera on in a call that started without video. A video call
@@ -11,29 +12,31 @@ tried, and group calls are not supported.
 
 ## Building
 
+    make libteams-personal.so TEAMS_CALLING=1
+
+This adds `teams_calling.c`, `teams_call_sdp.c` and `teams_call_pmedia.c` to the personal plug-in.
+Calls need a Unix-like system and GLib 2.58 or newer. Without a front end an incoming call is
+still announced as a message, as without `TEAMS_CALLING`.
+
+The audio and video run in `teams_call_pmedia.c`, on libpurple's own voice and video support
+(PurpleMedia, with Farstream), inside the plug-in's process. It needs libpurple 2 built with it
+(`--enable-vv`, so Farstream 0.2 and GStreamer 1.x) and links GStreamer itself. On a libpurple
+without voice and video the plug-in still loads and turns calls down.
+
+### An out-of-process engine (optional)
+
     make libteams-personal.so TEAMS_CALLING=1 TEAMS_MEDIA_BIN=/usr/libexec/teams_media
 
-This adds `teams_calling.c` and `teams_call_sdp.c` to the personal plug-in. Calls need a Unix-like
-system and GLib 2.58 or newer. Without a front end an incoming call is still announced as a
-message, as without `TEAMS_CALLING`.
+also builds in a second engine: the plug-in starts `TEAMS_MEDIA_BIN`, one process per call, and
+drives it with the same lines as the in-process one (below), so the signalling is the same for
+both. A call then still uses PurpleMedia unless `TEAMS_CALL_ENGINE=teams_media` is set in the
+environment. `TEAMS_CALL_ENGINE_FILE` names a file holding `purplemedia` or `teams_media` instead,
+read at each call, so the engine can be switched between calls without restarting the process.
+`TEAMS_PURPLEMEDIA=0` leaves the in-process engine out (then `TEAMS_MEDIA_BIN` is required).
 
-`TEAMS_MEDIA_BIN` is the engine the plug-in starts, one process per call. A working engine
-(GStreamer and libnice, GPL-3.0-or-later) is `teams_media` in
+An engine of this kind (GStreamer and libnice, GPL-3.0-or-later) is `teams_media` in
 <https://github.com/webOS-ports/luneos-synergy-connectors>, `im/teams/calling/media/`. It plays and
 records through PulseAudio devices of its own naming, so it needs adapting to a desktop.
-
-### The in-process engine (PurpleMedia)
-
-    make libteams-personal.so TEAMS_CALLING=1 TEAMS_PURPLEMEDIA=1 TEAMS_MEDIA_BIN=/usr/libexec/teams_media
-
-adds `teams_call_pmedia.c`, an engine on libpurple's own voice and video support (PurpleMedia,
-with Farstream). It needs libpurple 2 built with it (`--enable-vv`, so Farstream 0.2 and
-GStreamer 1.x) and links GStreamer itself. It runs inside the plug-in's process and takes the
-same lines as `teams_media` (below), so the signalling is the same for both. A call uses it when
-`TEAMS_MEDIA_BIN` is not installed, or with `TEAMS_CALL_ENGINE=purplemedia` in the environment
-(`TEAMS_CALL_ENGINE=teams_media` picks the other). `TEAMS_CALL_ENGINE_FILE` names a file
-holding one of those two words instead, read at each call, so the engine can be switched between
-calls without restarting the process.
 
 Both engines print a `STATS` line every 5 s, which the plug-in logs as `media stats
 engine=<which> ...` (with `TEAMS_CALL_DEBUG`):
@@ -53,21 +56,29 @@ The counters do not mean quite the same thing in each engine:
 
 What it does not do yet:
 
-* The far side's video only. When an offer's m=video has ICE credentials of its own (the Teams
-  Android app's do, though its offers name BUNDLE), the plug-in starts a second session on its
-  own ICE stream (`VSTART`, `VRCAND`; the engine says `VUFRAG`, `VPWD`, `VCAND`, `VSSRC`) and
-  answers that m-line without BUNDLE: H264 107 only, no rtx, and of the feedback only the REMB and
-  PLI the engine sends. The picture goes to a gst-shm socket (`VSHM <path> <w> <h>`,
-  `TEAMS_PMEDIA_VIDEO_SHM`, default `/tmp/teams-video`) as I420, decoded by `avdec_h264`
-  (`droidvdec` is ranked out unless `TEAMS_PMEDIA_HW_DECODE` is set). Our camera is not sent:
-  `VIDEO 1` gets `VIDEOERR tx`, and the camera button is refused. An offer whose video shares the
-  audio's ICE, or that is voice only, gets the video m-line declined as before; so does a
-  renegotiation that moves the video to other ICE credentials. A call we place offers no video.
-  The STATS line adds `vrx=` (video RTP received), `vdec=` (frames decoded), `vpli=` and `vremb=`
-  (PLIs and REMBs sent).
+* Video runs on an ICE stream of its own, never bundled with the audio. When an offer's m=video
+  has ICE credentials of its own (the Teams Android app's do, though its offers name BUNDLE), the
+  plug-in starts a second session for it (`VSTART`, `VRCAND`; the engine says `VUFRAG`, `VPWD`,
+  `VCAND`, `VSSRC`) and answers that m-line without BUNDLE: H264 107 only, no rtx, `nack pli` and
+  `goog-remb` feedback. A call we place offers its video the same way (`VANSWER` takes the far
+  side's part of the answer). A renegotiation that moves the far side's video to new ICE
+  credentials replaces the video session (`VRESTART`, then `VRESTARTED`). An offer whose video
+  shares the audio's ICE gets the video m-line declined.
+* The far side's picture goes to a gst-shm socket (`VSHM <path> <w> <h>`,
+  `TEAMS_PMEDIA_VIDEO_SHM`, default `/tmp/teams-video`) as I420, decoded by `avdec_h264`.
+* Our camera (`VIDEO 1 <w> <h> <kbps>` / `VIDEO 0`) is sent only where GStreamer has
+  `droidcamsrc` and `droidvenc` (gst-droid, on Android-based phones); the engine then says
+  `VCAMERA 1` and calls offer the video sendrecv. Elsewhere video is receive-only and the camera
+  button is refused. The packets are at most 1200 bytes: larger ones were lost on the way through
+  Teams' relays, keyframes with them. A camera error turns the camera off (`VIDEOERR tx-camera`)
+  and the call goes on.
+* The STATS line adds the video counts: `vrx` (RTP received), `vdec` (frames decoded), `vpli`
+  and `vremb` (sent), and for our camera `vtxf` (frames in), `vtxe`/`vtxk` (encoded,
+  keyframes), `vtxp` (packets), `vtxmax` (largest packet), `vtxsps`, `vtxssrc`, `vsr` (sender
+  reports), and `vrpli`/`vrfir`/`vrnack` (the far side's requests).
 * No ICE restart: `RESTART` gets `ERR`, and a renegotiation that changes the far side's ICE
   credentials is not answered. One that keeps them, as Teams' do, is answered at once.
-* No transport-cc feedback (the answer does not offer it), and no NACK.
+* No transport-cc feedback (the answer does not offer it), and NACKs are not answered.
 * `RELAY turn` is ignored; only the STUN server is used.
 
 It plays and records through the PulseAudio devices `teams_media` uses (`voipcall`, `webcall`);
