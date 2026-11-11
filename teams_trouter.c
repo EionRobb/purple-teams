@@ -99,7 +99,8 @@ teams_trouter_send_active(TeamsAccount *sa, gboolean active)
 	g_free(message);
 }
 
-static void
+/* Returns FALSE when there is nothing to authenticate with yet; the caller reconnects. */
+static gboolean
 teams_trouter_send_authentication(TeamsAccount *sa)
 {
 	JsonObject *obj = json_object_new();
@@ -111,15 +112,15 @@ teams_trouter_send_authentication(TeamsAccount *sa)
 	/* sa->trouter_socket_obj can lack (or have a wrong-type) "connectparams" - a flaky/
 	 * empty trouter-info response, same root cause as the other guards in this file. Don't
 	 * json_object_ref(NULL) below (part of the json_object_get_object_member + hash_table NULL
-	 * flood); bail and let the caller's normal reconnect/retry path pick it up instead of
-	 * sending a malformed authenticate message. */
+	 * flood); report it, and the caller reconnects on the backoff instead of sending a
+	 * malformed authenticate message. */
 	if (connectparams == NULL) {
 		purple_debug_info("teams", "Trouter: no connectparams yet, skipping authenticate\n");
 		json_object_unref(headers);
 		json_object_unref(arg0);
 		json_array_unref(args);
 		json_object_unref(obj);
-		return;
+		return FALSE;
 	}
 
 	json_object_set_string_member(headers, "X-Ms-Test-User", "False");
@@ -139,6 +140,7 @@ teams_trouter_send_authentication(TeamsAccount *sa)
 	teams_trouter_send_ephemeral_message(sa, message);
 	g_free(message);
 	json_object_unref(obj);
+	return TRUE;
 }
 
 /* The trouter websocket can close or error right after connecting. Reconnecting at once,
@@ -166,7 +168,7 @@ teams_trouter_schedule_reconnect(TeamsAccount *sa)
 	if (sa->trouter_reconnect_backoff < 5) {
 		sa->trouter_reconnect_backoff = 5;
 	} else if (sa->trouter_reconnect_backoff < 300) {
-		sa->trouter_reconnect_backoff *= 2;
+		sa->trouter_reconnect_backoff = MIN(sa->trouter_reconnect_backoff * 2, 300);
 	}
 	purple_debug_info("teams", "Trouter: scheduling reconnect in %us (backoff)\n", sa->trouter_reconnect_backoff);
 	sa->trouter_reconnect_timeout = purple_timeout_add_seconds(sa->trouter_reconnect_backoff, teams_trouter_reconnect_cb, sa);
@@ -278,7 +280,11 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 	//3:::{"id":123456789,"status":200,"headers":{"MS-CV":"asdf+asdfsadf.1.0","trouter-request":"{\"id\":\"asdfasdf-asdf-asdf-asdf-asdfasdfasdf\",\"src\":\"trouter2-azsc-ince-1-a\",\"port\":31037}","trouter-client":"{\"cd\":1}"},"body":""}
 	
 	if (G_UNLIKELY(msg[0] == '1')) {
-		teams_trouter_send_authentication(sa);
+		if (!teams_trouter_send_authentication(sa)) {
+			/* trouter-info gave no connectparams: fetch it again on the backoff */
+			teams_trouter_schedule_reconnect(sa);
+			return;
+		}
 		teams_trouter_send_active(sa, TRUE);
 		teams_trouter_register(sa);
 
@@ -327,7 +333,7 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				body = body_unzipped;
 			}
 
-			/* no body, or one that did not unzip, is NULL here */
+			/* no body, or one that did not gunzip: NULL, handled just below */
 			JsonObject *body_obj = body ? json_decode_object(body, strlen(body)) : NULL;
 			JsonObject *orig_body;
 
@@ -359,6 +365,13 @@ teams_trouter_websocket_cb(PurpleWebsocket *ws, gpointer user_data, PurpleWebsoc
 				json_object_unref(body_obj);
 				body_obj = json_decode_object((gchar *) gp_base64_decoded, gp_len);
 				g_free(gp_base64_decoded);
+			}
+			if (body_obj == NULL) {
+				purple_debug_info("teams", "Trouter 3: cp/gp payload did not decode, ignoring\n");
+				json_object_unref(orig_body);
+				json_object_unref(request);
+				g_free(body);
+				return;
 			}
 
 			const gchar *request_url = json_object_get_string_member(request, "url");

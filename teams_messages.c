@@ -1564,15 +1564,17 @@ process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 				// `members` may be absent (NULL) or have <2 entries. Bound
 				// the index-0/1 access with the length (raw json_array_get_object_element asserts on
 				// NULL/out-of-range - the `array != NULL` critical seen next to incoming messages).
-				guint mcount = json_array_get_length(members);
+				guint mcount = members ? json_array_get_length(members) : 0;
 				JsonObject *member = mcount >= 1 ? json_array_get_object_element(members, 0) : NULL;
 				const gchar *mri = member ? json_object_get_string_member(member, "id") : NULL;
 				const gchar *buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
 
-				if (buddyid && teams_is_user_self(sa, buddyid) && mcount >= 2) {
+				if (buddyid && teams_is_user_self(sa, buddyid)) {
 					// There were two in the bed and the little one said....
-					member = json_array_get_object_element(members, 1);
-					mri = json_object_get_string_member(member, "id");
+					// With no second member there is no peer: leave the thread unmapped rather
+					// than map it to ourselves.
+					member = mcount >= 2 ? json_array_get_object_element(members, 1) : NULL;
+					mri = member ? json_object_get_string_member(member, "id") : NULL;
 					buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
 				}
 
