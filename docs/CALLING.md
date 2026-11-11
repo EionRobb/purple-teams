@@ -54,7 +54,7 @@ The counters do not mean quite the same thing in each engine:
 * The mic: `teams_media` gives the loudest sample of the interval (`mic_peak`, 0-32767),
   PurpleMedia libpurple's send level, an RMS between 0 and 1 (`mic_rms`).
 
-What it does not do yet:
+How it does video, and what it does not do yet:
 
 * Video runs on an ICE stream of its own, never bundled with the audio. When an offer's m=video
   has ICE credentials of its own (the Teams Android app's do, though its offers name BUNDLE), the
@@ -97,8 +97,10 @@ Farstream 0.2.9's nice transmitter needs a fix to work with current libnice: nic
 lists, which its source-association probe ignored, so with SRTP every packet was dropped
 (the patch is `nice: associate sources from buffer lists too`, not in Farstream yet).
 
-`TEAMS_CALL_DEBUG=1` in the environment copies the call log lines to stderr. They never contain
-SRTP keys, ICE passwords or TURN credentials; SDPs are logged by shape only.
+`TEAMS_CALL_DEBUG=1` in the environment copies the call log lines to stderr. The plug-in's own
+lines leave out SRTP keys and ICE passwords, and SDPs are logged by shape only; the plug-in gives
+an engine no TURN credentials (only `RELAY stun`). A line from the engine (`ERR`, the video lines)
+is logged as the engine wrote it, so an engine of your own should keep secrets out of those.
 
 ## Front-end API (`teams_calling.h`)
 
@@ -184,7 +186,10 @@ link it gives; the call is up when the callee picks up.
   engine is given `world.relay.skype.com:3478` as STUN server, which does; without it only host
   candidates are gathered and audio flows one way only.
 * Our camera sends the largest of 640x480, 352x288, 320x240 and 176x144 within the far side's
-  `a=fmtp:107` `max-fs` and `max-mbps`, at 800 kbit/s or its `max-br` if lower.
+  `a=fmtp:107` `max-fs` and `max-mbps`, at 800 kbit/s or its `max-br` if lower. If none of those
+  sizes fits, or `max-br` is below 32, our camera is not sent.
+* An answer has the offer's m-lines in the offer's order, a declined `m=video` (port 0) declined
+  too, with its mid.
 
 ## Engine protocol
 
@@ -194,8 +199,8 @@ diagnostics.
 
 To the engine:
 
-    START <rx_master_b64> <remote_ufrag> <remote_pwd> <pt>   (--answer)
-    START [pt]                                              (--caller)
+    START <rx_master_b64> <remote_ufrag> <remote_pwd> <pt>   (--answer; pt: the offer's Opus PT)
+    START [pt]                                              (--caller; the Opus PT, 102 if left out)
     ANSWER <rx_master_b64> <remote_ufrag> <remote_pwd>       (--caller: the far side's answer)
     RELAY turn <ip> <port> <user> <pass> <udp|tcp|tls>       (optional)
     RELAY stun <host|ip> <port>                             (before START)

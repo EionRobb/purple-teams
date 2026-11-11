@@ -106,6 +106,9 @@ TEAMS_CALL_FLAGS += -DTEAMS_PURPLEMEDIA $(shell $(PKG_CONFIG) gstreamer-1.0 gstr
 TEAMS_CALL_LIBS += $(shell $(PKG_CONFIG) gstreamer-1.0 gstreamer-rtp-1.0 gio-2.0 gmodule-2.0 --libs)
 endif
 endif
+# Only libteams-personal.so (libpurple 2, Unix-like) has calls: the other personal plug-ins
+# (libpurple 3, Windows) stop on TEAMS_CALLING instead of building without them.
+TEAMS_CALLING_UNSUPPORTED = $(if $(TEAMS_CALLING),$(error TEAMS_CALLING is for libteams-personal.so only, see docs/CALLING.md))
 
 
 
@@ -126,16 +129,19 @@ libteams-personal.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES) $(TEAMS_CALL_FILE
 libteams3.so: $(PURPLE_C_FILES)
 	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) $(PURPLE3_CFLAGS) $(PURPLE3_LIBS) $(INCLUDES) -g -ggdb
 libteams3-personal.so: $(PURPLE_C_FILES)
+	$(TEAMS_CALLING_UNSUPPORTED)
 	$(CC) -fPIC $(CFLAGS) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(LDFLAGS) $(PURPLE3_CFLAGS) $(PURPLE3_LIBS) $(INCLUDES) -g -ggdb
 
 libteams.dll: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
 	$(WIN32_CC) -shared -o $@ $^ $(WIN32_PIDGIN2_CFLAGS) $(WIN32_PIDGIN2_LDFLAGS) -Ipurple2compat
 libteams-personal.dll: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
+	$(TEAMS_CALLING_UNSUPPORTED)
 	$(WIN32_CC) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(WIN32_PIDGIN2_CFLAGS) $(WIN32_PIDGIN2_LDFLAGS) -Ipurple2compat
 
 libteams3.dll: $(PURPLE_C_FILES)
 	$(WIN32_CC) -shared -o $@ $^ $(WIN32_PIDGIN3_CFLAGS) $(WIN32_PIDGIN3_LDFLAGS)
 libteams3-personal.dll: $(PURPLE_C_FILES)
+	$(TEAMS_CALLING_UNSUPPORTED)
 	$(WIN32_CC) -DENABLE_TEAMS_PERSONAL -shared -o $@ $^ $(WIN32_PIDGIN3_CFLAGS) $(WIN32_PIDGIN3_LDFLAGS)
 
 install: $(TEAMS_TARGET) install-icons
@@ -187,7 +193,7 @@ tests/test_pmedia_loopback: tests/test_pmedia_loopback.c teams_call_pmedia.c tea
 	$(CC) $(CFLAGS) -I. -o $@ $^ $(LDFLAGS) $(shell $(PKG_CONFIG) purple glib-2.0 gio-2.0 gmodule-2.0 gstreamer-1.0 gstreamer-rtp-1.0 --cflags --libs)
 
 check-pmedia: tests/test_pmedia_loopback
-	TEAMS_PMEDIA_SRC=audiotestsrc TEAMS_PMEDIA_SINK=fakesink ./tests/test_pmedia_loopback
+	TEAMS_PMEDIA_SRC=audiotestsrc TEAMS_PMEDIA_SINK=fakesink TEAMS_PMEDIA_VSRC=1 ./tests/test_pmedia_loopback
 
 # The same engine against a libpurple built without voice and video: it loads, and refuses calls.
 tests/test_pmedia_novv: tests/test_pmedia_novv.c teams_call_pmedia.c teams_call_sdp.c

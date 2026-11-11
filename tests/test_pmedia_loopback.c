@@ -397,12 +397,16 @@ static void side_free(Side *s)
 /* ---- counting what reaches the sinks ---- */
 static GHashTable *counts;   /* GstElement* (a reference) -> buffers: our receive sinks (TEAMS_PMEDIA_SINK);
                               * referenced, so the results can name them after a media ended */
+static GMutex counts_lock;   /* counts: the probes count from streaming threads; NULL once torn down */
 
 static GstPadProbeReturn count_probe(GstPad *pad, GstPadProbeInfo *info, gpointer u)
 {
 	gpointer k = u;
 	(void) pad; (void) info;
-	g_hash_table_insert(counts, k, GUINT_TO_POINTER(GPOINTER_TO_UINT(g_hash_table_lookup(counts, k)) + 1));
+	g_mutex_lock(&counts_lock);
+	if (counts)
+		g_hash_table_insert(counts, k, GUINT_TO_POINTER(GPOINTER_TO_UINT(g_hash_table_lookup(counts, k)) + 1));
+	g_mutex_unlock(&counts_lock);
 	return GST_PAD_PROBE_OK;
 }
 
@@ -504,7 +508,7 @@ static void probe_sinks(void)
 	GstElement *pipe = purple_media_manager_get_pipeline(purple_media_manager_get());
 	GstIterator *it;
 	GValue v = G_VALUE_INIT;
-	gboolean done = FALSE;
+	gboolean done = FALSE, counted;
 	if (!pipe) return;
 	it = gst_bin_iterate_recurse(GST_BIN(pipe));
 	while (!done) {
@@ -548,10 +552,14 @@ static void probe_sinks(void)
 					gst_object_unref(p);
 				}
 			}
-			if (f && !strcmp(GST_OBJECT_NAME(f), "fakesink") && !g_hash_table_contains(counts, e) &&
-			    fed_by_level(e)) {
+			g_mutex_lock(&counts_lock);
+			counted = g_hash_table_contains(counts, e);
+			g_mutex_unlock(&counts_lock);
+			if (f && !strcmp(GST_OBJECT_NAME(f), "fakesink") && !counted && fed_by_level(e)) {
 				GstPad *p = gst_element_get_static_pad(e, "sink");
+				g_mutex_lock(&counts_lock);
 				g_hash_table_insert(counts, gst_object_ref(e), GUINT_TO_POINTER(0));
+				g_mutex_unlock(&counts_lock);
 				if (p) gst_pad_add_probe(p, GST_PAD_PROBE_TYPE_BUFFER, count_probe, e, NULL);
 				{
 					GString *path = g_string_new(GST_OBJECT_NAME(e));
@@ -655,8 +663,10 @@ static gint audio_bufs(void)
 	GHashTableIter hi;
 	gpointer k, v;
 	gint n = 0;
+	g_mutex_lock(&counts_lock);
 	g_hash_table_iter_init(&hi, counts);
 	while (g_hash_table_iter_next(&hi, &k, &v)) n += (gint) GPOINTER_TO_UINT(v);
+	g_mutex_unlock(&counts_lock);
 	return n;
 }
 
@@ -853,12 +863,14 @@ int main(int argc, char **argv)
 	CHECK(A.ssrc && B.ssrc && A.ssrc != B.ssrc);   /* each its own session's */
 	CHECK(ssrc_a_ok && ssrc_b_ok);                  /* and what they really send with */
 	CHECK(A.audiod && B.audiod);
+	g_mutex_lock(&counts_lock);
 	g_hash_table_iter_init(&hi, counts);
 	while (g_hash_table_iter_next(&hi, &k, &v)) {
 		sinks++;
 		fprintf(stderr, "sink %s: %u buffers\n", GST_OBJECT_NAME(k), GPOINTER_TO_UINT(v));
 		if (GPOINTER_TO_UINT(v) > 50) fed++;
 	}
+	g_mutex_unlock(&counts_lock);
 	CHECK(sinks == 2);            /* A's and B's receive sink */
 	CHECK(fed == 2);              /* audio both ways, decrypted and decoded */
 	CHECK(B.errs == 1 && B.last_err && strstr(B.last_err, "restart"));
@@ -933,9 +945,17 @@ int main(int argc, char **argv)
 	side_free(&D);
 	purple_core_quit();
 	g_main_loop_unref(loop);
-	g_hash_table_iter_init(&hi, counts);
-	while (g_hash_table_iter_next(&hi, &k, NULL)) gst_object_unref(k);
-	g_hash_table_destroy(counts);
+	{
+		/* a probe still left on a sink finds no table from here on */
+		GHashTable *t;
+		g_mutex_lock(&counts_lock);
+		t = counts;
+		counts = NULL;
+		g_mutex_unlock(&counts_lock);
+		g_hash_table_iter_init(&hi, t);
+		while (g_hash_table_iter_next(&hi, &k, NULL)) gst_object_unref(k);
+		g_hash_table_destroy(t);
+	}
 	if (clip_aus) g_ptr_array_unref(clip_aus);
 	if (clip_avcc) g_bytes_unref(clip_avcc);
 	g_free(home);
