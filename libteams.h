@@ -262,6 +262,7 @@ struct _TeamsAccount {
 	guint presence_poll_timeout;
 	GQueue *processed_event_messages;
 	GHashTable *subscribed_contacts;
+	guint live_generation; /* teams_account_mark_live() numbers each login; see teams_account_is_live() */
 	GHashTable *fetched_profiles;
 	GHashTable *presence_etag_cache;
 	GQueue *pending_subscription_contacts;

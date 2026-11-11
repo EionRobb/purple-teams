@@ -2645,8 +2645,10 @@ teams_subscribe_to_contact_status_delay(gpointer contacts_ptr)
 	// this repeating g_timeout isn't cancelled by teams_close's purple_http_conn_cancel_all, so
 	// it can fire against a freed sa after a re-login flap. teams_account_is_live() checks by pointer
 	// (no deref) and must come FIRST so we never reach PURPLE_CONNECTION_IS_VALID(sa->pc) on a freed sa.
+	// A live pointer can still be a newer login at the same address: compare the generation too.
 	TeamsAccount *sa = g_dataset_get_data(contacts, "teams_account");
-	if (!teams_account_is_live(sa) || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
+	guint generation = GPOINTER_TO_UINT(g_dataset_get_data(contacts, "generation"));
+	if (!teams_account_is_live(sa) || sa->live_generation != generation || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
 		g_slist_free_full(contacts, g_free);
 		g_dataset_destroy(contacts);
 		return FALSE;
@@ -2691,6 +2693,7 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 		purple_debug_info("teams", "No trouter surl yet\n");
 		GSList *contacts_clone = g_slist_copy_deep(contacts, (GCopyFunc)(GCallback) g_strdup, NULL);
 		g_dataset_set_data(contacts_clone, "teams_account", sa);
+		g_dataset_set_data(contacts_clone, "generation", GUINT_TO_POINTER(sa->live_generation));
 		g_dataset_set_data(contacts_clone, "attempt_count", GINT_TO_POINTER(0));
 		g_timeout_add_seconds(2, teams_subscribe_to_contact_status_delay, contacts_clone);
 		return;

@@ -624,6 +624,11 @@ teams_im_conversation_created(PurpleConversation *conv)
 // always catch every request). Track live TeamsAccount pointers in a global set so the batch
 // processors can bail on a dead sa -- checked by POINTER, never dereferencing the freed sa.
 static GHashTable *teams_live_accounts = NULL;
+// A new login can get the address of a freed account back from the allocator, so a pointer
+// alone can't tell a late callback of the old login from the new one. Callbacks that outlive
+// the call that scheduled them (the delayed presence subscription) also keep the login's
+// generation and compare it once teams_account_is_live() says the pointer is safe to read.
+static guint teams_live_generation = 0;
 
 gboolean
 teams_account_is_live(TeamsAccount *sa)
@@ -637,6 +642,7 @@ teams_account_mark_live(TeamsAccount *sa)
 	if (teams_live_accounts == NULL)
 		teams_live_accounts = g_hash_table_new(g_direct_hash, g_direct_equal);
 	g_hash_table_insert(teams_live_accounts, sa, sa); // not g_hash_table_add: Win32 builds use GLib 2.28
+	sa->live_generation = ++teams_live_generation;
 }
 
 static void
