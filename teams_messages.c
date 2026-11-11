@@ -2043,6 +2043,12 @@ teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	JsonObject *obj;
 	JsonArray *conversations;
 	gint index, length;
+	
+	// bail on a late conversation list for an account freed by a re-login flap: the loop below
+	// fetches history with sa, past process_conversation_resource()'s own check. Before the
+	// poll_in_flight write, which would touch the freed account too.
+	if (!teams_account_is_live(sa))
+		return;
 
 	/* The (possibly poll-driven) conversations fetch has returned — release the guard. */
 	sa->poll_in_flight = FALSE;
