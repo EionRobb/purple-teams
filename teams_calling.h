@@ -114,8 +114,10 @@ gboolean teams_calling_dial(TeamsAccount *sa, const gchar *peer_mri, gboolean vi
  * engine, so nothing is left pointing at the freed account. Tells the front end last. */
 void teams_calling_close(TeamsAccount *sa);
 
-/* The front end's account hooks: connected runs once the account is signed in and can take and
- * place calls, closing when it goes away (from teams_calling_close). Either may be NULL. */
+/* The front end's account hooks: connected runs once the account is signed in, closing when it
+ * goes away (from teams_calling_close). Either may be NULL. Calls come, and can be placed, only
+ * once the trouter has given the account its URL as well: until then teams_calling_dial()
+ * returns FALSE. */
 typedef void (*TeamsCallAccountCb)(TeamsAccount *sa);
 void teams_calling_set_account_cbs(TeamsCallAccountCb connected, TeamsCallAccountCb closing);
 
