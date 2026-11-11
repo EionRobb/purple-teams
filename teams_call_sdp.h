@@ -7,8 +7,8 @@
 #include <glib.h>
 
 /* The direction of an SDP's first m=video section ("sendrecv", "sendonly", "recvonly" or
- * "inactive"; sendrecv when it names none), or NULL if it has none or that m-line is declined
- * (port 0). */
+ * "inactive"; the session-level one when the section names none, else sendrecv), or NULL if it
+ * has none or that m-line is declined (port 0). */
 const char *teams_sdp_video_direction(const char *sdp);
 
 /* Our answer's direction for the video m-line (RFC 3264 6.1), from the offer's direction, whether
@@ -18,8 +18,10 @@ const char *teams_video_answer_direction(const char *offer_dir, gboolean engine_
 /* The size and bitrate our camera may send on H264 PT 107: the largest standard camcorder size
  * (640x480, 352x288, 320x240, 176x144, at the camera's 30 fps) within the first m=video
  * section's a=fmtp:107 max-fs and max-mbps, and 800 kbit/s or its max-br if lower. The Teams
- * Android app offers max-fs=240;max-mbps=3600;max-br=208: 176x144 at 208 kbit/s. */
-void teams_video_send_params(const char *sdp, int *w, int *h, int *kbps);
+ * Android app offers max-fs=240;max-mbps=3600;max-br=208: 176x144 at 208 kbit/s. FALSE, and all
+ * three 0, when the limits leave none of them (smaller than 176x144 at 30 fps, or a max-br
+ * below 32 kbit/s): our camera is not to be sent. */
+gboolean teams_video_send_params(const char *sdp, int *w, int *h, int *kbps);
 
 /* Our direction once the far side answered our sendrecv video offer: the mirror of its answer's
  * direction (its recvonly means we only send), "inactive" for none or a declined m-line. */
@@ -55,8 +57,22 @@ gchar *teams_negotiation_tag(const char *participant_id, guint n);
  * candidates from here. */
 gchar *teams_sdp_section(const char *sdp, const char *media);
 
+/* The same, a declined m-line's (port 0) too: for its a=mid, which an answer repeats. */
+gchar *teams_sdp_section_all(const char *sdp, const char *media);
+
+/* Whether the first m=video section is declined (port 0): an answer keeps it at port 0. */
+gboolean teams_sdp_video_declined(const char *sdp);
+
+/* Whether the first m=video line comes before the first m=audio line: an answer has its m-lines
+ * in the offer's order (RFC 3264 6). */
+gboolean teams_sdp_video_first(const char *sdp);
+
+/* The value of the audio's a=<name> attribute (e.g. "ice-ufrag"): the first m=audio section's,
+ * else the session-level one (before the first m= line). NULL if neither has it. g_free() it. */
+gchar *teams_sdp_audio_attr(const char *sdp, const char *name);
+
 /* Whether the first m=video section has ICE credentials of its own: an a=ice-ufrag and
- * a=ice-pwd that differ from the first m=audio section's. The Teams Android app's offers do,
+ * a=ice-pwd, its ufrag other than the audio's (teams_sdp_audio_attr). The Teams Android app's offers do,
  * though they name BUNDLE; an offer whose sections share one ufrag means one transport for all,
  * which an unbundled answer cannot give the video. */
 gboolean teams_sdp_video_ice_own(const char *sdp);
@@ -77,7 +93,8 @@ typedef struct {
 } TeamsIceCand;
 
 /* Parse a candidate line, with or without its "a=" (an engine's CAND/RCAND line). FALSE if it is
- * not one: a field missing or out of range, or an unknown type. */
+ * not one: a field missing or out of range, an unknown type, or an extension name without its
+ * value. */
 gboolean teams_ice_candidate_parse(const char *line, TeamsIceCand *c);
 
 /* The "candidate:..." line for c, without "a=", in the order libnice writes it. g_free() it. */

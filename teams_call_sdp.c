@@ -9,8 +9,8 @@ const char *
 teams_sdp_video_direction(const char *sdp)
 {
 	gchar **lines;
-	const char *dir = NULL;
-	gboolean in_video = FALSE, found = FALSE;
+	const char *dir = NULL, *session_dir = NULL;
+	gboolean in_video = FALSE, found = FALSE, in_session = TRUE;
 	int i;
 	if (!sdp)
 		return NULL;
@@ -20,13 +20,19 @@ teams_sdp_video_direction(const char *sdp)
 		if (g_str_has_prefix(l, "m=")) {
 			if (found)
 				break;                      /* the first video section only */
+			in_session = FALSE;
 			in_video = g_str_has_prefix(l, "m=video ");
 			if (in_video) {
 				found = TRUE;
 				if (g_str_has_prefix(l, "m=video 0 "))
 					break;                  /* declined: dir stays NULL */
-				dir = "sendrecv";
+				dir = session_dir ? session_dir : "sendrecv";   /* RFC 4566 6 */
 			}
+		} else if (in_session) {
+			if (!strcmp(l, "a=sendrecv")) session_dir = "sendrecv";
+			else if (!strcmp(l, "a=sendonly")) session_dir = "sendonly";
+			else if (!strcmp(l, "a=recvonly")) session_dir = "recvonly";
+			else if (!strcmp(l, "a=inactive")) session_dir = "inactive";
 		} else if (in_video) {
 			if (!strcmp(l, "a=sendrecv")) dir = "sendrecv";
 			else if (!strcmp(l, "a=sendonly")) dir = "sendonly";
@@ -93,7 +99,7 @@ fmtp_param(const char *fmtp, const char *name)
 	return -1;
 }
 
-void
+gboolean
 teams_video_send_params(const char *sdp, int *w, int *h, int *kbps)
 {
 	static const int sizes[][2] = { { 640, 480 }, { 352, 288 }, { 320, 240 }, { 176, 144 } };
@@ -113,7 +119,9 @@ teams_video_send_params(const char *sdp, int *w, int *h, int *kbps)
 		}
 	}
 	g_strfreev(lines);
-	*w = 176; *h = 144;
+	*w = *h = *kbps = 0;
+	if (max_br >= 0 && max_br < 32)
+		return FALSE;                       /* below any rate we send at */
 	for (i = 0; i < G_N_ELEMENTS(sizes); i++) {
 		long fs = (long) ((sizes[i][0] + 15) / 16) * ((sizes[i][1] + 15) / 16);
 		if ((max_fs < 0 || fs <= max_fs) && (max_mbps < 0 || fs * 30 <= max_mbps)) {
@@ -121,8 +129,11 @@ teams_video_send_params(const char *sdp, int *w, int *h, int *kbps)
 			break;
 		}
 	}
+	if (!*w)
+		return FALSE;                       /* smaller than our smallest size */
 	*kbps = 800;
-	if (max_br >= 32 && max_br < *kbps) *kbps = (int) max_br;
+	if (max_br >= 0 && max_br < *kbps) *kbps = (int) max_br;
+	return TRUE;
 }
 
 gboolean
@@ -192,6 +203,7 @@ teams_ice_candidate_parse(const char *line, TeamsIceCand *c)
 	if (strcmp(t[7], "host") && strcmp(t[7], "srflx") && strcmp(t[7], "prflx") && strcmp(t[7], "relay"))
 		goto out;
 	g_strlcpy(c->type, t[7], sizeof c->type);
+	if ((n - 8) % 2) goto out;      /* an extension name without its value */
 	for (i = 8; i + 1 < n; i += 2) {
 		if (!strcmp(t[i], "raddr")) {
 			if (strlen(t[i + 1]) >= sizeof c->raddr) goto out;
@@ -219,8 +231,8 @@ teams_ice_candidate_format(const TeamsIceCand *c)
 	return g_string_free(s, FALSE);
 }
 
-gchar *
-teams_sdp_section(const char *sdp, const char *media)
+static gchar *
+sdp_section(const char *sdp, const char *media, gboolean declined_too)
 {
 	const char *p, *start = NULL, *end;
 	gsize ml;
@@ -233,10 +245,53 @@ teams_sdp_section(const char *sdp, const char *media)
 		}
 	}
 	if (!start) return NULL;
-	if (!strncmp(start + 2 + ml, " 0 ", 3)) return NULL;   /* declined */
+	if (!declined_too && !strncmp(start + 2 + ml, " 0 ", 3)) return NULL;   /* declined */
 	for (end = strchr(start, '\n'); end && end[1] && !(end[1] == 'm' && end[2] == '='); end = strchr(end + 1, '\n'))
 		;
 	return end && end[1] ? g_strndup(start, (gsize) (end + 1 - start)) : g_strdup(start);
+}
+
+gchar *
+teams_sdp_section(const char *sdp, const char *media)
+{
+	return sdp_section(sdp, media, FALSE);
+}
+
+gchar *
+teams_sdp_section_all(const char *sdp, const char *media)
+{
+	return sdp_section(sdp, media, TRUE);
+}
+
+gboolean
+teams_sdp_video_declined(const char *sdp)
+{
+	gchar *v = teams_sdp_section_all(sdp, "video");
+	gboolean r = v && g_str_has_prefix(v, "m=video 0 ");
+	g_free(v);
+	return r;
+}
+
+/* the start of sdp's first m=<media> line, or NULL */
+static const char *
+sdp_mline(const char *sdp, const char *media)
+{
+	gsize ml = strlen(media);
+	const char *p;
+	for (p = sdp; p && *p; p = strchr(p, '\n') ? strchr(p, '\n') + 1 : NULL)
+		if (p[0] == 'm' && p[1] == '=' && !strncmp(p + 2, media, ml) && p[2 + ml] == ' ')
+			return p;
+	return NULL;
+}
+
+gboolean
+teams_sdp_video_first(const char *sdp)
+{
+	const char *a, *v;
+	if (!sdp) return FALSE;
+	a = sdp_mline(sdp, "audio");
+	v = sdp_mline(sdp, "video");
+	return a && v && v < a;
 }
 
 /* the value of the section's first "a=<name>:" line, trimmed; NULL if none. g_free() it. */
@@ -256,12 +311,27 @@ section_attr(const char *sec, const char *name)
 	return ret;
 }
 
+gchar *
+teams_sdp_audio_attr(const char *sdp, const char *name)
+{
+	gchar *a = teams_sdp_section(sdp, "audio"), *ret = section_attr(a, name);
+	g_free(a);
+	if (!ret && sdp) {
+		/* the session level: up to the first m= line */
+		const char *m = g_str_has_prefix(sdp, "m=") ? sdp : strstr(sdp, "\nm=");
+		gchar *session = m ? g_strndup(sdp, (gsize) (m - sdp)) : g_strdup(sdp);
+		ret = section_attr(session, name);
+		g_free(session);
+	}
+	return ret;
+}
+
 gboolean
 teams_sdp_video_ice_own(const char *sdp)
 {
-	gchar *a = teams_sdp_section(sdp, "audio"), *v = teams_sdp_section(sdp, "video");
-	gchar *auf = section_attr(a, "ice-ufrag"), *vuf = section_attr(v, "ice-ufrag"), *vpw = section_attr(v, "ice-pwd");
+	gchar *v = teams_sdp_section(sdp, "video");
+	gchar *auf = teams_sdp_audio_attr(sdp, "ice-ufrag"), *vuf = section_attr(v, "ice-ufrag"), *vpw = section_attr(v, "ice-pwd");
 	gboolean r = vuf && vpw && g_strcmp0(auf, vuf);
-	g_free(a); g_free(v); g_free(auf); g_free(vuf); g_free(vpw);
+	g_free(v); g_free(auf); g_free(vuf); g_free(vpw);
 	return r;
 }

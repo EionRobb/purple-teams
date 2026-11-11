@@ -25,6 +25,11 @@ static const char *OFFER_TWO_VIDEO =
 	"v=0\r\nm=audio 1 RTP/SAVP 102\r\nm=video 1 RTP/SAVP 107\r\na=inactive\r\na=label:main-video\r\n"
 	"m=video 1 RTP/SAVP 107\r\na=sendrecv\r\na=label:applicationsharing-video\r\n";
 static const char *OFFER_AUDIO = "v=0\r\nm=audio 1 RTP/SAVP 102\r\na=sendonly\r\n";
+/* a direction at the session level holds for a section that names none (RFC 4566 6) */
+static const char *OFFER_SESSION_DIR =
+	"v=0\r\na=recvonly\r\nm=audio 1 RTP/SAVP 102\r\nm=video 1 RTP/SAVP 107\r\n";
+static const char *OFFER_SESSION_DIR_OVERRIDDEN =
+	"v=0\r\na=inactive\r\nm=audio 1 RTP/SAVP 102\r\nm=video 1 RTP/SAVP 107\r\na=sendonly\r\n";
 
 static void test_sdp_direction(void)
 {
@@ -36,6 +41,10 @@ static void test_sdp_direction(void)
 	CHECK(teams_sdp_video_direction(OFFER_AUDIO) == NULL);
 	CHECK(!g_strcmp0(teams_sdp_video_direction(OFFER_TWO_VIDEO), "inactive"));
 	CHECK(teams_sdp_video_direction(NULL) == NULL);
+	CHECK(!g_strcmp0(teams_sdp_video_direction(OFFER_SESSION_DIR), "recvonly"));
+	CHECK(!g_strcmp0(teams_sdp_video_direction(OFFER_SESSION_DIR_OVERRIDDEN), "sendonly"));
+	/* the audio section's own direction is not the session's */
+	CHECK(!g_strcmp0(teams_sdp_video_direction(OFFER_VIDEO), "sendrecv"));
 }
 
 static void test_answer_direction(void)
@@ -112,22 +121,37 @@ static void test_send_params(void)
 		"profile-level-id=42e01f;max-fs=8160;max-mbps=244800;max-fps=3000\r\n";
 	static const char *CIF = "v=0\r\nm=video 1 RTP/SAVP 107\r\na=fmtp:107 max-fs=396;max-br=500\r\n";
 	static const char *QVGA = "v=0\r\nm=video 1 RTP/SAVP 107\r\na=fmtp:107 max-fs=1200;max-mbps=9000\r\n";
+	/* limits none of our settings fit: no camera */
 	static const char *TOO_SMALL = "v=0\r\nm=video 1 RTP/SAVP 107\r\na=fmtp:107 max-fs=10;max-br=8\r\n";
+	static const char *FS_TOO_SMALL = "v=0\r\nm=video 1 RTP/SAVP 107\r\na=fmtp:107 max-fs=98\r\n";
+	static const char *MBPS_TOO_SMALL = "v=0\r\nm=video 1 RTP/SAVP 107\r\na=fmtp:107 max-mbps=2969\r\n";
+	/* a size that fits, and a rate below what we send at */
+	static const char *BR_TOO_SMALL = "v=0\r\nm=video 1 RTP/SAVP 107\r\na=fmtp:107 max-fs=8160;max-br=31\r\n";
+	/* the smallest of each that is still ours */
+	static const char *LOWEST = "v=0\r\nm=video 1 RTP/SAVP 107\r\na=fmtp:107 max-fs=99;max-mbps=2970;max-br=32\r\n";
 	/* only the first video section's fmtp counts */
 	static const char *TWO = "v=0\r\nm=video 1 RTP/SAVP 107\r\nm=video 1 RTP/SAVP 107\r\na=fmtp:107 max-fs=99\r\n";
-	teams_video_send_params(ANDROID, &w, &h, &k);
+	CHECK(teams_video_send_params(ANDROID, &w, &h, &k));
 	CHECK(w == 176 && h == 144 && k == 208);
-	teams_video_send_params(WEB, &w, &h, &k);
+	CHECK(teams_video_send_params(WEB, &w, &h, &k));
 	CHECK(w == 640 && h == 480 && k == 800);
-	teams_video_send_params(CIF, &w, &h, &k);
+	CHECK(teams_video_send_params(CIF, &w, &h, &k));
 	CHECK(w == 352 && h == 288 && k == 500);
-	teams_video_send_params(QVGA, &w, &h, &k);     /* 640x480 fits the size, not the rate */
+	CHECK(teams_video_send_params(QVGA, &w, &h, &k));     /* 640x480 fits the size, not the rate */
 	CHECK(w == 320 && h == 240 && k == 800);
-	teams_video_send_params(TOO_SMALL, &w, &h, &k);
-	CHECK(w == 176 && h == 144 && k == 800);
-	teams_video_send_params(TWO, &w, &h, &k);
+	CHECK(!teams_video_send_params(TOO_SMALL, &w, &h, &k));
+	CHECK(w == 0 && h == 0 && k == 0);
+	w = h = k = -1;
+	CHECK(!teams_video_send_params(FS_TOO_SMALL, &w, &h, &k));
+	CHECK(w == 0 && h == 0 && k == 0);
+	CHECK(!teams_video_send_params(MBPS_TOO_SMALL, &w, &h, &k));
+	CHECK(!teams_video_send_params(BR_TOO_SMALL, &w, &h, &k));
+	CHECK(w == 0 && h == 0 && k == 0);
+	CHECK(teams_video_send_params(LOWEST, &w, &h, &k));
+	CHECK(w == 176 && h == 144 && k == 32);
+	CHECK(teams_video_send_params(TWO, &w, &h, &k));
 	CHECK(w == 640 && h == 480);
-	teams_video_send_params(NULL, &w, &h, &k);
+	CHECK(teams_video_send_params(NULL, &w, &h, &k));
 	CHECK(w == 640 && h == 480 && k == 800);
 }
 
@@ -164,6 +188,11 @@ static void test_ice_candidate(void)
 	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP -5 1.2.3.4 7 typ host", &c));
 	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4 7 typ host raddr 1.2.3.4 rport x", &c));
 	CHECK(c.port == 0 && !c.ip[0]);   /* left cleared on failure */
+	/* an extension name without its value */
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4 7 typ srflx raddr 10.0.0.2 rport", &c));
+	CHECK(c.port == 0 && !c.raddr[0]);
+	CHECK(!teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4 7 typ host generation", &c));
+	CHECK(teams_ice_candidate_parse("candidate:1 1 UDP 5 1.2.3.4 7 typ host generation 0", &c));
 }
 
 
@@ -181,6 +210,74 @@ static const char *OFFER_SHARED_ICE =
 static const char *OFFER_VIDEO_NO_PWD =
 	"v=0\r\nm=audio 1 RTP/SAVP 102\r\na=ice-ufrag:a\r\na=ice-pwd:p\r\n"
 	"m=video 1 RTP/SAVP 107\r\na=ice-ufrag:v\r\n";
+
+/* Audio's ICE credentials at the session level only: the video's own differ from those. */
+static const char *OFFER_SESSION_ICE =
+	"v=0\r\na=ice-ufrag:SESSIONuf\r\na=ice-pwd:sessionpwd\r\n"
+	"m=audio 1 RTP/SAVP 102\r\na=mid:0\r\n"
+	"m=video 1 RTP/SAVP 107\r\na=ice-ufrag:VIDEOuf\r\na=ice-pwd:videopwd\r\na=mid:1\r\n";
+/* ... and the video's the same as those: one transport */
+static const char *OFFER_SESSION_ICE_SHARED =
+	"v=0\r\na=ice-ufrag:SESSIONuf\r\na=ice-pwd:sessionpwd\r\n"
+	"m=audio 1 RTP/SAVP 102\r\n"
+	"m=video 1 RTP/SAVP 107\r\na=ice-ufrag:SESSIONuf\r\na=ice-pwd:sessionpwd\r\n";
+/* video before audio, each with ICE of its own */
+static const char *OFFER_VIDEO_FIRST =
+	"v=0\r\nm=video 1 RTP/SAVP 107\r\na=ice-ufrag:VIDEOuf\r\na=ice-pwd:videopwd\r\na=mid:0\r\n"
+	"m=audio 1 RTP/SAVP 102\r\na=ice-ufrag:AUDIOuf\r\na=ice-pwd:audiopwd\r\na=mid:1\r\n";
+static const char *OFFER_DECLINED_MID =
+	"v=0\r\nm=audio 1 RTP/SAVP 102\r\na=mid:1\r\nm=video 0 RTP/SAVP 107\r\na=mid:2\r\n";
+
+static void test_audio_attr(void)
+{
+	gchar *v;
+	v = teams_sdp_audio_attr(OFFER_OWN_ICE, "ice-ufrag");
+	CHECK(v && !strcmp(v, "AUDIOuf"));
+	g_free(v);
+	v = teams_sdp_audio_attr(OFFER_VIDEO_FIRST, "ice-ufrag");   /* not the first in the SDP */
+	CHECK(v && !strcmp(v, "AUDIOuf"));
+	g_free(v);
+	v = teams_sdp_audio_attr(OFFER_VIDEO_FIRST, "ice-pwd");
+	CHECK(v && !strcmp(v, "audiopwd"));
+	g_free(v);
+	v = teams_sdp_audio_attr(OFFER_SESSION_ICE, "ice-ufrag");   /* the session level's */
+	CHECK(v && !strcmp(v, "SESSIONuf"));
+	g_free(v);
+	v = teams_sdp_audio_attr(OFFER_SESSION_ICE, "ice-pwd");
+	CHECK(v && !strcmp(v, "sessionpwd"));
+	g_free(v);
+	/* the video's is not the session's */
+	CHECK(teams_sdp_audio_attr("v=0\r\nm=audio 1 RTP/SAVP 102\r\nm=video 1 RTP/SAVP 107\r\na=ice-ufrag:v\r\n",
+	                           "ice-ufrag") == NULL);
+	CHECK(teams_sdp_audio_attr(OFFER_AUDIO, "ice-ufrag") == NULL);
+	CHECK(teams_sdp_audio_attr(NULL, "ice-ufrag") == NULL);
+
+	CHECK(teams_sdp_video_ice_own(OFFER_SESSION_ICE));
+	CHECK(!teams_sdp_video_ice_own(OFFER_SESSION_ICE_SHARED));
+	CHECK(teams_sdp_video_ice_own(OFFER_VIDEO_FIRST));
+
+	CHECK(teams_sdp_video_first(OFFER_VIDEO_FIRST));
+	CHECK(!teams_sdp_video_first(OFFER_OWN_ICE));
+	CHECK(!teams_sdp_video_first(OFFER_AUDIO));
+	CHECK(!teams_sdp_video_first(NULL));
+}
+
+static void test_declined(void)
+{
+	gchar *v = teams_sdp_section_all(OFFER_DECLINED_MID, "video");
+	CHECK(v && !strcmp(v, "m=video 0 RTP/SAVP 107\r\na=mid:2\r\n"));
+	g_free(v);
+	CHECK(teams_sdp_section(OFFER_DECLINED_MID, "video") == NULL);
+	v = teams_sdp_section_all(OFFER_OWN_ICE, "video");
+	CHECK(v && g_str_has_prefix(v, "m=video 3480 "));
+	g_free(v);
+	CHECK(teams_sdp_section_all(OFFER_AUDIO, "video") == NULL);
+	CHECK(teams_sdp_video_declined(OFFER_DECLINED_MID));
+	CHECK(teams_sdp_video_declined(OFFER_DECLINED));
+	CHECK(!teams_sdp_video_declined(OFFER_OWN_ICE));
+	CHECK(!teams_sdp_video_declined(OFFER_AUDIO));
+	CHECK(!teams_sdp_video_declined(NULL));
+}
 
 static void test_sections(void)
 {
@@ -214,6 +311,8 @@ int main(void)
 	test_answer_direction();
 	test_needs_offer();
 	test_sections();
+	test_audio_attr();
+	test_declined();
 	if (failures) {
 		fprintf(stderr, "%d failure(s)\n", failures);
 		return 1;
