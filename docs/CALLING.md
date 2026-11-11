@@ -112,8 +112,9 @@ A front end registers:
   `"answeredElsewhere"`. Registering it is what makes a front end present.
 * `teams_calling_set_video_cb()`: the engine's video lines as they come (see below), `"OFFERED 0|1"`
   when an offer has the far side sending video or not, and `""` when the call's video is over.
-* `teams_calling_set_account_cbs()`: an account became able to take and place calls, or is going
-  away.
+* `teams_calling_set_account_cbs()`: an account signed in, or is going away. Signed in is not yet
+  ready for calls: until the account's trouter registers, `teams_calling_dial()` returns FALSE and
+  no call comes in.
 
 and calls `teams_calling_answer()`, `teams_calling_reject()`, `teams_calling_hangup()`,
 `teams_calling_dial(sa, peer_mri, video)` and `teams_calling_set_camera()`.

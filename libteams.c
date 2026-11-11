@@ -92,7 +92,8 @@ teams_do_all_the_things(TeamsAccount *sa)
 		teams_trouter_begin(sa);
 
 #ifdef TEAMS_CALLING
-		/* tell the call front end, if any, that this account can take and place calls */
+		/* tell the call front end, if any, that this account is signed in. Calls need the trouter
+		 * too: until it registers, a dial fails ("no trouter surl") and no call comes in. */
 		teams_calling_account_connected(sa);
 #endif
 
