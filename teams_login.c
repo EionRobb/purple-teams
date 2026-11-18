@@ -295,10 +295,15 @@ teams_oauth_refreshed_skypetoken_access(PurpleHttpConnection *http_conn, PurpleH
 	}
 }
 
-static void
-teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
+static void teams_oauth_refresh_services(TeamsAccount *sa);
+
+/* Handles the token endpoint's answer to both a refresh_token grant and an
+ * authorization_code grant. from_auth_code says which one was sent. Returns
+ * TRUE when the tokens were stored. */
+static gboolean
+teams_oauth_token_response(PurpleHttpResponse *response, TeamsAccount *sa, gboolean from_auth_code)
 {
-	TeamsAccount *sa = user_data;
+	gboolean ok = FALSE;
 	JsonObject *obj;
 	const gchar *raw_response;
 	gsize response_len;
@@ -324,11 +329,18 @@ teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 			purple_account_set_remember_password(account, TRUE);
 			teams_save_refresh_token_password(account, sa->refresh_token);
 		}
+		ok = TRUE;
 	} else {
 		if (obj != NULL) {
 			if (json_object_has_member(obj, "error")) {
 				const gchar *error = json_object_get_string_member(obj, "error");
-				if (g_strcmp0(error, "invalid_grant") == 0 || g_strcmp0(error, "interaction_required") == 0) {
+				/* An authorization code is single-use and short-lived: once the token
+				 * endpoint has rejected it (expired, already redeemed, AADSTS70000 and
+				 * the like), sending it again can never work. A network error would make
+				 * the UI reconnect and replay the same code for ever, so only a rejected
+				 * refresh token is reported as one. */
+				if (!from_auth_code &&
+				    (g_strcmp0(error, "invalid_grant") == 0 || g_strcmp0(error, "interaction_required") == 0)) {
 					teams_save_refresh_token_password(sa->account, NULL);
 					purple_connection_error(sa->pc, PURPLE_CONNECTION_ERROR_NETWORK_ERROR,
 						json_object_get_string_member(obj, "error_description"));
@@ -346,6 +358,24 @@ teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *re
 	}
 
 	json_object_unref(obj);
+	return ok;
+}
+
+static void
+teams_oauth_with_code_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
+{
+	(void) http_conn;
+	teams_oauth_token_response(response, user_data, FALSE);
+}
+
+static void
+teams_oauth_with_authcode_cb(PurpleHttpConnection *http_conn, PurpleHttpResponse *response, gpointer user_data)
+{
+	(void) http_conn;
+	/* A refresh asks for the service tokens itself (teams_oauth_refresh_token); after
+	 * redeeming an authorization code nothing else would, as the device-code login does. */
+	if (teams_oauth_token_response(response, user_data, TRUE))
+		teams_oauth_refresh_services(user_data);
 }
 
 static void
@@ -544,7 +574,7 @@ teams_oauth_with_code(TeamsAccount *sa, const gchar *auth_code)
 	purple_http_request_header_set(request, "Content-Type", "application/x-www-form-urlencoded");
 	purple_http_request_set_contents(request, postdata->str, postdata->len);
 
-	purple_http_request(pc, request, teams_oauth_with_code_cb, sa);
+	purple_http_request(pc, request, teams_oauth_with_authcode_cb, sa);
 	purple_http_request_unref(request);
 	
 	g_string_free(postdata, TRUE);
