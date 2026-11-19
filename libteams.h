@@ -245,6 +245,7 @@ struct _TeamsAccount {
 	guint presence_poll_timeout;
 	GQueue *processed_event_messages;
 	GHashTable *subscribed_contacts;
+	guint live_generation; /* teams_account_mark_live() numbers each login; see teams_account_is_live() */
 	GHashTable *fetched_profiles;
 	GHashTable *presence_etag_cache;
 	GQueue *pending_subscription_contacts;
@@ -286,6 +287,10 @@ struct _TeamsBuddy {
 };
 
 void teams_buddy_free(PurpleBuddy *buddy);
+
+// TRUE while `sa` is a live (logged-in, not-yet-freed) account. Async HTTP handlers that fire
+// after a re-login flap must check this before touching sa, to avoid the freed-sa hash-flood hang.
+gboolean teams_account_is_live(TeamsAccount *sa);
 
 void teams_do_all_the_things(TeamsAccount *sa);
 
