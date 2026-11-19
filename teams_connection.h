@@ -50,6 +50,10 @@ TeamsConnection *teams_post_or_get(TeamsAccount *sa, TeamsMethod method,
 		const gchar *host, const gchar *url, const gchar *postdata,
 		TeamsProxyCallbackFunc callback_func, gpointer user_data,
 		gboolean keepalive);
+TeamsConnection *teams_post_or_get_with_error(TeamsAccount *sa, TeamsMethod method,
+		const gchar *host, const gchar *url, const gchar *postdata,
+		TeamsProxyCallbackFunc callback_func, TeamsProxyCallbackErrorFunc error_callback_func,
+		gpointer user_data, gboolean keepalive);
 
 void teams_update_cookies(TeamsAccount *sa, const gchar *headers);		
 gchar *teams_cookies_to_string(TeamsAccount *sa);
