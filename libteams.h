@@ -259,6 +259,8 @@ struct _TeamsAccount {
 	guint trouter_ping_timeout;
 	guint trouter_command_count;
 	guint trouter_registration_timeout;
+	guint trouter_reconnect_timeout;   /* pending trouter reconnect */
+	guint trouter_reconnect_backoff;   /* current reconnect delay in seconds, doubled on each failure */
 	JsonObject *trouter_socket_obj;
 
 	//devicecode login
