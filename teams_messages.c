@@ -235,9 +235,9 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 			
 			//Potentially use the preview image in  file.filePreview.previewUrl
 		}
-		
-		json_array_unref(files);
-		
+
+		if (files) json_array_unref(files); /* NULL when "files" is missing */
+
 		gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
 		g_free(*html);
 		*html = temp;
@@ -466,6 +466,11 @@ teams_parse_media_call_recording_content(const gchar *content)
 static void
 process_message_resource(TeamsAccount *sa, JsonObject *resource)
 {
+	// bail if this is a late handler for an account freed by a re-login flap (checked by
+	// pointer, no deref) -- otherwise the dedup hash access below floods NULL-hash criticals and hangs.
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *clientmessageid = NULL;
 	const gchar *skypeeditedid = NULL;
 	const gchar *messagetype = json_object_get_string_member(resource, "messagetype");
@@ -488,21 +493,82 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 	if (json_object_has_member(resource, "clientmessageid"))
 		clientmessageid = json_object_get_string_member(resource, "clientmessageid");
 	
+	/* The edit marker: properties.edittime, or else skypeeditedid. The dedup key below and
+	 * the edit handling further down both use it. */
+	if (json_object_has_member(resource, "skypeeditedid")) {
+		skypeeditedid = json_object_get_string_member(resource, "skypeeditedid");
+	}
+	if (json_object_has_member(resource, "properties")) {
+		properties = json_object_get_object_member(resource, "properties");
+		if (properties != NULL && json_object_has_member(properties, "edittime")) {
+			skypeeditedid = json_object_get_string_member(properties, "edittime");
+		}
+	}
+
+	/* Personal/TFL: dedup so the periodic message poll (and offline-history
+	 * catch-up) never re-delivers a message the user has already seen. Consumer
+	 * (Teams-for-Life) messages carry no usable top-level "id" — they are keyed by a
+	 * numeric "sequenceId" — so we build the dedup key from sequenceId (falling back
+	 * to "id"). The key includes an edit marker (skypeeditedid / properties.edittime)
+	 * so genuine edits still get through as fresh updates. */
+	{
+		gchar *dedup_id = NULL;
+		if (json_object_has_member(resource, "sequenceId")) {
+			gint64 seq = json_object_get_int_member(resource, "sequenceId");
+			if (seq != 0)
+				dedup_id = g_strdup_printf("%" G_GINT64_FORMAT, seq);
+		}
+		if (dedup_id == NULL && json_object_has_member(resource, "id")) {
+			const gchar *sid = json_object_get_string_member(resource, "id");
+			if (sid && *sid)
+				dedup_id = g_strdup(sid);
+		}
+		if (dedup_id != NULL) {
+			/* sequenceId counts within one conversation, so the key names it. A delete or a
+			 * reaction (a MessageUpdate of the same message, often with no new edittime)
+			 * changes the key too, so it is not dropped as a repeat. */
+			const gchar *dedup_conv = conversationLink ? teams_thread_url_to_name(conversationLink) : NULL;
+			GString *update = g_string_new(NULL);
+			if (properties != NULL && json_object_has_member(properties, "deletetime"))
+				g_string_append(update, "deleted");
+			if (properties != NULL && json_object_has_member(properties, "emotions")) {
+				JsonArray *emotions = json_object_get_array_member(properties, "emotions");
+				guint e, elen = emotions ? json_array_get_length(emotions) : 0;
+				for (e = 0; e < elen; e++) {
+					JsonObject *emotion = json_array_get_object_element(emotions, e);
+					JsonArray *users = emotion ? json_object_get_array_member(emotion, "users") : NULL;
+					g_string_append_printf(update, ",%s:%u",
+						emotion ? json_object_get_string_member(emotion, "key") : "",
+						users ? json_array_get_length(users) : 0);
+				}
+			}
+			gchar *dedup_key = g_strdup_printf("%s|%s|%s|%s", dedup_conv ? dedup_conv : "", dedup_id,
+				skypeeditedid ? skypeeditedid : "", update->str);
+			g_string_free(update, TRUE);
+			g_free(dedup_id);
+			if (g_hash_table_contains(sa->received_messages_hash, dedup_key)) {
+				g_free(dedup_key);
+				g_strfreev(messagetype_parts);
+				return;
+			}
+			/* Bound the cache: the poll advances its cursor, so keys older than the
+			 * current re-fetch window are never looked up again. Once it grows past the
+			 * cap, drop the lot — worst case a very old message could be re-shown once. */
+			if (g_hash_table_size(sa->received_messages_hash) >= TEAMS_MAX_DEDUP_CACHE)
+				g_hash_table_remove_all(sa->received_messages_hash);
+			g_hash_table_insert(sa->received_messages_hash, dedup_key, dedup_key); /* not g_hash_table_add: GLib 2.28 on Win32 */
+		}
+	}
+
+	/* After the dedup above, so the echo of a message we sent has its key recorded too and a
+	 * later poll that fetches it again drops it there. */
 	if (clientmessageid && *clientmessageid && g_hash_table_remove(sa->sent_messages_hash, clientmessageid)) {
 		// We sent this message from here already
 		g_strfreev(messagetype_parts);
 		return;
 	}
 	
-	if (json_object_has_member(resource, "skypeeditedid")) {
-		skypeeditedid = json_object_get_string_member(resource, "skypeeditedid");
-	}
-	if (json_object_has_member(resource, "properties")) {
-		properties = json_object_get_object_member(resource, "properties");
-		if (json_object_has_member(properties, "edittime")) {
-			skypeeditedid = json_object_get_string_member(properties, "edittime");
-		}
-		
+	if (properties != NULL) {
 		//TODO use "importance" for nudges
 		//purple_prpl_got_attention(pc, username, 0);
 		//purple_prpl_got_attention_in_chat(pc, id, username, 0);
@@ -1420,6 +1486,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 static void
 process_conversation_resource(TeamsAccount *sa, JsonObject *resource)
 {
+	// bail on a late handler for an account freed by a re-login flap (see process_message_resource).
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *id = json_object_get_string_member(resource, "id");
 	JsonObject *threadProperties = json_object_get_object_member(resource, "threadProperties");
 	JsonObject *lastMessage = json_object_get_object_member(resource, "lastMessage");
@@ -1478,27 +1548,35 @@ process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 			if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
 				// ... and we dont know about it yet
 				
-				JsonObject *member = json_array_get_object_element(members, 0);
-				const gchar *mri = json_object_get_string_member(member, "id");
-				const gchar *buddyid = teams_strip_user_prefix(mri);
-				
-				if (teams_is_user_self(sa, buddyid)) {
+				// `members` may be absent (NULL) or have <2 entries. Bound
+				// the index-0/1 access with the length (raw json_array_get_object_element asserts on
+				// NULL/out-of-range - the `array != NULL` critical seen next to incoming messages).
+				guint mcount = members ? json_array_get_length(members) : 0;
+				JsonObject *member = mcount >= 1 ? json_array_get_object_element(members, 0) : NULL;
+				const gchar *mri = member ? json_object_get_string_member(member, "id") : NULL;
+				const gchar *buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
+
+				if (buddyid && teams_is_user_self(sa, buddyid)) {
 					// There were two in the bed and the little one said....
-					member = json_array_get_object_element(members, 1);
-					mri = json_object_get_string_member(member, "id");
-					buddyid = teams_strip_user_prefix(mri);
+					// With no second member there is no peer: leave the thread unmapped rather
+					// than map it to ourselves.
+					member = mcount >= 2 ? json_array_get_object_element(members, 1) : NULL;
+					mri = member ? json_object_get_string_member(member, "id") : NULL;
+					buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
 				}
-				
-				//Fetch buddy presence
-				teams_subscribe_to_single_contact_status(sa, buddyid);
-				
-				//Create an array of one to one mappings for IMs
-				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
-				g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
-				
-				PurpleChatConversation *conv = purple_conversations_find_chat_with_account(id, sa->account);
-				if (conv != NULL) {
-					purple_conversation_destroy(PURPLE_CONVERSATION(conv));
+
+				if (buddyid != NULL) {
+					//Fetch buddy presence
+					teams_subscribe_to_single_contact_status(sa, buddyid);
+
+					//Create an array of one to one mappings for IMs
+					g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+					g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+
+					PurpleChatConversation *conv = purple_conversations_find_chat_with_account(id, sa->account);
+					if (conv != NULL) {
+						purple_conversation_destroy(PURPLE_CONVERSATION(conv));
+					}
 				}
 			}
 		}
@@ -1549,6 +1627,10 @@ process_endpointpresence_resource(TeamsAccount *sa, JsonObject *resource)
 void
 teams_process_event_message(TeamsAccount *sa, JsonObject *message)
 {
+	// bail on a late poll/trouter batch for an account freed by a re-login flap (hash-flood hang).
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *resourceType = json_object_get_string_member(message, "resourceType");
 	const gchar *time = json_object_get_string_member(message, "time");
 	JsonObject *resource = json_object_get_object_member(message, "resource");
@@ -1765,7 +1847,9 @@ teams_got_conv_history(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 		const gchar *composetime = json_object_get_string_member(message, "composetime");
 		gint composetimestamp = (gint) purple_str_to_time(composetime, TRUE, NULL, NULL, NULL);
 		
-		if (composetimestamp > since) {
+		// >=, as in teams_got_all_convs(): the cursor is in whole seconds, and the dedup in
+		// process_message_resource() drops a message from that second that was already shown.
+		if (composetimestamp >= since) {
 			process_message_resource(sa, message);
 		}
 	}
@@ -1932,6 +2016,14 @@ teams_get_conversation_history(TeamsAccount *sa, const gchar *convname)
 }
 
 static void
+teams_poll_convs_err_cb(TeamsAccount *sa, const gchar *data, gssize len, gpointer user_data)
+{
+	/* Conversations fetch failed (no parseable body) — release the poll guard so the
+	 * next tick can retry instead of the poll wedging forever. */
+	sa->poll_in_flight = FALSE;
+}
+
+static void
 teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
 	gint since = GPOINTER_TO_INT(user_data);
@@ -1939,11 +2031,22 @@ teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	JsonArray *conversations;
 	gint index, length;
 	
+	// bail on a late conversation list for an account freed by a re-login flap: the loop below
+	// fetches history with sa, past process_conversation_resource()'s own check. Before the
+	// poll_in_flight write, which would touch the freed account too.
+	if (!teams_account_is_live(sa))
+		return;
+
+	/* The (possibly poll-driven) conversations fetch has returned — release the guard. */
+	sa->poll_in_flight = FALSE;
+
 	if (node == NULL || json_node_get_node_type(node) != JSON_NODE_OBJECT)
 		return;
 	obj = json_node_get_object(node);
-	
+
 	conversations = json_object_get_array_member(obj, "conversations");
+	if (conversations == NULL)
+		return;
 	length = json_array_get_length(conversations);
 	for(index = 0; index < length; index++) {
 		JsonObject *conversation = json_array_get_object_element(conversations, index);
@@ -1960,7 +2063,10 @@ teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 			// Check if it's a one-to-one before we fetch history
 			process_conversation_resource(sa, conversation);
 			
-			if (composetimestamp > since) {
+			// >=: the cursor is in whole seconds, so another message can share its second.
+			// The history request starts at the cursor's second, and the dedup in
+			// process_message_resource() drops what was already shown.
+			if (composetimestamp >= since) {
 				teams_get_conversation_history_since(sa, id, since);
 			}
 		}
@@ -1973,15 +2079,27 @@ teams_get_all_conversations_since(TeamsAccount *sa, gint since)
 	gchar *url;
 	url = g_strdup_printf(TEAMS_CONTACTS_PATH_PREFIX "/v1/users/ME/conversations?startTime=%d000&pageSize=100&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent", since);
 	
-	teams_post_or_get(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_all_convs, GINT_TO_POINTER(since), TRUE);
-	
+	teams_post_or_get_with_error(sa, TEAMS_METHOD_GET | TEAMS_METHOD_SSL, TEAMS_CONTACTS_HOST, url, NULL, teams_got_all_convs, teams_poll_convs_err_cb, GINT_TO_POINTER(since), TRUE);
+
 	g_free(url);
 }
 
 void
 teams_get_offline_history(TeamsAccount *sa)
 {
-	teams_get_all_conversations_since(sa, purple_account_get_int(sa->account, "last_message_timestamp", ((gint) time(NULL))));
+	/* The poll cursor. It MUST be seeded once to a fixed value: if we let it
+	 * default to time(NULL) on every call, each poll tick asks for messages since
+	 * "now", an always-forward-empty window, so a live message lands in the gap
+	 * between its send time and the next tick's cursor and is never fetched (the
+	 * cursor only advances when a message is received -> bootstrapping deadlock).
+	 * Seed it to now on first use so subsequent polls query [seed, now] and catch
+	 * new messages; process_message_resource() dedups re-fetched ones by server id. */
+	gint since = purple_account_get_int(sa->account, "last_message_timestamp", 0);
+	if (since == 0) {
+		since = (gint) time(NULL);
+		purple_account_set_int(sa->account, "last_message_timestamp", since);
+	}
+	teams_get_all_conversations_since(sa, since);
 }
 
 
@@ -2076,6 +2194,11 @@ static gboolean
 teams_drain_presence_queue(gpointer user_data)
 {
 	TeamsAccount *sa = user_data;
+
+	// if sa was freed by a re-login flap, bail WITHOUT touching it (pointer check first, so we
+	// never deref the freed sa->pc / sa->pending_presences). The source id is gone with the old sa.
+	if (!teams_account_is_live(sa))
+		return G_SOURCE_REMOVE;
 
 	if (!PURPLE_IS_CONNECTION(sa->pc)) {
 		// If the connection has dropped discard all pending messages and stop.
@@ -2281,6 +2404,12 @@ teams_drain_presence_queue(gpointer user_data)
 void
 teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
+	// a presence-snapshot response that lands after a re-login flap would loop over the
+	// presences inserting into the freed sa's NULL hashes (flood) and then g_queue_push into the freed
+	// NULL pending_presences queue -> SIGSEGV. Bail by pointer check (no deref of the freed sa).
+	if (!teams_account_is_live(sa))
+		return;
+
 	JsonArray *responses = json_node_get_array(node);
 
 	if (responses == NULL || json_array_get_length(responses) == 0) {
@@ -2506,8 +2635,13 @@ teams_subscribe_to_contact_status_delay(gpointer contacts_ptr)
 		return FALSE;
 	}
 
+	// this repeating g_timeout isn't cancelled by teams_close's purple_http_conn_cancel_all, so
+	// it can fire against a freed sa after a re-login flap. teams_account_is_live() checks by pointer
+	// (no deref) and must come FIRST so we never reach PURPLE_CONNECTION_IS_VALID(sa->pc) on a freed sa.
+	// A live pointer can still be a newer login at the same address: compare the generation too.
 	TeamsAccount *sa = g_dataset_get_data(contacts, "teams_account");
-	if (sa == NULL || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
+	guint generation = GPOINTER_TO_UINT(g_dataset_get_data(contacts, "generation"));
+	if (!teams_account_is_live(sa) || sa->live_generation != generation || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
 		g_slist_free_full(contacts, g_free);
 		g_dataset_destroy(contacts);
 		return FALSE;
@@ -2542,11 +2676,17 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 	if (contacts == NULL) {
 		return;
 	}
+	// guard against a late call for a freed account (the subscribed_contacts insert loop below
+	// would otherwise flood NULL-hash criticals and hang). Pointer check, no deref of a freed sa.
+	if (!teams_account_is_live(sa)) {
+		return;
+	}
 
 	if (sa->trouter_surl == NULL) {
 		purple_debug_info("teams", "No trouter surl yet\n");
 		GSList *contacts_clone = g_slist_copy_deep(contacts, (GCopyFunc)(GCallback) g_strdup, NULL);
 		g_dataset_set_data(contacts_clone, "teams_account", sa);
+		g_dataset_set_data(contacts_clone, "generation", GUINT_TO_POINTER(sa->live_generation));
 		g_dataset_set_data(contacts_clone, "attempt_count", GINT_TO_POINTER(0));
 		g_timeout_add_seconds(2, teams_subscribe_to_contact_status_delay, contacts_clone);
 		return;
@@ -2730,19 +2870,17 @@ teams_send_typing(PurpleConnection *pc, const gchar *name, PurpleIMTypingState s
 {
 	TeamsAccount *sa = purple_connection_get_protocol_data(pc);
 
-#ifdef ENABLE_TEAMS_PERSONAL
-	if (G_UNLIKELY(strchr(name, ':') == NULL)) {
-		// Send Skype messages without using a thread
-		g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(name), g_strconcat("8:", name, NULL));
-	}
-#endif
-	
+	/* Personal/TFL: do NOT inject a legacy "8:<user>" mapping here. Consumer 1:1s
+	 * are threads (19:uni01_...), and poisoning buddy_to_chat_lookup with "8:<user>"
+	 * would also break teams_send_im (it 404s on the consumer backend). Only send a
+	 * typing indicator if we already know the real thread; otherwise skip it (typing
+	 * is best-effort and the thread gets learned/created on the first real send). */
 	const gchar *channel = g_hash_table_lookup(sa->buddy_to_chat_lookup, name);
-	
+
 	if (channel) {
 		return teams_conv_send_typing_to_channel(sa, channel, state);
 	}
-	
+
 	return 0;
 }
 
@@ -2999,20 +3137,18 @@ const gchar *who, const gchar *message, PurpleMessageFlags flags)
 	
 	if (TEAMS_BUDDY_IS_NOTIFICATIONS(who)) {
 		convname = who;
-#ifdef ENABLE_TEAMS_PERSONAL
-	} else if (G_UNLIKELY(strchr(who, ':') == NULL)) {
-		// Send Skype messages without using a thread
-		gchar *direct_convname = g_strconcat("8:", who, NULL);
-		g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(who), direct_convname);
-		convname = direct_convname;
-#endif
 	} else {
+		/* Personal/TFL: consumer/TFL 1:1 chats flow through the Teams THREAD model
+		 * (19:uni01_...@thread.v2), same as corporate — NOT the legacy Skype peer-to-peer
+		 * "8:<user>" form, which the consumer backend (chatsvc/consumer) 404s. Resolve the
+		 * buddy to its known 1:1 thread; if we haven't learned it yet, fall through to
+		 * teams_initiate_chat() below, which creates/redirects to the uniquerosterthread. */
 		convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, who);
 	}
-	
+
 	//convname should be like
 	//19:{guid of user1}_{guid of user2}@unq.gpl.spaces
-	
+
 	if (!convname) {
 		teams_initiate_chat(sa, who, TRUE, message);
 		return 0;

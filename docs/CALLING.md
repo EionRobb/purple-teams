@@ -1,0 +1,231 @@
+# 1:1 calls
+
+The plug-in can take and place 1:1 Teams calls, voice and video, on personal (Teams for Life)
+accounts. It does the signalling; the audio and video run in a media engine (libpurple's
+PurpleMedia by default), and a front end (a UI) rings, shows and drives the calls. Both are
+replaceable.
+
+Tested with a personal account against the Teams Android app, in both directions, with audio and
+video. Not tested yet: turning the camera on in a call that started without video. A video call
+we place rings as a voice call on the Android app. Calls on work/school accounts have not been
+tried, and group calls are not supported.
+
+## Building
+
+    make libteams-personal.so TEAMS_CALLING=1
+
+This adds `teams_calling.c`, `teams_call_sdp.c` and `teams_call_pmedia.c` to the personal plug-in.
+Calls need a Unix-like system and GLib 2.58 or newer. Without a front end an incoming call is
+still announced as a message, as without `TEAMS_CALLING`.
+
+The audio and video run in `teams_call_pmedia.c`, on libpurple's own voice and video support
+(PurpleMedia, with Farstream), inside the plug-in's process. It needs libpurple 2 built with it
+(`--enable-vv`, so Farstream 0.2 and GStreamer 1.x) and links GStreamer itself. On a libpurple
+without voice and video the plug-in still loads and turns calls down.
+
+### An out-of-process engine (optional)
+
+    make libteams-personal.so TEAMS_CALLING=1 TEAMS_MEDIA_BIN=/usr/libexec/teams_media
+
+also builds in a second engine: the plug-in starts `TEAMS_MEDIA_BIN`, one process per call, and
+drives it with the same lines as the in-process one (below), so the signalling is the same for
+both. A call then still uses PurpleMedia unless `TEAMS_CALL_ENGINE=teams_media` is set in the
+environment. `TEAMS_CALL_ENGINE_FILE` names a file holding `purplemedia` or `teams_media` instead,
+read at each call, so the engine can be switched between calls without restarting the process.
+`TEAMS_PURPLEMEDIA=0` leaves the in-process engine out (then `TEAMS_MEDIA_BIN` is required).
+
+An engine of this kind (GStreamer and libnice, GPL-3.0-or-later) is `teams_media` in
+<https://github.com/webOS-ports/luneos-synergy-connectors>, `im/teams/calling/media/`. It plays and
+records through PulseAudio devices of its own naming, so it needs adapting to a desktop.
+
+Both engines print a `STATS` line every 5 s, which the plug-in logs as `media stats
+engine=<which> ...` (with `TEAMS_CALL_DEBUG`):
+
+    STATS t=<s> tx=<packets sent> rx=<packets received> jb_pushed= jb_lost= jb_late= jb_dup=
+          jb_jitter_us= peer_lost= peer_frac= rtt_ms= mic_peak=|mic_rms=
+
+`jb_*` are the audio jitterbuffer's own counts (`jb_jitter_us` is its average jitter; the
+worst of them if there are several). `peer_lost` and `peer_frac` come from the far side's last
+RTCP receiver report about our audio, and `peer_frac=-1` means there has been none. `rtt_ms` is
+-1 where it is not measured, which is always so for `teams_media` (it does not work one out).
+The counters do not mean quite the same thing in each engine:
+* `rx`: `teams_media` counts every packet from the network (RTCP and video too), PurpleMedia
+  only the far side's audio RTP.
+* The mic: `teams_media` gives the loudest sample of the interval (`mic_peak`, 0-32767),
+  PurpleMedia libpurple's send level, an RMS between 0 and 1 (`mic_rms`).
+
+How it does video, and what it does not do yet:
+
+* Video runs on an ICE stream of its own, never bundled with the audio. When an offer's m=video
+  has ICE credentials of its own (the Teams Android app's do, though its offers name BUNDLE), the
+  plug-in starts a second session for it (`VSTART`, `VRCAND`; the engine says `VUFRAG`, `VPWD`,
+  `VCAND`, `VSSRC`) and answers that m-line without BUNDLE: H264 107 only, no rtx, `nack pli` and
+  `goog-remb` feedback. A call we place offers its video the same way (`VANSWER` takes the far
+  side's part of the answer). A renegotiation that moves the far side's video to new ICE
+  credentials replaces the video session (`VRESTART`, then `VRESTARTED`). An offer whose video
+  shares the audio's ICE gets the video m-line declined.
+* The far side's picture goes to a gst-shm socket (`VSHM <path> <w> <h>`,
+  `TEAMS_PMEDIA_VIDEO_SHM`, default `/tmp/teams-video`) as I420, decoded by `avdec_h264`.
+* Our camera (`VIDEO 1 <w> <h> <kbps>` / `VIDEO 0`) is sent only where GStreamer has
+  `droidcamsrc` and `droidvenc` (gst-droid, on Android-based phones); the engine then says
+  `VCAMERA 1` and calls offer the video sendrecv. Elsewhere video is receive-only and the camera
+  button is refused. The packets are at most 1200 bytes: larger ones were lost on the way through
+  Teams' relays, keyframes with them. A camera error turns the camera off (`VIDEOERR tx-camera`)
+  and the call goes on.
+* The STATS line adds the video counts: `vrx` (RTP received), `vdec` (frames decoded), `vpli`
+  and `vremb` (sent), and for our camera `vtxf` (frames in), `vtxe`/`vtxk` (encoded,
+  keyframes), `vtxp` (packets), `vtxmax` (largest packet), `vtxsps`, `vtxssrc`, `vsr` (sender
+  reports), and `vrpli`/`vrfir`/`vrnack` (the far side's requests).
+* No ICE restart: `RESTART` gets `ERR`, and a renegotiation that changes the far side's ICE
+  credentials is not answered. One that keeps them, as Teams' do, is answered at once.
+* No transport-cc feedback (the answer does not offer it), and NACKs are not answered.
+* `RELAY turn` is ignored; only the STUN server is used.
+
+It plays and records through the PulseAudio devices `teams_media` uses (`voipcall`, `webcall`);
+`TEAMS_PMEDIA_SRC`/`TEAMS_PMEDIA_SINK` name other GStreamer elements instead. Its SSRC line is
+taken from its first RTP packet, which can hold the answer back by up to 2 s;
+`TEAMS_PMEDIA_NO_SSRC=1` leaves the SSRC out of the SDP.
+
+`tests/test_pmedia_loopback.c` places a call between two such engines in one process (`make
+check-pmedia`, with libpurple, Farstream and GStreamer's nice, srtp, rtpmanager, opus,
+audiotestsrc and fakesink installed): audio has to arrive both ways through SRTP-GCM over ICE.
+`tests/test_pmedia_novv.c` checks the other case: with a libpurple built without voice and video
+the plug-in still loads (the media-gst.h calls only such a libpurple lacks are looked up at run
+time) and the engine answers `START` with `ERR` and closes.
+
+Farstream 0.2.9's nice transmitter needs a fix to work with current libnice: nicesrc pushes buffer
+lists, which its source-association probe ignored, so with SRTP every packet was dropped
+(the patch is `nice: associate sources from buffer lists too`, not in Farstream yet).
+
+`TEAMS_CALL_DEBUG=1` in the environment copies the call log lines to stderr. The plug-in's own
+lines leave out SRTP keys and ICE passwords, and SDPs are logged by shape only; the plug-in gives
+an engine no TURN credentials (only `RELAY stun`). A line from the engine (`ERR`, the video lines)
+is logged as the engine wrote it, so an engine of your own should keep secrets out of those.
+
+## Front-end API (`teams_calling.h`)
+
+A front end registers:
+
+* `teams_calling_set_state_cb()`: call-state changes, with the state (`"incoming"`, `"dialing"`,
+  `"active"`, `"disconnected"`, or `""` for idle), the peer's address and name, the direction and,
+  on `"disconnected"`, a cause: `"normal"`, `"rejected"`, `"missed"`, `"busy"`, `"error"` or
+  `"answeredElsewhere"`. Registering it is what makes a front end present.
+* `teams_calling_set_video_cb()`: the engine's video lines as they come (see below), `"OFFERED 0|1"`
+  when an offer has the far side sending video or not, and `""` when the call's video is over.
+* `teams_calling_set_account_cbs()`: an account signed in, or is going away. Signed in is not yet
+  ready for calls: until the account's trouter registers, `teams_calling_dial()` returns FALSE and
+  no call comes in.
+
+and calls `teams_calling_answer()`, `teams_calling_reject()`, `teams_calling_hangup()`,
+`teams_calling_dial(sa, peer_mri, video)` and `teams_calling_set_camera()`.
+
+## Signalling
+
+Everything below was read from the teams.live.com web client's traffic and is what the plug-in
+does.
+
+### Registration
+
+Personal accounts have no `NextGenCalling` endpoint. The calling endpoint is `SkypeSpacesWeb`,
+registered at `https://teams.microsoft.com/registrar/prod/v2/registrations` with templateKey
+`TFLSkypeSpacesWeb_2.0`, transport context `TFL` and the base trouter surl as path. The web client
+registers it twice: under the epid with the surl as given, and under the epid plus `-gg` with the
+surl's trailing `/` dropped. With only the first, a call from the Android app reached the web
+client but not the plug-in.
+
+Every response to a trouter request carries the headers the web client sends: the request's
+`MS-CV` plus `.0`, its `trouter-request` copied as it came, and `trouter-client` `{"cd":<ms>}`.
+Without them the trouter redelivered the same frames and the conversation sent no roster updates.
+
+Frames that carry a gzip body name it with `X-Microsoft-Skype-Content-Encoding` in either case.
+
+### Incoming call
+
+1. A `callNotification` arrives on `/callAgent/...` (or the base surl). It holds the offer
+   (`mediaContent.blob`, `application/sdp-ngc-0.5`), the media relay (`links.udpTransport`) and the
+   control links (`attach`, `progress`, `reject`, ...).
+2. While it rings: POST `attach` with a `join` of the conversation in `additionalActions`. The
+   response gives `callInvitation.links.acceptance` and the conversation's `leave` link. Then POST
+   `progress` (`callProgress`, ringing). Attaching early is what makes the call stop ringing here
+   when it is answered on another device.
+3. On answer: two POSTs to `<conversation>/updateEndpointState` (muted, then unmuted with
+   `endpointProperties`), then POST `acceptance` with `callAcceptance` (our SDP answer,
+   `acceptedCallModalities` matching what the answer sends). Once that is accepted,
+   PUT `<conversation>/updateEndpointMetadata`.
+
+### Outgoing call
+
+POST `api/v2/cpconv` with our offer. The callee's answer arrives on our `callAgent` `mediaAnswer`
+link and goes to the engine (`ANSWER`, `RCAND`). The callee's acceptance is acknowledged on the
+link it gives; the call is up when the callee picks up.
+
+### During the call
+
+* The far side's renegotiation offers come on the `mediaRenegotiation` link we gave in the accept;
+  they are answered at the push's `mediaNegotiation.links.mediaAnswer`. A new media leg (new ICE
+  credentials, maybe a new key) goes to the engine as `RESTART` without rebuilding its pipeline.
+* Turning our camera on in a call that did not send video needs an offer of our own
+  (`.../renegotiate`) with video `sendrecv`, the same ICE credentials and key, and negotiationTag
+  `<participantId>;v_<n>`: the participantId of the call's cpconv, n counting from 1 per call.
+* Turning it off while we send takes the same offer with video `recvonly` and `callModalities`
+  `["Audio"]`, which is what the Teams Android app offers when its own camera goes off. Only
+  stopping the RTP leaves the far side showing our last frame.
+* m-lines other than audio and video (e.g. `m=x-data`) are declined (port 0).
+
+### Ending
+
+* Hang-up: POST the conversation's `leave` link; it is answered 204.
+* `callEnd` maps to the causes above. A call taken on another of the user's devices ends with
+  reason `clientError`, code 487 and the phrase "Call cancelled as it was accepted by another
+  fork."; the phrase decides, since a caller giving up may get 487 as well.
+
+### Media
+
+* SDP: `RTP/SAVP`, SDES keying with `a=crypto` `AEAD_AES_256_GCM`, Opus (Teams uses PT 102), H.264
+  PT 107 with RTX PT 99, video bundled on the audio's ICE transport and key.
+* The call's relay (`links.udpTransport`) does not answer a plain STUN Binding request. The
+  engine is given `world.relay.skype.com:3478` as STUN server, which does; without it only host
+  candidates are gathered and audio flows one way only.
+* Our camera sends the largest of 640x480, 352x288, 320x240 and 176x144 within the far side's
+  `a=fmtp:107` `max-fs` and `max-mbps`, at 800 kbit/s or its `max-br` if lower. If none of those
+  sizes fits, or `max-br` is below 32, our camera is not sent.
+* An answer has the offer's m-lines in the offer's order, a declined `m=video` (port 0) declined
+  too, with its mid.
+
+## Engine protocol
+
+The plug-in starts `TEAMS_MEDIA_BIN --answer` (incoming) or `--caller` (outgoing) with stdin a
+socket and stdout a pipe, and talks one line per message. stderr is passed through for
+diagnostics.
+
+To the engine:
+
+    START <rx_master_b64> <remote_ufrag> <remote_pwd> <pt>   (--answer; pt: the offer's Opus PT)
+    START [pt]                                              (--caller; the Opus PT, 102 if left out)
+    ANSWER <rx_master_b64> <remote_ufrag> <remote_pwd>       (--caller: the far side's answer)
+    RELAY turn <ip> <port> <user> <pass> <udp|tcp|tls>       (optional)
+    RELAY stun <host|ip> <port>                             (before START)
+    RCAND <a=candidate line>                                (repeatable)
+    RESTART <rx_master_b64|-> <remote_ufrag> <remote_pwd>    (new media leg; then RCAND)
+    VIDEO <0|1> [<w> <h> <kbps>]                            (our camera off/on)
+    STOP
+
+From the engine:
+
+    UFRAG <ufrag>          PWD <pwd>          our ICE credentials for the SDP
+    TXKEY <b64>            our a=crypto inline key
+    SSRC <n>               our audio SSRC
+    VSSRC <n>              our video SSRC, only when the engine can do video
+    CAND <a=candidate line>
+    GATHERED               local candidates complete
+    READY | ANSWERED | RESTARTED | ERR <msg>
+    VSHM <path> <w> <h>               the far side's picture (a gst-shm socket)
+    VPREVIEW <path> <w> <h> <q> <m>   our camera's picture (q quarter turns, m mirrored 0/1)
+    VTX <0|1>                         our camera is sending / stopped
+    PEERVIDEO <0|1>                   the far side's video is arriving / stopped for 2 s
+    VIDEOERR <what>                   a video part could not be built; the call goes on
+                                      ("build": no video at all, "tx...": our camera stopped)
+    AUDIOD <0|1>                      engine specific; only logged
+
+The video lines are passed to the front end unchanged. Any other line is ignored. The offer or
+answer goes out at `GATHERED`, or after 4 s if gathering takes longer.
