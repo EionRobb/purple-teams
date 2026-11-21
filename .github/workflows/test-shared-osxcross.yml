@@ -1,0 +1,50 @@
+name: Test shared LLVM osxcross
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/test-shared-osxcross.yml'
+permissions:
+  contents: read
+jobs:
+  macos-cross:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up shared LLVM osxcross
+        uses: EionRobb/libpurple-build-actions/setup-osxcross@feature/reusable-osxcross-toolchain
+      - name: Install plugin build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libglib2.0-dev libjson-glib-dev libpurple-dev zip
+      - name: Build macOS slices
+        shell: bash
+        run: |
+          set -euo pipefail
+          GLIB_CFLAGS="$(pkg-config --cflags glib-2.0 json-glib-1.0 purple)"
+          COMMON_LDFLAGS="-Wl,-undefined,dynamic_lookup -Wl,-rpath,/opt/homebrew/lib -Wl,-rpath,/usr/local/lib -Wl,-rpath,/opt/local/lib"
+          for arch in arm64 x86_64; do
+            rm -f libteams.so libteams-personal.so
+            make CC="${arch}-apple-${DARWIN_TARGET}-clang" \
+              CFLAGS="-O2 -g -pipe $GLIB_CFLAGS" \
+              LDFLAGS="$COMMON_LDFLAGS" PURPLE_CFLAGS="$GLIB_CFLAGS" \
+              INCLUDES="" PURPLE_LIBS="-lz" libteams.so libteams-personal.so
+            mv libteams.so "libteams_${arch}.so"
+            mv libteams-personal.so "libteams-personal_${arch}.so"
+          done
+      - name: Assemble and inspect universal binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIPO="$OSXCROSS/bin/lipo"
+          "$LIPO" -create libteams_x86_64.so libteams_arm64.so -output libteams_macos.so
+          "$LIPO" -create libteams-personal_x86_64.so libteams-personal_arm64.so -output libteams-personal_macos.so
+          "$LIPO" -info libteams_macos.so
+          "$LIPO" -info libteams-personal_macos.so
+          file libteams_macos.so libteams-personal_macos.so
+          file libteams_macos.so | grep -q 'Mach-O'
+          file libteams-personal_macos.so | grep -q 'Mach-O'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libteams-llvm-macos-universal
+          path: lib*_macos.so
