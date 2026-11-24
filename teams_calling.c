@@ -1285,8 +1285,10 @@ media_send_offer(TeamsMediaProc *mp)
 		"\"groupContext\":null,\"groupChat\":null,\"meetingInfo\":null,\"meetingData\":null,"
 		"\"endpointState\":{\"endpointStateSequenceNumber\":2,\"endpointProperties\":"
 		"{\"additionalEndpointProperties\":{\"infoShownInReportMode\":\"FullInformation\"}}},");
+	/* Video when the offer sends our video, as in call_modalities(): on the BUNDLE or, with the
+	 * unbundled engine, on video's own ICE stream (video_offered_send), which `video` leaves out. */
 	g_string_append_printf(body, "\"callInvitation\":{\"callModalities\":%s,\"replaces\":null,",
-		video ? "[\"Audio\",\"Video\"]" : "[\"Audio\"]");   /* see call_modalities */
+		video || (mp->video_offered && mp->video_offered_send) ? "[\"Audio\",\"Video\"]" : "[\"Audio\"]");
 	g_string_append(body,
 		"\"transferor\":null,\"clientTransferContext\":null,\"customContext\":null,\"links\":{");
 	AGL("call", "progress"); AGL("call", "mediaAnswer"); AGL("call", "acceptance");
