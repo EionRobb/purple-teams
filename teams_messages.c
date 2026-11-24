@@ -523,9 +523,15 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 			 * reaction (a MessageUpdate of the same message, often with no new edittime)
 			 * changes the key too, so it is not dropped as a repeat. A reaction names who
 			 * reacted: a count alone would make the far side's like, after ours was added and
-			 * taken back, look like the repeat of ours. */
+			 * taken back, look like the repeat of ours. The message's version, new with each
+			 * update, goes in as well: without it, reactions that went back to an earlier state
+			 * (a heart added, then taken off again) gave that state's key and were dropped. A
+			 * poll that fetches the same update again carries the same version. */
 			const gchar *dedup_conv = conversationLink ? teams_thread_url_to_name(conversationLink) : NULL;
+			const gchar *version = json_object_get_string_member(resource, "version");
 			GString *update = g_string_new(NULL);
+			if (version != NULL)
+				g_string_append_printf(update, "v%s", version);
 			if (properties != NULL && json_object_has_member(properties, "deletetime"))
 				g_string_append(update, "deleted");
 			if (properties != NULL && json_object_has_member(properties, "emotions")) {
