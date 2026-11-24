@@ -484,6 +484,7 @@ static gulong conversation_updated_signal = 0;
 static gulong conversation_updated_title_signal = 0;
 static gulong chat_conversation_typing_signal = 0;
 static gulong im_conversation_created_signal = 0;
+static gulong im_conversation_deleting_signal = 0;
 
 static void
 teams_conversation_updated_title(PurpleConversation *conv, PurpleConversationUpdateType type)
@@ -605,6 +606,48 @@ teams_im_conversation_created(PurpleConversation *conv)
 	teams_fetch_conv_history_paginated(sa, convname, since);
 }
 
+static gboolean
+teams_dedup_key_in_conv(gpointer key, gpointer value, gpointer prefix)
+{
+	(void) value;
+	return g_str_has_prefix(key, prefix);
+}
+
+/* An IM conversation that is closed forgets which of its messages were shown: opening it again
+ * in the same login fetches its history (teams_im_conversation_created), and the dedup in
+ * process_message_resource() would otherwise drop every message of it shown before. The dedup
+ * keys start with the conversation's thread name. */
+static void
+teams_im_conversation_deleting(PurpleConversation *conv)
+{
+	PurpleConnection *pc;
+	TeamsAccount *sa;
+	const gchar *convname;
+	gchar *prefix;
+
+	if (!PURPLE_IS_IM_CONVERSATION(conv))
+		return;
+
+	pc = purple_conversation_get_connection(conv);
+	if (!PURPLE_CONNECTION_IS_CONNECTED(pc))
+		return;
+
+	if (!purple_strequal(purple_protocol_get_id(purple_connection_get_protocol(pc)), TEAMS_PLUGIN_ID))
+		return;
+
+	sa = purple_connection_get_protocol_data(pc);
+	if (sa == NULL || sa->buddy_to_chat_lookup == NULL || sa->received_messages_hash == NULL)
+		return;
+
+	convname = g_hash_table_lookup(sa->buddy_to_chat_lookup, purple_conversation_get_name(conv));
+	if (convname == NULL || *convname == '\0')
+		return;
+
+	prefix = g_strconcat(convname, "|", NULL);
+	g_hash_table_foreach_remove(sa->received_messages_hash, teams_dedup_key_in_conv, prefix);
+	g_free(prefix);
+}
+
 static void
 teams_login(PurpleAccount *account)
 {
@@ -693,6 +736,9 @@ teams_login(PurpleAccount *account)
 	}
 	if (!im_conversation_created_signal) {
 		im_conversation_created_signal = purple_signal_connect(purple_conversations_get_handle(), "conversation-created", purple_connection_get_protocol(pc), PURPLE_CALLBACK(teams_im_conversation_created), NULL);
+	}
+	if (!im_conversation_deleting_signal) {
+		im_conversation_deleting_signal = purple_signal_connect(purple_conversations_get_handle(), "deleting-conversation", purple_connection_get_protocol(pc), PURPLE_CALLBACK(teams_im_conversation_deleting), NULL);
 	}
 	// Setup callbacks for the preferences.
 	// handle = purple_proxy_get_handle();

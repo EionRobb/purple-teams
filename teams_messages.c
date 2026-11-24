@@ -521,7 +521,9 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 		if (dedup_id != NULL) {
 			/* sequenceId counts within one conversation, so the key names it. A delete or a
 			 * reaction (a MessageUpdate of the same message, often with no new edittime)
-			 * changes the key too, so it is not dropped as a repeat. */
+			 * changes the key too, so it is not dropped as a repeat. A reaction names who
+			 * reacted: a count alone would make the far side's like, after ours was added and
+			 * taken back, look like the repeat of ours. */
 			const gchar *dedup_conv = conversationLink ? teams_thread_url_to_name(conversationLink) : NULL;
 			GString *update = g_string_new(NULL);
 			if (properties != NULL && json_object_has_member(properties, "deletetime"))
@@ -532,9 +534,14 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 				for (e = 0; e < elen; e++) {
 					JsonObject *emotion = json_array_get_object_element(emotions, e);
 					JsonArray *users = emotion ? json_object_get_array_member(emotion, "users") : NULL;
+					guint u, ulen = users ? json_array_get_length(users) : 0;
 					g_string_append_printf(update, ",%s:%u",
-						emotion ? json_object_get_string_member(emotion, "key") : "",
-						users ? json_array_get_length(users) : 0);
+						emotion ? json_object_get_string_member(emotion, "key") : "", ulen);
+					for (u = 0; u < ulen; u++) {
+						JsonObject *user = json_array_get_object_element(users, u);
+						const gchar *mri = user ? json_object_get_string_member(user, "mri") : NULL;
+						g_string_append_printf(update, ";%s", mri ? mri : "");
+					}
 				}
 			}
 			gchar *dedup_key = g_strdup_printf("%s|%s|%s|%s", dedup_conv ? dedup_conv : "", dedup_id,
