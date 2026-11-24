@@ -242,6 +242,7 @@ purple_chat_user_set_alias(PurpleChatUser *cb, const gchar *alias)
 
 #define purple_account_privacy_deny_add     purple_privacy_deny_add
 #define purple_account_privacy_deny_remove  purple_privacy_deny_remove
+#define purple_account_privacy_check        purple_privacy_check
 #define purple_account_set_password(account, password, dummy1, dummy2) \
 		purple_account_set_password(account, password);
 #define purple_account_set_private_alias    purple_account_set_alias
