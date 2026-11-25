@@ -262,6 +262,7 @@ struct _TeamsAccount {
 	guint presence_poll_timeout;
 	GQueue *processed_event_messages;
 	GHashTable *subscribed_contacts;
+	guint live_generation; /* teams_account_mark_live() numbers each login; see teams_account_is_live() */
 	GHashTable *fetched_profiles;
 	GHashTable *presence_etag_cache;
 	GQueue *pending_subscription_contacts;
@@ -276,7 +277,13 @@ struct _TeamsAccount {
 	guint trouter_ping_timeout;
 	guint trouter_command_count;
 	guint trouter_registration_timeout;
+	guint trouter_reconnect_timeout;   /* pending trouter reconnect */
+	guint trouter_reconnect_backoff;   /* current reconnect delay in seconds, doubled on each failure */
 	JsonObject *trouter_socket_obj;
+
+	/* NGC voice calling (teams_calling.c): the account's current call, or NULL. Typed
+	 * gpointer to avoid pulling teams_calling.h into every TU that includes libteams.h. */
+	gpointer active_call;
 
 	//devicecode login
 	gchar *login_device_code;
@@ -311,6 +318,10 @@ struct _TeamsBuddy {
 };
 
 void teams_buddy_free(PurpleBuddy *buddy);
+
+// TRUE while `sa` is a live (logged-in, not-yet-freed) account. Async HTTP handlers that fire
+// after a re-login flap must check this before touching sa, to avoid the freed-sa hash-flood hang.
+gboolean teams_account_is_live(TeamsAccount *sa);
 
 void teams_do_all_the_things(TeamsAccount *sa);
 

@@ -235,9 +235,9 @@ teams_process_files_in_properties(JsonObject *properties, gchar **html)
 			
 			//Potentially use the preview image in  file.filePreview.previewUrl
 		}
-		
-		json_array_unref(files);
-		
+
+		if (files) json_array_unref(files); /* NULL when "files" is missing */
+
 		gchar *temp = g_strconcat(*html ? *html : "", files_string->str, NULL);
 		g_free(*html);
 		*html = temp;
@@ -466,6 +466,11 @@ teams_parse_media_call_recording_content(const gchar *content)
 static void
 process_message_resource(TeamsAccount *sa, JsonObject *resource)
 {
+	// bail if this is a late handler for an account freed by a re-login flap (checked by
+	// pointer, no deref) -- otherwise the dedup hash access below floods NULL-hash criticals and hangs.
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *clientmessageid = NULL;
 	const gchar *skypeeditedid = NULL;
 	const gchar *messagetype = json_object_get_string_member(resource, "messagetype");
@@ -1494,6 +1499,10 @@ process_message_resource(TeamsAccount *sa, JsonObject *resource)
 static void
 process_conversation_resource(TeamsAccount *sa, JsonObject *resource)
 {
+	// bail on a late handler for an account freed by a re-login flap (see process_message_resource).
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *id = json_object_get_string_member(resource, "id");
 	JsonObject *threadProperties = json_object_get_object_member(resource, "threadProperties");
 	JsonObject *lastMessage = json_object_get_object_member(resource, "lastMessage");
@@ -1552,27 +1561,35 @@ process_thread_resource(TeamsAccount *sa, JsonObject *resource)
 			if (!g_hash_table_lookup(sa->chat_to_buddy_lookup, id)) {
 				// ... and we dont know about it yet
 				
-				JsonObject *member = json_array_get_object_element(members, 0);
-				const gchar *mri = json_object_get_string_member(member, "id");
-				const gchar *buddyid = teams_strip_user_prefix(mri);
-				
-				if (teams_is_user_self(sa, buddyid)) {
+				// `members` may be absent (NULL) or have <2 entries. Bound
+				// the index-0/1 access with the length (raw json_array_get_object_element asserts on
+				// NULL/out-of-range - the `array != NULL` critical seen next to incoming messages).
+				guint mcount = members ? json_array_get_length(members) : 0;
+				JsonObject *member = mcount >= 1 ? json_array_get_object_element(members, 0) : NULL;
+				const gchar *mri = member ? json_object_get_string_member(member, "id") : NULL;
+				const gchar *buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
+
+				if (buddyid && teams_is_user_self(sa, buddyid)) {
 					// There were two in the bed and the little one said....
-					member = json_array_get_object_element(members, 1);
-					mri = json_object_get_string_member(member, "id");
-					buddyid = teams_strip_user_prefix(mri);
+					// With no second member there is no peer: leave the thread unmapped rather
+					// than map it to ourselves.
+					member = mcount >= 2 ? json_array_get_object_element(members, 1) : NULL;
+					mri = member ? json_object_get_string_member(member, "id") : NULL;
+					buddyid = mri ? teams_strip_user_prefix(mri) : NULL;
 				}
-				
-				//Fetch buddy presence
-				teams_subscribe_to_single_contact_status(sa, buddyid);
-				
-				//Create an array of one to one mappings for IMs
-				g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
-				g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
-				
-				PurpleChatConversation *conv = purple_conversations_find_chat_with_account(id, sa->account);
-				if (conv != NULL) {
-					purple_conversation_destroy(PURPLE_CONVERSATION(conv));
+
+				if (buddyid != NULL) {
+					//Fetch buddy presence
+					teams_subscribe_to_single_contact_status(sa, buddyid);
+
+					//Create an array of one to one mappings for IMs
+					g_hash_table_insert(sa->buddy_to_chat_lookup, g_strdup(buddyid), g_strdup(id));
+					g_hash_table_insert(sa->chat_to_buddy_lookup, g_strdup(id), g_strdup(buddyid));
+
+					PurpleChatConversation *conv = purple_conversations_find_chat_with_account(id, sa->account);
+					if (conv != NULL) {
+						purple_conversation_destroy(PURPLE_CONVERSATION(conv));
+					}
 				}
 			}
 		}
@@ -1623,6 +1640,10 @@ process_endpointpresence_resource(TeamsAccount *sa, JsonObject *resource)
 void
 teams_process_event_message(TeamsAccount *sa, JsonObject *message)
 {
+	// bail on a late poll/trouter batch for an account freed by a re-login flap (hash-flood hang).
+	if (!teams_account_is_live(sa))
+		return;
+
 	const gchar *resourceType = json_object_get_string_member(message, "resourceType");
 	const gchar *time = json_object_get_string_member(message, "time");
 	JsonObject *resource = json_object_get_object_member(message, "resource");
@@ -2010,6 +2031,11 @@ teams_get_conversation_history(TeamsAccount *sa, const gchar *convname)
 static void
 teams_poll_convs_err_cb(TeamsAccount *sa, const gchar *data, gssize len, gpointer user_data)
 {
+	/* A failed fetch from a login already closed: its account is freed, and the write below
+	 * would land in freed memory. teams_got_all_convs() checks the same way. */
+	if (!teams_account_is_live(sa))
+		return;
+
 	/* Conversations fetch failed (no parseable body) — release the poll guard so the
 	 * next tick can retry instead of the poll wedging forever. */
 	sa->poll_in_flight = FALSE;
@@ -2022,6 +2048,12 @@ teams_got_all_convs(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 	JsonObject *obj;
 	JsonArray *conversations;
 	gint index, length;
+	
+	// bail on a late conversation list for an account freed by a re-login flap: the loop below
+	// fetches history with sa, past process_conversation_resource()'s own check. Before the
+	// poll_in_flight write, which would touch the freed account too.
+	if (!teams_account_is_live(sa))
+		return;
 
 	/* The (possibly poll-driven) conversations fetch has returned — release the guard. */
 	sa->poll_in_flight = FALSE;
@@ -2180,6 +2212,11 @@ static gboolean
 teams_drain_presence_queue(gpointer user_data)
 {
 	TeamsAccount *sa = user_data;
+
+	// if sa was freed by a re-login flap, bail WITHOUT touching it (pointer check first, so we
+	// never deref the freed sa->pc / sa->pending_presences). The source id is gone with the old sa.
+	if (!teams_account_is_live(sa))
+		return G_SOURCE_REMOVE;
 
 	if (!PURPLE_IS_CONNECTION(sa->pc)) {
 		// If the connection has dropped discard all pending messages and stop.
@@ -2385,6 +2422,12 @@ teams_drain_presence_queue(gpointer user_data)
 void
 teams_got_contact_statuses(TeamsAccount *sa, JsonNode *node, gpointer user_data)
 {
+	// a presence-snapshot response that lands after a re-login flap would loop over the
+	// presences inserting into the freed sa's NULL hashes (flood) and then g_queue_push into the freed
+	// NULL pending_presences queue -> SIGSEGV. Bail by pointer check (no deref of the freed sa).
+	if (!teams_account_is_live(sa))
+		return;
+
 	JsonArray *responses = json_node_get_array(node);
 
 	if (responses == NULL || json_array_get_length(responses) == 0) {
@@ -2610,8 +2653,13 @@ teams_subscribe_to_contact_status_delay(gpointer contacts_ptr)
 		return FALSE;
 	}
 
+	// this repeating g_timeout isn't cancelled by teams_close's purple_http_conn_cancel_all, so
+	// it can fire against a freed sa after a re-login flap. teams_account_is_live() checks by pointer
+	// (no deref) and must come FIRST so we never reach PURPLE_CONNECTION_IS_VALID(sa->pc) on a freed sa.
+	// A live pointer can still be a newer login at the same address: compare the generation too.
 	TeamsAccount *sa = g_dataset_get_data(contacts, "teams_account");
-	if (sa == NULL || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
+	guint generation = GPOINTER_TO_UINT(g_dataset_get_data(contacts, "generation"));
+	if (!teams_account_is_live(sa) || sa->live_generation != generation || !PURPLE_CONNECTION_IS_VALID(sa->pc)) {
 		g_slist_free_full(contacts, g_free);
 		g_dataset_destroy(contacts);
 		return FALSE;
@@ -2646,11 +2694,17 @@ teams_subscribe_to_contact_status(TeamsAccount *sa, GSList *contacts)
 	if (contacts == NULL) {
 		return;
 	}
+	// guard against a late call for a freed account (the subscribed_contacts insert loop below
+	// would otherwise flood NULL-hash criticals and hang). Pointer check, no deref of a freed sa.
+	if (!teams_account_is_live(sa)) {
+		return;
+	}
 
 	if (sa->trouter_surl == NULL) {
 		purple_debug_info("teams", "No trouter surl yet\n");
 		GSList *contacts_clone = g_slist_copy_deep(contacts, (GCopyFunc)(GCallback) g_strdup, NULL);
 		g_dataset_set_data(contacts_clone, "teams_account", sa);
+		g_dataset_set_data(contacts_clone, "generation", GUINT_TO_POINTER(sa->live_generation));
 		g_dataset_set_data(contacts_clone, "attempt_count", GINT_TO_POINTER(0));
 		g_timeout_add_seconds(2, teams_subscribe_to_contact_status_delay, contacts_clone);
 		return;

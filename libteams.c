@@ -22,6 +22,9 @@
 #include "teams_messages.h"
 #include "teams_util.h"
 #include "teams_trouter.h"
+#ifdef TEAMS_CALLING
+#include "teams_calling.h"
+#endif
 
 #ifdef ENABLE_TEAMS_PERSONAL
 /* Personal/TFL: real-time message delivery via Trouter push does not work for
@@ -87,7 +90,13 @@ teams_do_all_the_things(TeamsAccount *sa)
 
 		teams_get_friend_list(sa);
 		teams_trouter_begin(sa);
-		
+
+#ifdef TEAMS_CALLING
+		/* tell the call front end, if any, that this account is signed in. Calls need the trouter
+		 * too: until it registers, a dial fails ("no trouter surl") and no call comes in. */
+		teams_calling_account_connected(sa);
+#endif
+
 		teams_get_offline_history(sa);
 
 #ifdef ENABLE_TEAMS_PERSONAL
@@ -606,6 +615,44 @@ teams_im_conversation_created(PurpleConversation *conv)
 	teams_fetch_conv_history_paginated(sa, convname, since);
 }
 
+// purple-teams fires many async HTTP requests carrying `sa` as user_data. On this
+// consumer/personal account the connection FLAPS (re-login every few minutes); teams_close frees
+// `sa`, but an in-flight request from the OLD connection can still complete afterwards and run its
+// handler against the freed sa -- whose zeroed memory makes sa->*_hash read NULL, so the dedup loops
+// in process_message_resource / process_conversation_resource FLOOD thousands of
+// "g_hash_table_insert/contains: assertion 'hash_table != NULL' failed" criticals in milliseconds,
+// pegging the CPU and hanging the client (purple_http_conn_cancel_all(pc) in teams_close does not
+// always catch every request). Track live TeamsAccount pointers in a global set so the batch
+// processors can bail on a dead sa -- checked by POINTER, never dereferencing the freed sa.
+static GHashTable *teams_live_accounts = NULL;
+// A new login can get the address of a freed account back from the allocator, so a pointer
+// alone can't tell a late callback of the old login from the new one. Callbacks that outlive
+// the call that scheduled them (the delayed presence subscription) also keep the login's
+// generation and compare it once teams_account_is_live() says the pointer is safe to read.
+static guint teams_live_generation = 0;
+
+gboolean
+teams_account_is_live(TeamsAccount *sa)
+{
+	return sa != NULL && teams_live_accounts != NULL && g_hash_table_contains(teams_live_accounts, sa);
+}
+
+static void
+teams_account_mark_live(TeamsAccount *sa)
+{
+	if (teams_live_accounts == NULL)
+		teams_live_accounts = g_hash_table_new(g_direct_hash, g_direct_equal);
+	g_hash_table_insert(teams_live_accounts, sa, sa); // not g_hash_table_add: Win32 builds use GLib 2.28
+	sa->live_generation = ++teams_live_generation;
+}
+
+static void
+teams_account_mark_dead(TeamsAccount *sa)
+{
+	if (teams_live_accounts != NULL)
+		g_hash_table_remove(teams_live_accounts, sa);
+}
+
 static gboolean
 teams_dedup_key_in_conv(gpointer key, gpointer value, gpointer prefix)
 {
@@ -656,8 +703,9 @@ teams_login(PurpleAccount *account)
 	PurpleConnectionFlags flags;
 	const gchar *tenant;
 	const gchar *password = purple_connection_get_password(pc);
-	
+
 	purple_connection_set_protocol_data(pc, sa);
+	teams_account_mark_live(sa);
 
 	flags = purple_connection_get_flags(pc);
 	flags |= PURPLE_CONNECTION_FLAG_HTML | PURPLE_CONNECTION_FLAG_NO_BGCOLOR | PURPLE_CONNECTION_FLAG_NO_FONTSIZE;
@@ -787,6 +835,12 @@ teams_close(PurpleConnection *pc)
 	if (sa->subscription_flush_timer)         { g_source_remove(sa->subscription_flush_timer); sa->subscription_flush_timer = 0; }
 	// Trouter timeouts handled in teams_trouter_stop()
 
+#ifdef TEAMS_CALLING
+	// End this account's call and stop its media engine before the HTTP connections are
+	// cancelled, so nothing keeps pointing at sa.
+	teams_calling_close(sa);
+#endif
+
 	teams_logout(sa);
 	
 	purple_debug_info("teams", "destroying incomplete connections\n");
@@ -870,6 +924,7 @@ teams_close(PurpleConnection *pc)
 	g_free(sa->primary_member_name);
 	g_free(sa->self_display_name);
 	g_free(sa->username);
+	teams_account_mark_dead(sa); // stop late async handlers from touching this freed sa (hash-flood hang)
 	g_free(sa);
 }
 
@@ -1134,7 +1189,7 @@ plugin_load(PurplePlugin *plugin
 						NULL);
 	
 	purple_signal_connect(purple_get_core(), "uri-handler", plugin, PURPLE_CALLBACK(teams_uri_handler), NULL);
-	
+
 	return TRUE;
 }
 
