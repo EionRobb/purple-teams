@@ -6,9 +6,10 @@ PurpleMedia by default), and a front end (a UI) rings, shows and drives the call
 replaceable.
 
 Tested with a personal account against the Teams Android app, in both directions, with audio and
-video. Not tested yet: turning the camera on in a call that started without video. A video call
-we place rings as a voice call on the Android app. Calls on work/school accounts have not been
-tried, and group calls are not supported.
+video. Not tested yet: turning the camera on in a call that started without video. The Android app
+rings every incoming call as a voice call, the web client's video calls too; once answered, our
+video shows as video there. Calls on work/school accounts have not been tried, and group calls are
+not supported.
 
 ## Building
 

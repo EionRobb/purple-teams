@@ -1202,6 +1202,11 @@ media_send_offer(TeamsMediaProc *mp)
 	mp->video_offered = mp->camera_wanted && media_engine_unbundled(mp) && mp->our_vssrc &&
 	                    mp->our_vufrag && mp->our_vpwd && mp->our_vcands && mp->our_vcands->len;
 	sdp = g_string_new("v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nb=CT:4000\r\nt=0 0\r\n");
+	/* A video call's offer names its video as main-video, here and in that section's x-source, as
+	 * the Teams Android app's own offers do (CAPTURED). Without them that app took the call as a
+	 * voice call: it answered our video, but did not show it as video or offer its own camera. */
+	if (video || mp->video_offered)
+		g_string_append(sdp, "a=x-mediabw:main-video send=12000;recv=12000\r\n");
 	if (!media_engine_unbundled(mp))
 		g_string_append(sdp, video ? "a=group:BUNDLE 0 1\r\n" : "a=group:BUNDLE 0\r\n");
 	g_string_append_printf(sdp, "m=audio %d RTP/SAVP 102 9 0 8\r\n", our_port);
@@ -1216,14 +1221,16 @@ media_send_offer(TeamsMediaProc *mp)
 		for (i = 0; cl[i]; i++) if (cl[i][0] && strstr(cl[i], " UDP ")) g_string_append_printf(sdp, "a=%s\r\n", cl[i]);
 		g_strfreev(cl); }
 	g_string_append(sdp, "a=ice-options:trickle\r\n");
-	if (video)
+	if (video) {
 		append_video_mline(sdp, mp, our_port, our_ip ? our_ip : "0.0.0.0", "1", "sendrecv");
-	else if (mp->video_offered) {
+		g_string_append(sdp, "a=x-source:main-video\r\n");
+	} else if (mp->video_offered) {
 		int vport;
 		gchar *vip = host_address_of(mp->our_vcands, &vport);
 		mp->video_offered_send = mp->engine_camera;
 		append_video_mline(sdp, mp, vport, vip ? vip : (our_ip ? our_ip : "0.0.0.0"), "1",
 		                   mp->video_offered_send ? "sendrecv" : "recvonly");
+		g_string_append(sdp, "a=x-source:main-video\r\n");
 		g_free(vip);
 	}
 	teams_call_log("video: offering %s", video ? "sendrecv" : !mp->video_offered ? "no video"
@@ -1280,8 +1287,12 @@ media_send_offer(TeamsMediaProc *mp)
 		"\"endpointId\":%s,\"participantId\":\"%s\",\"languageId\":%s},",
 		from_q, name_q, epid_q, pid, lang_q);
 	g_string_append_printf(body, "\"to\":[{\"id\":%s,\"participantId\":\"%s\"}]},", to_q, to_pid);
-	g_string_append(body, "\"capabilities\":null,\"endpointCapabilities\":73463,"
-		"\"clientEndpointCapabilities\":42876960,\"endpointMetadata\":{\"holographicCapabilities\":3},"
+	/* clientEndpointCapabilities as the web client sends it: a video call adds 1 << 26 (CAPTURED,
+	 * teams.live.com: 42876960 for an audio call, 109985824 for a video one). */
+	g_string_append_printf(body, "\"capabilities\":null,\"endpointCapabilities\":73463,"
+		"\"clientEndpointCapabilities\":%u,\"endpointMetadata\":{\"holographicCapabilities\":3},",
+		video || (mp->video_offered && mp->video_offered_send) ? 42876960u | (1u << 26) : 42876960u);
+	g_string_append(body,
 		"\"groupContext\":null,\"groupChat\":null,\"meetingInfo\":null,\"meetingData\":null,"
 		"\"endpointState\":{\"endpointStateSequenceNumber\":2,\"endpointProperties\":"
 		"{\"additionalEndpointProperties\":{\"infoShownInReportMode\":\"FullInformation\"}}},");
