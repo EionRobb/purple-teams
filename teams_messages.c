@@ -2031,6 +2031,11 @@ teams_get_conversation_history(TeamsAccount *sa, const gchar *convname)
 static void
 teams_poll_convs_err_cb(TeamsAccount *sa, const gchar *data, gssize len, gpointer user_data)
 {
+	/* A failed fetch from a login already closed: its account is freed, and the write below
+	 * would land in freed memory. teams_got_all_convs() checks the same way. */
+	if (!teams_account_is_live(sa))
+		return;
+
 	/* Conversations fetch failed (no parseable body) — release the poll guard so the
 	 * next tick can retry instead of the poll wedging forever. */
 	sa->poll_in_flight = FALSE;
